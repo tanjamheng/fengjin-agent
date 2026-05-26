@@ -1,0 +1,64 @@
+# RAG 配置
+# 决策文档：核心文档/9.模块详述与决策_拍板.md
+# 管道：加载 → 分块 → 索引 → 查询增强 → 检索 → 重排序
+
+rag:
+  # 文档加载
+  loader:
+    supported_formats:
+      - "pdf"
+      - "md"
+      - "txt"
+      - "docx"
+    max_file_size_mb: 50
+
+  # 文本分块策略
+  # 默认使用 markdown（按 ##/### 切分，超长块自动递归二次切分）
+  # 部分文档会由构建脚本指定不同策略
+  splitter:
+    type: "markdown"
+    params:
+      headers_to_split_on: ["##", "###"]
+      max_chunk_size: 1500
+      chunk_overlap: 100
+
+  # 向量索引 — Hybrid (Dense + Sparse/BM25)
+  # Dense: BGE-M3 embedding + ChromaDB
+  # Sparse: BM25 (rank_bm25)
+  # RRF 融合权重: Dense 0.7, Sparse 0.3
+  index:
+    type: "hybrid"
+    params:
+      embedding_model: "BAAI/bge-m3"
+      persist_directory: "data/chroma"
+      collection_name: "fengjin_knowledge"
+      store_type: "chroma"
+      device: "cuda"
+      dense_weight: 0.7
+      sparse_weight: 0.3
+
+  # 检索 — Hybrid (Dense + BM25 + RRF 融合)
+  # 第一阶段：召回 5 个候选（减少送入 reranker 的数量以降低延迟）
+  retriever:
+    type: "hybrid"
+    params:
+      top_k: 5
+      score_threshold: 0.0
+      rrf_k: 60
+
+  # 查询增强 — None (跳过，零延迟)
+  # 检索器 + Reranker 组合已足够强（Hit@3=0.89, MRR=0.88）
+  # LLM 改写在 GLM-5.1 下质量不稳定，且增加 ~500ms 延迟
+  query_enhancer:
+    type: "none"
+    params: {}
+
+  # 重排序 — Cross-Encoder (BGE-reranker-v2-m3)
+  # GPU 加速：device 设为 "cuda"（需安装 CUDA 版 PyTorch）
+  # 4GB 显存（RTX 3050）放得下 v2-m3（~1.1GB FP16），放不下 minicpm-layerwise（2B）
+  reranker:
+    type: "cross_encoder"
+    params:
+      model: "BAAI/bge-reranker-v2-m3"
+      top_n: 4
+      device: "cuda"

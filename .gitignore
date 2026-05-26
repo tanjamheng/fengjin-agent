@@ -1,0 +1,68 @@
+# ============ 敏感信息 ============
+# 环境变量（API Key等）
+.env
+.env.local
+.env.*.local
+
+# 用户配置
+config/config.yaml
+config/config.local.yaml
+
+# ============ 整个文件夹忽略 ============
+# Python缓存（所有层级）
+__pycache__/
+*.py[cod]
+
+# 数据目录（向量库、知识库等）
+data/
+
+# 日志目录
+logs/
+
+# 测试缓存
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+.venv*/
+
+# IDE配置
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 分发/打包
+dist/
+build/
+*.egg-info/
+
+# ============ 单个文件忽略 ============
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.swp
+*.bak
+
+# ============ 根目录中文文档/资料 ============
+# 根目录下所有中文命名的文件和文件夹
+/待办.md
+/杂念想.md
+/踩坑记录.md
+/草稿*
+/核心文档/
+/学习文档/
+/风堇杂志/
+/学习_*.md
+/规划注意点.md
+/核心进程.md
+
+.codegraph
