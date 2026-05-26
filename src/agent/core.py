@@ -107,19 +107,23 @@ class Agent:
         # 3. 获取所有 tool 定义
         tool_definitions = self.tool_registry.get_all_definitions()
 
-        # 4. 动态调整 max_tokens
-        max_tokens = self._calc_dynamic_tokens(user_input)
+        # 4. 构建 API 参数
+        api_params = {
+            "model": self.config.agent.model,
+            "max_tokens": self.config.agent.max_tokens,
+            "temperature": self.config.agent.temperature,
+            "system": self.config.system_prompt,
+            "messages": self.messages,
+            "tools": tool_definitions if tool_definitions else None,
+        }
 
-        # 5. 调用 API（带 tools 参数）
-        self.log.info(f"调用 API: {self.config.agent.model}")
-        response = self.client.messages.create(
-            model=self.config.agent.model,
-            max_tokens=max_tokens,
-            temperature=self.config.agent.temperature,
-            system=self.config.system_prompt,
-            messages=self.messages,
-            tools=tool_definitions if tool_definitions else None,
-        )
+        # 6. 控制 GLM 深度思考（默认开启，需显式关闭）
+        if not self.config.agent.thinking_enabled:
+            api_params["thinking"] = {"type": "disabled"}
+
+        # 7. 流式调用 API
+        self.log.info(f"调用 API: {self.config.agent.model} (thinking={self.config.agent.thinking_enabled})")
+        response = self._stream_call(api_params)
 
         # 6. Tool calling 循环
         tool_rounds = 0
@@ -137,16 +141,9 @@ class Agent:
                 "content": tool_results,
             })
 
-            # 再次调用 API
+            # 再次流式调用 API
             self.log.info(f"Tool calling 第 {tool_rounds} 轮")
-            response = self.client.messages.create(
-                model=self.config.agent.model,
-                max_tokens=max_tokens,
-                temperature=self.config.agent.temperature,
-                system=self.config.system_prompt,
-                messages=self.messages,
-                tools=tool_definitions if tool_definitions else None,
-            )
+            response = self._stream_call(api_params)
 
         # 7. 提取最终文本回复
         assistant_message = self._extract_text(response)
@@ -161,6 +158,15 @@ class Agent:
         return assistant_message
 
     # ── 内部方法 ────────────────────────────────────────────
+
+    def _stream_call(self, api_params: dict):
+        """流式调用 API，实时输出文本，返回完整 response 对象"""
+        with self.client.messages.stream(**api_params) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+            response = stream.get_final_message()
+        print()  # 流式结束后换行
+        return response
 
     def _has_tool_use(self, response) -> bool:
         """检查响应是否包含 tool_use"""
@@ -216,20 +222,6 @@ class Agent:
                 self.log.warning(f"未知的响应块类型: {block_type}")
 
         return text_content.strip()
-
-    def _calc_dynamic_tokens(self, user_input: str) -> int:
-        """根据用户输入长度动态调整回复长度上限"""
-        upper = self.config.agent.max_tokens
-        input_len = len(user_input)
-
-        if input_len <= 15:
-            return min(256, upper)
-        elif input_len <= 50:
-            return min(512, upper)
-        elif input_len <= 150:
-            return min(768, upper)
-        else:
-            return upper
 
     def _execute_skills(self, user_input: str, skill_names: List[str]) -> str:
         """执行Skills并返回处理后的prompt"""

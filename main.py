@@ -158,10 +158,9 @@ def main():
             elif not user_input:
                 continue
 
-            # 发送消息
+            # 发送消息（chat() 内部已流式输出）
             console.print("[bold green]Agent:[/bold green]")
-            response = agent.chat(user_input)
-            console.print(Markdown(response))
+            agent.chat(user_input)
             console.print(f"[dim]对话轮数: {agent.history_count}[/dim]\n")
 
         except KeyboardInterrupt:

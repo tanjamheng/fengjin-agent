@@ -22,6 +22,7 @@ class AgentConfig(BaseModel):
     model: str = "glm-5"
     max_tokens: int = 4096
     temperature: float = 0.7
+    thinking_enabled: bool = False
 
 
 class LoaderConfig(BaseModel):

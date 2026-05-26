@@ -106,18 +106,21 @@ def patch_agent(agent: Agent, rag_service: RAGService):
         agent.messages.append({"role": "user", "content": message_content})
 
         tool_definitions = agent.tool_registry.get_all_definitions()
-        max_tokens = agent._calc_dynamic_tokens(user_input)
 
         # ── ① 首次 API 调用 ──
+        api_params = {
+            "model": agent.config.agent.model,
+            "max_tokens": agent.config.agent.max_tokens,
+            "temperature": agent.config.agent.temperature,
+            "system": agent.config.system_prompt,
+            "messages": agent.messages,
+            "tools": tool_definitions if tool_definitions else None,
+        }
+        if not agent.config.agent.thinking_enabled:
+            api_params["thinking"] = {"type": "disabled"}
+
         stamp("T1_llm_first_req")
-        response = agent.client.messages.create(
-            model=agent.config.agent.model,
-            max_tokens=max_tokens,
-            temperature=agent.config.agent.temperature,
-            system=agent.config.system_prompt,
-            messages=agent.messages,
-            tools=tool_definitions if tool_definitions else None,
-        )
+        response = agent.client.messages.create(**api_params)
         stamp("T1_llm_first_resp")
 
         # 检查是否需要 tool calling
@@ -135,14 +138,7 @@ def patch_agent(agent: Agent, rag_service: RAGService):
 
             # ── ④ 二次 API 调用 ──
             stamp("T3_llm_second_req")
-            response = agent.client.messages.create(
-                model=agent.config.agent.model,
-                max_tokens=max_tokens,
-                temperature=agent.config.agent.temperature,
-                system=agent.config.system_prompt,
-                messages=agent.messages,
-                tools=tool_definitions if tool_definitions else None,
-            )
+            response = agent.client.messages.create(**api_params)
             stamp("T3_llm_second_resp")
 
         # 提取最终回复
@@ -225,17 +221,46 @@ def main():
     stats = rag_service.get_stats()
     print(f"[知识库] 文档数: {stats['document_count']}")
 
-    # 运行测试
-    question = "风堇，你最喜欢翁法罗斯的哪里？"
-    print(f"\n[提问] {question}")
-    print("-" * 65)
+    # 运行测试（多个问题，观察 LLM 自主决策）
+    questions = [
+        "风堇，你最喜欢翁法罗斯的哪里？",           # 开放问题，可能不调 RAG
+        "风堇，你重返神悟树庭时发现了那刻夏的什么秘密？",  # 剧情细节，应触发 RAG
+        "风堇，你和阿格莱雅是怎么认识的？",            # 人物关系，应触发 RAG
+    ]
 
-    response = agent.chat(question)
+    all_results = []
 
-    print(f"\n[回答] {response[:200]}...")
+    for i, question in enumerate(questions):
+        timings.clear()
+        agent.clear_history()  # 每次独立对话
+        print(f"\n{'=' * 65}")
+        print(f"  测试 {i+1}/{len(questions)}: {question}")
+        print(f"{'=' * 65}")
 
-    # 输出报告
-    report()
+        response = agent.chat(question)
+
+        used_rag = "T2_tool_exec_start" in timings
+        status = "RAG" if used_rag else "直接回答"
+
+        print(f"\n[回答] {response[:200]}...")
+        print(f"[路径] {status}")
+
+        report()
+
+        all_results.append({
+            "question": question,
+            "path": status,
+            "timings": dict(timings),
+        })
+
+    # 汇总
+    print("\n" + "=" * 65)
+    print("  汇总")
+    print("=" * 65)
+    for r in all_results:
+        total = (r["timings"]["T_end"] - r["timings"]["T0_start"]) * 1000 if "T_end" in r["timings"] and "T0_start" in r["timings"] else 0
+        print(f"  [{r['path']:4s}] {total:>6.0f}ms  {r['question']}")
+    print("=" * 65)
 
 
 if __name__ == "__main__":

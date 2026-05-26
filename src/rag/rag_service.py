@@ -113,7 +113,7 @@ class RAGService:
         reranked_results = self.reranker.rerank(query, recall_results)
 
         # 构建上下文
-        context_text = self._build_context(reranked_results, max_length=3000)
+        context_text = self._build_context(reranked_results, max_length=1500)
         self.log.info(f"RAG 检索完成: 召回 {len(recall_results)} 条, 精排 {len(reranked_results)} 条")
 
         return context_text
