@@ -4,6 +4,7 @@
 - Skill 装配和调用（提示词模版，系统决定注入时机）
 - Tool 装配和调用（函数调用，LLM 自主决定）
 - MCP 服务器管理（标准化工具协议）
+- 上下文管理（记忆合并 + 滑动窗口）
 - 对话历史管理
 - 日志追踪
 """
@@ -17,6 +18,7 @@ from ..capabilities.mcp_server import MCPServerBase
 from .skill_registry import SkillRegistry, get_registry
 from .tool_registry import ToolRegistry
 from .mcp_manager import MCPManager
+from .context_manager import ContextManager
 from ..utils.logger import get_logger, generate_trace_id
 
 # tool_use 循环最大轮数，防止无限循环
@@ -32,7 +34,7 @@ class Agent:
     - MCP（标准化工具）：通过 MCPManager 管理，工具注册到 ToolRegistry
     """
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, context_manager: ContextManager = None, memory_manager=None):
         self.config = config
 
         # 初始化 API Client
@@ -45,6 +47,10 @@ class Agent:
         self.registry = get_registry()
         self.tool_registry = ToolRegistry()
         self.mcp_manager = MCPManager()
+
+        # 上下文管理 + 记忆管理
+        self.context_manager = context_manager
+        self.memory_manager = memory_manager
 
         # 对话历史
         self.messages: List[Dict] = []
@@ -98,40 +104,44 @@ class Agent:
         if skills:
             message_content = self._execute_skills(user_input, skills)
 
-        # 2. 添加用户消息到历史
+        # 2. 上下文管理：记忆合并到当前输入
+        api_input = message_content
+        if self.context_manager:
+            api_input = self.context_manager.build_input(message_content)
+
+        # 3. 存入历史的是原始输入（不含记忆注入）
         self.messages.append({
             "role": "user",
             "content": message_content
         })
 
-        # 3. 获取所有 tool 定义
+        # 4. 获取所有 tool 定义
         tool_definitions = self.tool_registry.get_all_definitions()
 
-        # 4. 构建 API 参数
+        # 5. 构建 API 参数
         api_params = {
             "model": self.config.model,
             "max_tokens": self.config.agent.max_tokens,
             "temperature": self.config.agent.temperature,
             "system": self.config.system_prompt,
-            "messages": self.messages,
+            "messages": self._build_api_messages(api_input),
             "tools": tool_definitions if tool_definitions else None,
         }
 
-        # 6. 控制 GLM 深度思考（默认开启，需显式关闭）
+        # 控制 GLM 深度思考（默认开启，需显式关闭）
         if not self.config.agent.thinking_enabled:
             api_params["thinking"] = {"type": "disabled"}
 
-        # 7. 流式调用 API
+        # 6. 流式调用 API
         self.log.info(f"调用 API: {self.config.model} (thinking={self.config.agent.thinking_enabled})")
         response = self._stream_call(api_params)
 
-        # 6. Tool calling 循环
+        # 7. Tool calling 循环
         tool_rounds = 0
         while self._has_tool_use(response) and tool_rounds < MAX_TOOL_ROUNDS:
             tool_rounds += 1
             tool_results = self._process_tool_calls(response)
 
-            # 将 assistant 的 tool_use 消息和 tool_result 加入历史
             self.messages.append({
                 "role": "assistant",
                 "content": response.content,
@@ -141,26 +151,55 @@ class Agent:
                 "content": tool_results,
             })
 
-            # 再次流式调用 API
             self.log.info(f"Tool calling 第 {tool_rounds} 轮")
+            api_params["messages"] = self._build_api_messages_from_history()
             response = self._stream_call(api_params)
 
-        # 7. 提取最终文本回复
+        # 8. 提取最终文本回复
         assistant_message = self._extract_text(response)
 
-        # 8. 添加助手回复到历史
+        # 9. 添加助手回复到历史
         self.messages.append({
             "role": "assistant",
             "content": assistant_message
         })
+
+        # 10. 滑动窗口裁剪
+        if self.context_manager:
+            self.context_manager.trim_messages(self.messages)
+
+        # 11. 异步提取记忆
+        if self.memory_manager:
+            self.memory_manager.extract_async(user_input, assistant_message)
 
         self.log.info(f"回复完成，长度: {len(assistant_message)}")
         return assistant_message
 
     # ── 内部方法 ────────────────────────────────────────────
 
+    def _build_api_messages(self, current_input: str) -> list:
+        """构建首次 API 调用的 messages
+
+        = 历史消息（self.messages[:-1]）+ 当前输入（合并了记忆）
+        self.messages 里存的是原始输入，这里用合并后的版本替换最后一条
+        """
+        api_messages = [m.copy() for m in self.messages[:-1]]
+        api_messages.append({"role": "user", "content": current_input})
+        return api_messages
+
+    def _build_api_messages_from_history(self) -> list:
+        """构建 tool calling 后续轮次的 messages
+
+        此时 self.messages 已包含 tool_use 和 tool_result，直接用
+        """
+        return [m.copy() for m in self.messages]
+
     def _stream_call(self, api_params: dict):
         """流式调用 API，实时输出文本，返回完整 response 对象"""
+        import sys
+        safe_stdout = getattr(sys.stdout, 'reconfigure', None)
+        if safe_stdout:
+            sys.stdout.reconfigure(errors='replace')
         with self.client.messages.stream(**api_params) as stream:
             for text in stream.text_stream:
                 print(text, end="", flush=True)

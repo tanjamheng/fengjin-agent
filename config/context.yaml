@@ -1,0 +1,20 @@
+# 多轮对话上下文管理配置
+context:
+  # 滑动窗口
+  sliding_window:
+    # 最大保留轮数（一轮 = 一对 user/assistant 交互）
+    # 每轮实际占用 2~4 条 message（无 tool calling = 2，有 = 4）
+    max_turns: 20
+
+    # messages 部分的 token 预算
+    # 留给 system_prompt + tools 定义之外的对话空间
+    max_tokens: 4000
+
+  # 记忆合并
+  memory:
+    # 是否启用记忆检索（开关，方便调试）
+    enabled: true
+
+    # 注入模板（{memory} 和 {input} 是占位符）
+    # 记忆检索结果合并到当前 user message 的格式
+    template: "[关于灰宝的信息]\n{memory}\n\n{input}"

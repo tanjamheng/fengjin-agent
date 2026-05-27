@@ -9,10 +9,13 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.table import Table
-from src.config import Config, RAGSettings
+from src.config import Config, RAGSettings, ContextSettings
 from src.agent import Agent
 from src.rag.rag_service import RAGService
 from src.mcp_servers.rag_server import RAGMCPServer
+from src.memory.config import MemorySettings
+from src.memory.manager import MemoryManager
+from src.agent.context_manager import ContextManager
 from src.utils import setup_logger, LogConfig
 
 
@@ -31,8 +34,27 @@ def main():
     rag_config_path = Path(__file__).parent / "config" / "rag.yaml"
     rag_config = RAGSettings.load(str(rag_config_path))
 
-    # 创建 Agent
-    agent = Agent(config)
+    # 加载上下文管理配置
+    context_config_path = Path(__file__).parent / "config" / "context.yaml"
+    context_settings = ContextSettings.load(str(context_config_path))
+
+    # 初始化记忆系统
+    memory_config_path = Path(__file__).parent / "config" / "memory.yaml"
+    memory_settings = MemorySettings.load(str(memory_config_path))
+    memory_manager = MemoryManager(memory_settings.memory)
+
+    # 创建上下文管理器（依赖记忆检索器）
+    context_manager = ContextManager(
+        config=context_settings.context,
+        memory_retriever=memory_manager
+    )
+
+    # 创建 Agent（传入上下文管理器和记忆管理器）
+    agent = Agent(
+        config=config,
+        context_manager=context_manager,
+        memory_manager=memory_manager
+    )
 
     # 创建 RAG 服务（纯功能层）
     rag_service = RAGService(rag_config, llm_client=agent.client)
@@ -46,6 +68,7 @@ def main():
         f"[bold green]{config.agent.name}[/bold green]\n"
         f"模型: {config.model}\n"
         f"已装配 MCP: [bold cyan]rag[/bold cyan]\n"
+        f"上下文管理: [bold cyan]{'启用' if context_settings.context.memory.enabled else '未启用'}[/bold cyan]\n"
         "输入 [bold red]/quit[/bold red] 退出\n"
         "输入 [bold yellow]/clear[/bold yellow] 清空对话历史\n"
         "输入 [bold magenta]/ingest <文件路径>[/bold magenta] 导入文档\n"
@@ -65,6 +88,7 @@ def main():
             # 处理命令
             if user_input == "/quit":
                 agent.cleanup()
+                memory_manager.cleanup()
                 console.print("[yellow]再见！[/yellow]")
                 break
 
@@ -165,6 +189,7 @@ def main():
 
         except KeyboardInterrupt:
             agent.cleanup()
+            memory_manager.cleanup()
             console.print("\n[yellow]再见！[/yellow]")
             break
         except Exception as e:

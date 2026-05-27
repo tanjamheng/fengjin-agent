@@ -90,6 +90,39 @@ class RAGConfig(BaseModel):
     loader: LoaderConfig = LoaderConfig()
 
 
+class SlidingWindowConfig(BaseModel):
+    """滑动窗口配置"""
+    max_turns: int = 20
+    max_tokens: int = 4000
+
+
+class MemoryMergeConfig(BaseModel):
+    """记忆合并配置"""
+    enabled: bool = True
+    template: str = "[关于灰宝的信息]\n{memory}\n\n{input}"
+
+
+class ContextConfig(BaseModel):
+    """上下文管理配置"""
+    sliding_window: SlidingWindowConfig = SlidingWindowConfig()
+    memory: MemoryMergeConfig = MemoryMergeConfig()
+
+
+class ContextSettings(BaseModel):
+    """上下文管理设置"""
+
+    context: ContextConfig = ContextConfig()
+
+    @classmethod
+    def load(cls, config_path: str = "config/context.yaml") -> "ContextSettings":
+        path = Path(config_path)
+        if not path.exists():
+            return cls()
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        return cls(context=ContextConfig(**data.get("context", {})))
+
+
 class Config(BaseModel):
     """全局配置（不含敏感信息）"""
     agent: AgentConfig
