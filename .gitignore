@@ -19,6 +19,12 @@ data/
 # 日志目录
 logs/
 
+# 评估报告（本地运行产物）
+evaluate/*/reports/
+
+# 自动生成的 core 记忆文件（含用户隐私）
+config/prompts/core_memory.md
+
 # 测试缓存
 .pytest_cache/
 .coverage
@@ -64,5 +70,7 @@ Thumbs.db
 /学习_*.md
 /规划注意点.md
 /核心进程.md
+
+中文文档
 
 .codegraph

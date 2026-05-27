@@ -1,0 +1,36 @@
+# 记忆系统配置
+memory:
+  # ChromaDB 存储配置
+  chroma:
+    persist_directory: "data/memory_chroma"
+    collection_name: "memories"
+    embedding_model: "BAAI/bge-m3"
+
+  # 内容提取配置（每轮对话后异步调用的小模型）
+  extraction:
+    max_tokens: 2048
+    prompt_file: "config/prompts/memory_extraction.md"
+
+  # 冲突消解配置（仅在检测到记忆冲突时调用）
+  merge:
+    max_tokens: 512
+    prompt_file: "config/prompts/memory_merge.md"
+
+  # 阈值体系（基于 cosine distance，0=相同，越大越不相关）
+  thresholds:
+    dedup_distance: 0.1        # < 0.1 视为重复，丢弃
+    conflict_distance: 0.10    # < 0.10 视为可能冲突，调 LLM 合并
+
+  # 检索配置
+  retrieval:
+    top_k: 3
+
+  # 核心记忆视图文件路径
+  core_file: "config/prompts/core_memory.md"
+
+  # 规则过滤
+  filter:
+    blacklist_patterns:
+      - "\\d{11}"
+      - "密码|password"
+      - "身份证|身份证号"

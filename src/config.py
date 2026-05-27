@@ -19,7 +19,6 @@ load_dotenv()
 class AgentConfig(BaseModel):
     """Agent 配置"""
     name: str = "SimpleAgent"
-    model: str = "glm-5"
     max_tokens: int = 4096
     temperature: float = 0.7
     thinking_enabled: bool = False
@@ -100,15 +99,23 @@ class Config(BaseModel):
     @property
     def api_key(self) -> str:
         """从环境变量获取API Key"""
-        key = os.getenv("ANTHROPIC_API_KEY")
+        key = os.getenv("FENGJIN_API_KEY")
         if not key:
-            raise ValueError("请在 .env 文件中设置 ANTHROPIC_API_KEY")
+            raise ValueError("请在 .env 文件中设置 FENGJIN_API_KEY")
         return key
 
     @property
     def base_url(self) -> str:
         """从环境变量获取Base URL"""
-        return os.getenv("ANTHROPIC_BASE_URL", "")
+        return os.getenv("FENGJIN_BASE_URL", "")
+
+    @property
+    def model(self) -> str:
+        """从环境变量获取模型名称"""
+        model = os.getenv("FENGJIN_MODEL")
+        if not model:
+            raise ValueError("请在 .env 文件中设置 FENGJIN_MODEL")
+        return model
 
     @classmethod
     def load(cls, config_path: str = "config/config.yaml") -> "Config":

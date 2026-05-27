@@ -44,7 +44,7 @@ def main():
     # 显示欢迎信息
     console.print(Panel.fit(
         f"[bold green]{config.agent.name}[/bold green]\n"
-        f"模型: {config.agent.model}\n"
+        f"模型: {config.model}\n"
         f"已装配 MCP: [bold cyan]rag[/bold cyan]\n"
         "输入 [bold red]/quit[/bold red] 退出\n"
         "输入 [bold yellow]/clear[/bold yellow] 清空对话历史\n"

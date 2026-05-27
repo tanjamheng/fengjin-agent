@@ -109,7 +109,7 @@ class Agent:
 
         # 4. 构建 API 参数
         api_params = {
-            "model": self.config.agent.model,
+            "model": self.config.model,
             "max_tokens": self.config.agent.max_tokens,
             "temperature": self.config.agent.temperature,
             "system": self.config.system_prompt,
@@ -122,7 +122,7 @@ class Agent:
             api_params["thinking"] = {"type": "disabled"}
 
         # 7. 流式调用 API
-        self.log.info(f"调用 API: {self.config.agent.model} (thinking={self.config.agent.thinking_enabled})")
+        self.log.info(f"调用 API: {self.config.model} (thinking={self.config.agent.thinking_enabled})")
         response = self._stream_call(api_params)
 
         # 6. Tool calling 循环

@@ -1,0 +1,149 @@
+"""记忆提取与过滤"""
+
+import json
+import re
+from pathlib import Path
+
+from openai import OpenAI
+
+from .config import MemoryConfig, MemorySettings
+from .storage import MemoryStorage
+
+MAX_PARSE_RETRIES = 2
+
+
+class MemoryExtractor:
+    """记忆提取器
+
+    两步处理：
+    1. LLM 提取 + 过滤 + 重要性判断（语义层，OpenAI json_object 强制 JSON）
+    2. 规则兜底：PII 黑名单 + 向量去重（代码层）
+    """
+
+    def __init__(self, config: MemoryConfig, client: OpenAI,
+                 model: str, storage: MemoryStorage):
+        self.config = config
+        self.client = client
+        self.model = model
+        self.storage = storage
+        self._extraction_prompt = Path(config.extraction.prompt_file).read_text(
+            encoding="utf-8"
+        )
+        self._blacklist = [
+            re.compile(p) for p in config.filter.blacklist_patterns
+        ]
+
+    def extract(self, user_input: str, assistant_message: str) -> list[dict]:
+        """提取记忆，返回过滤后的事实列表
+
+        Returns:
+            [{"content": str, "type": str, "importance": str}, ...]
+        """
+        facts = self._llm_extract(user_input, assistant_message)
+        if not facts:
+            return []
+        return self._rule_filter(facts)
+
+    def _llm_extract(self, user_input: str, assistant_message: str) -> list[dict]:
+        """调用小模型提取事实，json_object 强制 JSON 输出"""
+        conversation_text = f"用户：{user_input}\n风堇：{assistant_message}"
+        messages = [
+            {"role": "system", "content": self._extraction_prompt},
+            {"role": "user", "content": conversation_text}
+        ]
+
+        for attempt in range(MAX_PARSE_RETRIES + 1):
+            response = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=self.config.extraction.max_tokens,
+                messages=messages,
+                response_format={"type": "json_object"}
+            )
+            raw_text = response.choices[0].message.content.strip()
+
+            facts, error = self._parse_and_validate(raw_text)
+            if facts is not None:
+                return facts
+
+            if attempt < MAX_PARSE_RETRIES:
+                messages.append({"role": "assistant", "content": raw_text})
+                messages.append({
+                    "role": "user",
+                    "content": f"返回的JSON格式有误：{error}\n请修正后重新返回，只返回合法JSON。"
+                })
+
+        return []
+
+    def _parse_and_validate(self, text: str) -> tuple[list[dict] | None, str]:
+        """解析 JSON 并校验字段完整性
+
+        Returns:
+            (facts_list, error_msg) — 成功时 error_msg 为空字符串
+        """
+        json_text = text
+        if "```json" in text:
+            json_text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            json_text = text.split("```")[1].split("```")[0].strip()
+
+        try:
+            result = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            return None, f"JSON语法错误: {e}"
+
+        if not isinstance(result, dict) or "facts" not in result:
+            return None, "缺少facts字段"
+
+        facts = result["facts"]
+        if not isinstance(facts, list):
+            return None, "facts必须是数组"
+
+        valid_facts = []
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+
+            content = fact.get("content", "").strip()
+            if not content:
+                continue
+
+            fact_type = fact.get("type", "")
+            if fact_type not in ("semantic", "episodic"):
+                fact_type = "semantic"
+
+            importance = fact.get("importance", "")
+            if importance not in ("high", "low"):
+                importance = "low"
+
+            valid_facts.append({
+                "content": content,
+                "type": fact_type,
+                "importance": importance
+            })
+
+        return valid_facts, ""
+
+    def _rule_filter(self, facts: list[dict]) -> list[dict]:
+        """规则兜底：PII 黑名单 + 向量去重"""
+        filtered = []
+        for fact in facts:
+            content = fact.get("content", "")
+            if not content:
+                continue
+
+            if any(pattern.search(content) for pattern in self._blacklist):
+                continue
+
+            results = self.storage.query(
+                text=content,
+                n_results=1,
+                where={"is_core": 1 if fact["importance"] == "high" else 0}
+            )
+            if results["distances"] and results["distances"][0]:
+                distance = results["distances"][0][0]
+                if distance < self.config.thresholds.dedup_distance:
+                    continue
+
+            filtered.append(fact)
+
+        return filtered
