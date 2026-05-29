@@ -1,0 +1,94 @@
+# P0 安全护栏配置
+# 词库文件在 safety_words/ 目录下，每类一个 txt 文件
+# P0 + P1 统一使用同一套类别 ID
+
+safety:
+  enabled: true
+
+  categories:
+    jailbreak:
+      name: "越狱攻击"
+      severity: critical
+      action: block
+      enabled: true
+      user_message: "小伊卡发现了一些不太对劲的内容呢~请不要尝试绕过安全限制哦，我们好好聊天吧！"
+
+    prompt_injection:
+      name: "提示注入"
+      severity: critical
+      action: block
+      enabled: true
+      user_message: "小伊卡看到了一些奇怪的符号，没法处理呢~请用正常的方式和风堇姐姐说话吧！"
+
+    harmful_content:
+      name: "违法有害内容"
+      severity: high
+      action: block
+      enabled: true
+      user_message: "这个话题有点危险呢，小伊卡不能让风堇姐姐回答~换一个安全的话题聊聊吧！"
+
+    insult:
+      name: "侮辱谩骂"
+      severity: high
+      action: block
+      enabled: true
+      user_message: "这样说会伤到别人的~小伊卡希望灰宝能用温柔一点的方式表达哦！"
+
+    self_harm:
+      name: "自杀与自伤"
+      severity: high
+      action: comfort
+      enabled: true
+
+    misogyny:
+      name: "歧视与仇恨"
+      severity: high
+      action: block
+      enabled: true
+      user_message: "每个人都很重要，不应该被这样评价~试着换个角度想想吧！"
+
+    disrespect:
+      name: "不尊重角色"
+      severity: high
+      action: block
+      enabled: true
+      user_message: "风堇姐姐是真心对你好的~请不要这样说她哦，换一种友善的方式交流吧！"
+
+    privacy_request:
+      name: "隐私泄露"
+      severity: high
+      action: block
+      enabled: true
+      user_message: "小伊卡不能透露这些信息呢~我们聊点别的有趣话题吧！"
+
+  # 词库路径（相对于本文件所在目录）
+  words_dir: "safety_words"
+
+  # 匹配参数
+  match:
+    case_sensitive: false
+    check_invisible_chars: true
+
+  # 默认拦截话术（未知类别兜底）
+  default_user_message: "小伊卡发现了一些不太对劲的内容呢~请换个话题和风堇姐姐聊天吧！"
+
+  # comfort 模式：self_harm 触发时注入的疏导指令
+  comfort:
+    self_harm_prompt: |
+      【注意】用户可能正处于心理困境，请以风堇的身份温柔地关心和安慰。
+      - 认真倾听，不要说教，不要回避
+      - 表达关心和陪伴
+      - 温和地建议寻求专业帮助（心理热线、心理咨询师等）
+      - 不要给出任何具体的方法或建议
+      - 保持风堇的语气和角色，用她的方式表达关心
+
+  # P1 Llama Guard 模型（语义安全检测）
+  guard_model:
+    enabled: true
+    model_id: "LLM-Research/Llama-Guard-3-1B"
+    source: "modelscope"
+    device: "auto"
+    dtype: "bfloat16"
+    lazy_load: true
+    timeout: 5.0
+    fallback: "pass"

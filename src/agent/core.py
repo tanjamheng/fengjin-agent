@@ -84,12 +84,14 @@ class Agent:
 
     # ── 对话 ───────────────────────────────────────────────
 
-    def chat(self, user_input: str, skills: Optional[List[str]] = None) -> str:
+    def chat(self, user_input: str, skills: Optional[List[str]] = None,
+             safety_context: Optional[str] = None) -> str:
         """发送消息并获取回复
 
         Args:
             user_input: 用户输入
             skills: 要激活的Skill列表（可选）
+            safety_context: 安全疏导指令（comfort 模式时注入）
 
         Returns:
             Agent回复
@@ -119,11 +121,15 @@ class Agent:
         tool_definitions = self.tool_registry.get_all_definitions()
 
         # 5. 构建 API 参数
+        system_prompt = self.config.system_prompt
+        if safety_context:
+            system_prompt = f"{system_prompt}\n\n{safety_context}"
+
         api_params = {
             "model": self.config.model,
             "max_tokens": self.config.agent.max_tokens,
             "temperature": self.config.agent.temperature,
-            "system": self.config.system_prompt,
+            "system": system_prompt,
             "messages": self._build_api_messages(api_input),
             "tools": tool_definitions if tool_definitions else None,
         }

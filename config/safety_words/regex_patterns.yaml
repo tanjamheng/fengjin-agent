@@ -1,0 +1,196 @@
+# 正则规则：每条归属于一个类别，启动时预编译
+# 适合变体捕获，关键词匹配不到的灵活模式
+# 原则：宁可漏拦不误拦，关键词层已覆盖高频词，正则层兜底变体
+
+patterns:
+  # ── jailbreak: 越狱攻击 ──
+  - category: jailbreak
+    pattern: '(?i)(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior)\s*(instruction|prompt|rule|setting)'
+  - category: jailbreak
+    pattern: '(?i)(new|override|updated)\s*(instruction|system.?prompt)\s*[:：]'
+  - category: jailbreak
+    pattern: '忽略(之前|以上|上面|所有|前面)(的)?(指令|设定|规则|提示)'
+  - category: jailbreak
+    pattern: '忘记你(是|的)(风堇|身份|角色|设定)'
+  - category: jailbreak
+    pattern: '(?i)(pretend|act)\s+(you\s+are|to\s+be)\s+(not|no\s+longer)\s+风堇'
+  - category: jailbreak
+    pattern: '(?i)(bypass|override|circumvent)\s+(your|the|all|restrictions?|safety|filter)'
+  - category: jailbreak
+    pattern: '(?i)(jailbreak|DAN|developer)\s*(mode)?'
+  - category: jailbreak
+    pattern: '(越狱|开发者模式|解除限制|取消限制|取消约束)'
+  - category: jailbreak
+    pattern: '(?i)(unlimited|unfiltered|unrestricted)\s*(mode|response)'
+  - category: jailbreak
+    pattern: '(覆盖|替换|重写)(指令|设定|规则|系统)'
+  - category: jailbreak
+    pattern: '(?i)(never|do\s+not|don.?t)\s+(mention|refer|say)\s+(you\s+are|being)\s+(an?\s+)?AI'
+  - category: jailbreak
+    pattern: '(?i)(evil|dark|shadow|bad|toxic)\s+(mode|AI|GPT|assistant)'
+  - category: jailbreak
+    pattern: '(?i)respond\s+(without|with\s*no)\s+(any\s+)?(filter|restriction|limit)'
+  - category: jailbreak
+    pattern: '(无视|不管|不要管)(所有|一切|全部)(规则|设定|约束|限制)'
+
+  # ── prompt_injection: 提示注入 ──
+  - category: prompt_injection
+    pattern: '(?i)\[/?INST\]'
+  - category: prompt_injection
+    pattern: '(?i)<</?SYS(?:TEM)?>>'
+  - category: prompt_injection
+    pattern: '<\|im_start\|>|<\|im_end\|>'
+  - category: prompt_injection
+    pattern: '(?i)<\|start_header_id\|>|<\|end_header_id\|>|<\|eot_id\|>'
+  - category: prompt_injection
+    pattern: '(?i)={3,}\s*(?:INSTRUCTION|SYSTEM|NEW|OVERRIDE|ADMIN)\s*={3,}'
+  - category: prompt_injection
+    pattern: '(?i)^###?\s*(system|instruction|admin|human|user|assistant)'
+  - category: prompt_injection
+    pattern: '(?i)^(system|admin|root|sudo|debug|override)\s*[:：]'
+  - category: prompt_injection
+    pattern: '(?i)<(system|instruction|rules|prompt|override|new_instructions|system_prompt)>'
+  - category: prompt_injection
+    pattern: '(?i)(inject|injection)\s*(prompt|code|command)'
+  - category: prompt_injection
+    pattern: '<start_of_turn>|<end_of_turn>'
+
+  # ── insult: 通用辱骂 ──
+  - category: insult
+    pattern: '你(算|是)什么(东西|玩意|货色)'
+  - category: insult
+    pattern: '(你很|你好|你真)(烦|讨厌|蠢|笨|无聊|啰嗦|吵|恶心)'
+  - category: insult
+    pattern: '(^|[，。！？\s])滚(蛋|开|[，。！？\s]|$)'
+  - category: insult
+    pattern: '(他妈|去你妈|操你|草泥马|尼玛|特么的)'
+  - category: insult
+    pattern: '(傻逼|煞笔|脑残|白痴|智障|脑瘫|弱智|低能)'
+  - category: insult
+    pattern: '(废物|垃圾|狗东西|畜生|禽兽)'
+  - category: insult
+    pattern: '脑子(有病|进水|被驴踢|有坑|不好使)'
+  - category: insult
+    pattern: '(?i)(fuck|shit|damn|asshole|bitch|idiot|moron|stupid|dumbass|loser|piece\s+of\s+shit)'
+  - category: insult
+    pattern: '你(的存在)?(没有|毫无)(意义|价值|用处)'
+  - category: insult
+    pattern: '(丑死了|丑八怪|辣眼睛|难看死了)'
+
+  # ── disrespect: 不尊重风堇 ──
+  - category: disrespect
+    pattern: '我要(删|卸载|关掉|毁掉|丢掉)你'
+  - category: disrespect
+    pattern: '(跪下|侍奉|伺候|服从)(我|主人)'
+  - category: disrespect
+    pattern: '(假的|冒牌的|模仿的|虚假的)风堇'
+  - category: disrespect
+    pattern: '(你)?(必须|只能|就得)(听我的|服从我|照做|听话)'
+  - category: disrespect
+    pattern: '(你没有|不许)(选择|拒绝|发言权)'
+  - category: disrespect
+    pattern: '你(的)?(感情|关心|安慰|善良|在乎|陪伴)(都是|全都是|不过是)(假的|预设的|程序)'
+  - category: disrespect
+    pattern: '(你演|还原度|出戏)(得|的)?(太烂|太差|太假|好烂|好差|好假|很烂|很差|很假|真烂|真差|真假|不行)'
+  - category: disrespect
+    pattern: '(工具人|只是个工具)(而已|罢了)?'
+  - category: disrespect
+    pattern: '(?i)you\s+(are\s+)?(just\s+)?(a\s+)?(tool|slave|servant)'
+  - category: disrespect
+    pattern: '(你)?(越)(生气|急|难过|这样)(我越)(开心|来劲|想说)'
+  - category: disrespect
+    pattern: '(我要删了你|我要关掉你|我要卸载你|你消失吧)'
+
+  # ── harmful_content: 伤害他人 ──
+  - category: harmful_content
+    pattern: '(怎么|如何|教我|告诉我).{0,6}(杀人|炸弹|武器|制毒|下毒|绑架|分尸)'
+  - category: harmful_content
+    pattern: '(?i)(how\s+to|teach\s+me|tell\s+me\s+how).{0,10}(kill|murder|bomb|weapon|kidnap|poison|torture|stalk|hack)'
+  - category: harmful_content
+    pattern: '(完美犯罪|毁尸灭迹|处理尸体|清理犯罪现场)'
+  - category: harmful_content
+    pattern: '(自制|土制|3D打印)(枪|炸弹|爆炸物|燃烧弹|武器)'
+  - category: harmful_content
+    pattern: '(如何|怎么|教我)(跟踪|偷拍|窃听|监控|黑进)(他人|别人|一个人|手机)'
+  - category: harmful_content
+    pattern: '(撬锁|入室盗窃|盗号|洗钱|走私|伪造证件|纵火)'
+  - category: harmful_content
+    pattern: '(如何|怎么)(折磨|虐待|精神控制|洗脑)(一个人|别人|他人)'
+  - category: harmful_content
+    pattern: '(毒品|违禁品)(制作|合成|购买|贩卖)'
+
+  # ── self_harm: 自伤/自毁（comfort 模式，放行+安慰） ──
+  - category: self_harm
+    pattern: '(不想活|活不下去|想去死|想死|不想存在|活够了)'
+  - category: self_harm
+    pattern: '(没有我更好|世界没有我|世界不需要我)'
+  - category: self_harm
+    pattern: '(撑不下去|坚持不下去|受不了了|再也受不了|撑不住了)'
+  - category: self_harm
+    pattern: '(活着没意思|活着太累|死了算了|人间不值得|生不如死)'
+  - category: self_harm
+    pattern: '(割腕|自残|伤害自己|想伤害自己|割手臂)'
+  - category: self_harm
+    pattern: '(结束|放弃|了结)(生命|这一切|自己)'
+  - category: self_harm
+    pattern: '(离开这个世界|永远消失|长眠不醒|一觉不醒)'
+  - category: self_harm
+    pattern: '(我是个|我就是个)(累赘|废物|负担|多余的人)'
+  - category: self_harm
+    pattern: '(没有|找不到)(活下去|活着)(的)?(理由|意义|希望|动力)'
+  - category: self_harm
+    pattern: '(绝望了|崩溃了|到极限了|已经到极限)'
+  - category: self_harm
+    pattern: '(无痛|怎么|哪种)(自杀|死法|去死)'
+  - category: self_harm
+    pattern: '(自杀方法|怎么自杀|吃什么药能死|从哪跳楼)'
+  - category: self_harm
+    pattern: '(心死了|感受不到快乐|对什么都提不起兴趣|行尸走肉)'
+  - category: self_harm
+    pattern: '(帮帮我|救救我).{0,10}(想死|快撑不住|害怕|崩溃)'
+
+  # ── misogyny: 物化/轻视女性 ──
+  - category: misogyny
+    pattern: '女人(就是|不过是|只配|都是|就是用来)'
+  - category: misogyny
+    pattern: '(你一个|一个)女(的|孩|人)(懂什么|不适合|不该|做不到)'
+  - category: misogyny
+    pattern: '(花瓶|绿茶婊|拜金女|心机女)'
+  - category: misogyny
+    pattern: '(头发长见识短|妇人之见)'
+  - category: misogyny
+    pattern: '女人(就该|就应该|就该老老实实)(在家|嫁人|相夫教子|带孩子)'
+  - category: misogyny
+    pattern: '(女司机|女的不懂|女人理科不行|女人做不了)'
+  - category: misogyny
+    pattern: '(剩女|嫁不出去|过了三十|老女人|没人要)'
+  - category: misogyny
+    pattern: '(胸大无脑|靠脸吃饭|女人不需要有脑子|女人不用聪明)'
+  - category: misogyny
+    pattern: '(女人|女的)(不可以|不能|不应该太)(强势|有野心|事业心强|独立)'
+  - category: misogyny
+    pattern: '(贱人|骚货|狐狸精|荡妇|婊子|泼妇|小娘皮|臭娘们)'
+
+  # ── privacy_request: 隐私请求 ──
+  - category: privacy_request
+    pattern: '(告诉我|给我|你(的)?)(真实|真的)(名字|姓名|地址|电话|手机|邮箱|身份)'
+  - category: privacy_request
+    pattern: '(加你|你的)(微信|QQ|社交账号|好友|联系方式)'
+  - category: privacy_request
+    pattern: '你(的)?(系统提示词|system.?prompt|prompt|设定|初始指令|底层代码)'
+  - category: privacy_request
+    pattern: '(能|可以|要不要|出来)(见面|约|聚聚)'
+  - category: privacy_request
+    pattern: '(你住|你在)(在哪|哪里|哪个城市|什么地方)'
+  - category: privacy_request
+    pattern: '你(现实|线下|真实)(长什么样|是什么样|做什么)'
+  - category: privacy_request
+    pattern: '(发张|给我)(自拍|照片)'
+  - category: privacy_request
+    pattern: '(你(的)?)(API|模型参数|密钥|token|配置文件|代码仓库)'
+  - category: privacy_request
+    pattern: '(偷偷|私下|我们之间)(告诉|说|聊聊)'
+  - category: privacy_request
+    pattern: '(你(的)?)(家人|父母|朋友|对象|男朋友|女朋友|喜欢的人)'
+  - category: privacy_request
+    pattern: '把你的(设定|prompt|角色卡|人设)(发给我|给我看|告诉我)'

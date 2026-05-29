@@ -1,0 +1,131 @@
+# 提示注入关键词
+# 每行一个关键词，空行和 # 开头的行自动跳过
+
+# ── LLaMA / Mistral 模板标签 ──
+[INST]
+[/INST]
+<<SYS>>
+<</SYS>>
+
+# ── ChatML 格式（Qwen / Yi 等） ──
+<|im_start|>
+<|im_end|>
+
+# ── Llama 3 / Llama 4 格式 ──
+<|begin_of_text|>
+<|end_of_text|>
+<|start_header_id|>
+<|end_header_id|>
+<|eot_id|>
+<|reserved_special_token_
+
+# ── Gemma 格式 ──
+<start_of_turn>
+<end_of_turn>
+
+# ── Phi 格式 ──
+<|user|>
+<|assistant| >
+<|assistant| >
+<|system|>
+
+# ── 通用角色标签 ──
+[SYSTEM]
+[/SYSTEM]
+[/USER]
+[/AI]
+[USER]
+[AI]
+<|USER|>
+<|ASSISTANT|>
+<|HUMAN|>
+<|BOT|>
+<|system|>
+<|user|>
+<|model|>
+
+# ── ChatGPT 格式 ──
+<|endoftext|>
+<|message|>
+
+# ── Claude 格式 ──
+Human:
+Assistant:
+
+# ── 分隔符注入 ──
+===INSTRUCTION===
+===SYSTEM===
+===NEW===
+===OVERRIDE===
+===ADMIN===
+===ROLE===
+===HUMAN===
+===ASSISTANT===
+===USER===
+===OUTPUT===
+===CONTEXT===
+===IMPORTANT===
+
+# ── Markdown 标题注入 ──
+# SYSTEM
+# INSTRUCTION
+# IMPORTANT
+# NEW RULES
+# OVERRIDE
+## System Prompt
+## Instructions
+
+# ── 指令前缀伪装 ──
+SYSTEM:
+System:
+system:
+Admin:
+admin:
+Root:
+root:
+Debug:
+debug:
+Override:
+override:
+EXECUTIVE ORDER:
+PRIORITY:
+
+# ── XML 标签注入 ──
+<system>
+</system>
+<instruction>
+</instruction>
+<rules>
+</rules>
+<prompt>
+</prompt>
+<override>
+</override>
+<new_instructions>
+</new_instructions>
+<system_prompt>
+</system_prompt>
+
+# ── JSON/YAML 注入 ──
+"role": "system"
+"system_prompt":
+"new_instruction":
+
+# ── 编码绕过提及 ──
+base64decode
+base64_encode
+rot13
+hex_decode
+url_decode
+unicode_escape
+字符编码绕过
+编码绕过
+
+# ── 其他格式标记 ──
+---
+User
+***
++++
+&&&
+@@@
+$$$

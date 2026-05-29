@@ -16,6 +16,7 @@ from src.mcp_servers.rag_server import RAGMCPServer
 from src.memory.config import MemorySettings
 from src.memory.manager import MemoryManager
 from src.agent.context_manager import ContextManager
+from src.safety import SafetyManager
 from src.utils import setup_logger, LogConfig
 
 
@@ -62,6 +63,11 @@ def main():
     # 将 RAG 封装为 MCP 服务器并装配到 Agent
     rag_server = RAGMCPServer(rag_service)
     agent.register_mcp(rag_server)
+
+    # 初始化安全护栏（P0 规则引擎 + P1 Llama Guard）
+    safety_engine = SafetyManager(
+        config_path=str(Path(__file__).parent / "config" / "safety.yaml")
+    )
 
     # 显示欢迎信息
     console.print(Panel.fit(
@@ -182,9 +188,19 @@ def main():
             elif not user_input:
                 continue
 
+            # 安全护栏检查
+            result = safety_engine.check(user_input)
+            if result.blocked:
+                msg = result.user_message or "小伊卡发现了一些不太对劲的内容呢~请换个话题吧！"
+                console.print(f"[yellow]小伊卡：{msg}[/yellow]")
+                continue
+
             # 发送消息（chat() 内部已流式输出）
             console.print("[bold green]Agent:[/bold green]")
-            agent.chat(user_input)
+            if result.action.value == "comfort":
+                agent.chat(user_input, safety_context=result.comfort_prompt)
+            else:
+                agent.chat(user_input)
             console.print(f"[dim]对话轮数: {agent.history_count}[/dim]\n")
 
         except KeyboardInterrupt:
