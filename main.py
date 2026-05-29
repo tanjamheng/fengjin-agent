@@ -41,6 +41,7 @@ from src.memory.config import MemorySettings
 from src.memory.manager import MemoryManager
 from src.agent.context_manager import ContextManager
 from src.safety import SafetyManager
+from src.session import SessionManager, ContextRestorer
 from src.utils import setup_logger, LogConfig
 
 # ── 模型目录 ──
@@ -78,6 +79,164 @@ def ensure_models(console: Console) -> None:
         console.print(f"[green]  {local_name} 下载完成[/green]")
 
     console.print("[green]所有模型下载完成[/green]")
+
+
+def _print_recent_messages(console: Console, session_mgr: SessionManager, n: int) -> None:
+    """打印最近 N 条消息"""
+    recent = session_mgr.get_recent_messages(n)
+    if not recent:
+        console.print("[dim]（暂无历史消息）[/dim]")
+        return
+
+    session = session_mgr.current_session
+    total = session.message_count if session else 0
+    if total > n:
+        console.print(f"[dim]（显示最近 {n} 条，共 {total} 条。输入 /history 查看全部）[/dim]")
+
+    for msg in recent:
+        if msg.role == "user":
+            console.print(f"[bold blue]你:[/bold blue] {msg.content}")
+        else:
+            console.print(f"[bold green]风堇:[/bold green] {msg.content}")
+    console.print("")
+
+
+def _handle_command(cmd: str, args: str, console: Console,
+                    session_mgr: SessionManager, context_restorer: ContextRestorer,
+                    agent: Agent, memory_manager: MemoryManager,
+                    max_turns: int) -> bool:
+    """处理会话命令。返回 True 表示继续循环，False 表示退出。"""
+
+    if cmd == "/quit":
+        session_mgr.flush()
+        agent.cleanup()
+        memory_manager.cleanup()
+        console.print("[yellow]再见！[/yellow]")
+        return False
+
+    elif cmd == "/new":
+        session_mgr.flush()
+        session = session_mgr.create_session()
+        agent.clear_history()
+        console.print(f"[green]新会话已创建: {session.title}[/green]")
+        console.print("[bold green]风堇:[/bold green] 灰宝~今天想聊什么呢？\n")
+        return True
+
+    elif cmd == "/list":
+        sessions = session_mgr.list_sessions()
+        if not sessions:
+            console.print("[dim]暂无历史会话[/dim]")
+            return True
+
+        table = Table(title="会话列表")
+        table.add_column("#", style="cyan", width=4)
+        table.add_column("标题", style="white")
+        table.add_column("消息数", style="yellow", width=6)
+        table.add_column("最后活跃", style="green")
+
+        current_id = session_mgr.get_current_session_id()
+        for i, s in enumerate(sessions, 1):
+            title = s["title"]
+            if s["session_id"] == current_id:
+                title = f"[bold]{title}（当前）[/bold]"
+            table.add_row(
+                str(i),
+                title,
+                str(s["message_count"]),
+                s["updated_at"].strftime("%Y-%m-%d %H:%M"),
+            )
+        console.print(table)
+        return True
+
+    elif cmd == "/switch":
+        if not args:
+            console.print("[red]用法: /switch <编号>[/red]")
+            return True
+
+        sessions = session_mgr.list_sessions()
+        try:
+            idx = int(args) - 1
+            if idx < 0 or idx >= len(sessions):
+                raise ValueError
+        except ValueError:
+            console.print("[red]无效编号，请用 /list 查看会话列表[/red]")
+            return True
+
+        target = sessions[idx]
+        session_mgr.flush()
+        session = session_mgr.load_session(target["session_id"])
+        if not session:
+            console.print("[red]加载会话失败[/red]")
+            return True
+
+        # 恢复 Agent 对话历史
+        agent.messages = session_mgr.get_current_messages()
+
+        console.print(f"[green]已加载会话: {session.title}[/green]")
+        _print_recent_messages(console, session_mgr, n=max_turns)
+        return True
+
+    elif cmd == "/history":
+        if not session_mgr.current_session:
+            console.print("[dim]暂无会话[/dim]")
+            return True
+
+        session = session_mgr.current_session
+        console.print(f"[dim]=== {session.title}（共 {session.message_count} 条）===[/dim]")
+        for msg in session.messages:
+            if msg.role == "user":
+                console.print(f"[bold blue]你:[/bold blue] {msg.content}")
+            else:
+                console.print(f"[bold green]风堇:[/bold green] {msg.content}")
+        console.print("[dim]=== 结束 ===[/dim]\n")
+        return True
+
+    elif cmd == "/rename":
+        if not args:
+            console.print("[red]用法: /rename <新标题>[/red]")
+            return True
+        sid = session_mgr.get_current_session_id()
+        if not sid:
+            console.print("[dim]暂无会话[/dim]")
+            return True
+        session_mgr.rename_session(sid, args)
+        console.print(f"[green]已重命名: {args}[/green]")
+        return True
+
+    elif cmd == "/delete":
+        if not args:
+            console.print("[red]用法: /delete <编号>[/red]")
+            return True
+
+        sessions = session_mgr.list_sessions()
+        try:
+            idx = int(args) - 1
+            if idx < 0 or idx >= len(sessions):
+                raise ValueError
+        except ValueError:
+            console.print("[red]无效编号，请用 /list 查看会话列表[/red]")
+            return True
+
+        target = sessions[idx]
+        confirm = console.input(
+            f"[yellow]确定删除会话「{target['title']}」？(y/n): [/yellow]"
+        ).strip().lower()
+        if confirm != "y":
+            console.print("[dim]已取消[/dim]")
+            return True
+
+        session_mgr.delete_session(target["session_id"])
+        console.print(f"[green]已删除会话: {target['title']}[/green]")
+
+        # 如果删的是当前会话，清空 Agent
+        if target["session_id"] == session_mgr.get_current_session_id():
+            agent.clear_history()
+            console.print("[dim]当前会话已清空，请用 /new 创建新会话[/dim]")
+        return True
+
+    # 未知命令
+    console.print(f"[red]未知命令: {cmd}[/red]")
+    return True
 
 
 def main():
@@ -134,14 +293,38 @@ def main():
         config_path=str(PROJECT_ROOT / "config" / "safety.yaml")
     )
 
+    # 初始化会话管理
+    session_mgr = SessionManager(str(PROJECT_ROOT / "data" / "sessions"))
+    context_restorer = ContextRestorer(
+        context_manager=context_manager,
+        memory_retriever=memory_manager,
+    )
+
+    # 尝试恢复上次会话
+    sessions = session_mgr.list_sessions()
+    if sessions:
+        last = sessions[0]
+        session = session_mgr.load_session(last["session_id"])
+        if session:
+            agent.messages = session_mgr.get_current_messages()
+            console.print(f"[dim]已恢复上次会话: {session.title}[/dim]")
+
     # 显示欢迎信息
+    current_title = session_mgr.current_session.title if session_mgr.current_session else "无"
     console.print(Panel.fit(
         f"[bold green]{config.agent.name}[/bold green]\n"
         f"模型: {config.model}\n"
         f"已装配 MCP: [bold cyan]rag[/bold cyan]\n"
         f"上下文管理: [bold cyan]{'启用' if context_settings.context.memory.enabled else '未启用'}[/bold cyan]\n"
+        f"当前会话: [bold white]{current_title}[/bold white]\n"
+        "\n"
         "输入 [bold red]/quit[/bold red] 退出\n"
-        "输入 [bold yellow]/clear[/bold yellow] 清空对话历史\n"
+        "输入 [bold yellow]/new[/bold yellow] 新建会话\n"
+        "输入 [bold yellow]/list[/bold yellow] 查看会话列表\n"
+        "输入 [bold yellow]/switch <编号>[/bold yellow] 切换会话\n"
+        "输入 [bold yellow]/history[/bold yellow] 查看当前会话全部历史\n"
+        "输入 [bold yellow]/rename <标题>[/bold yellow] 重命名当前会话\n"
+        "输入 [bold yellow]/delete <编号>[/bold yellow] 删除会话\n"
         "输入 [bold magenta]/ingest <文件路径>[/bold magenta] 导入文档\n"
         "输入 [bold magenta]/ingest_dir <目录路径>[/bold magenta] 批量导入知识库\n"
         "输入 [bold white]/stats[/bold white] 查看知识库状态\n"
@@ -156,119 +339,148 @@ def main():
         try:
             user_input = console.input("[bold blue]你:[/bold blue] ").strip()
 
-            # 处理命令
-            if user_input == "/quit":
-                agent.cleanup()
-                memory_manager.cleanup()
-                console.print("[yellow]再见！[/yellow]")
-                break
+            # 会话管理命令
+            if user_input.startswith("/"):
+                parts = user_input.split(maxsplit=1)
+                cmd = parts[0].lower()
+                args = parts[1].strip() if len(parts) > 1 else ""
 
-            elif user_input == "/clear":
-                agent.clear_history()
-                console.print("[green]对话历史已清空[/green]")
-                continue
+                # 会话管理命令
+                if cmd in ("/quit", "/new", "/list", "/switch", "/history", "/rename", "/delete"):
+                    should_continue = _handle_command(
+                        cmd, args, console, session_mgr, context_restorer,
+                        agent, memory_manager,
+                        max_turns=context_settings.context.sliding_window.max_turns,
+                    )
+                    if not should_continue:
+                        break
+                    continue
 
-            elif user_input.startswith("/ingest_dir "):
-                dir_path = user_input[12:].strip()
-                try:
-                    result = rag_service.ingest_directory(dir_path, recursive=True)
-                    console.print(f"[green]成功导入 {result['document_count']} 个文档，共 {result['total_chunks']} 个文本块[/green]")
-                except Exception as e:
-                    console.print(f"[red]导入失败: {e}[/red]")
-                continue
+                # RAG/工具命令
+                if cmd == "/clear":
+                    agent.clear_history()
+                    session_mgr.create_session()
+                    console.print("[green]对话历史已清空，新会话已创建[/green]")
+                    continue
 
-            elif user_input.startswith("/ingest "):
-                file_path = user_input[8:].strip()
-                try:
-                    result = rag_service.ingest_document(file_path)
-                    console.print(f"[green]成功导入文档，生成 {result['chunk_count']} 个文本块[/green]")
-                except Exception as e:
-                    console.print(f"[red]导入失败: {e}[/red]")
-                continue
+                elif cmd == "/ingest_dir" and args:
+                    try:
+                        result = rag_service.ingest_directory(args, recursive=True)
+                        console.print(f"[green]成功导入 {result['document_count']} 个文档，共 {result['total_chunks']} 个文本块[/green]")
+                    except Exception as e:
+                        console.print(f"[red]导入失败: {e}[/red]")
+                    continue
 
-            elif user_input == "/stats":
-                stats = rag_service.get_stats()
-                table = Table(title="知识库状态")
-                table.add_column("属性", style="cyan")
-                table.add_column("值", style="green")
-                for key, value in stats.items():
-                    table.add_row(str(key), str(value))
-                console.print(table)
-                continue
+                elif cmd == "/ingest" and args:
+                    try:
+                        result = rag_service.ingest_document(args)
+                        console.print(f"[green]成功导入文档，生成 {result['chunk_count']} 个文本块[/green]")
+                    except Exception as e:
+                        console.print(f"[red]导入失败: {e}[/red]")
+                    continue
 
-            elif user_input == "/tools":
-                tools = agent.list_tools()
-                if not tools:
-                    console.print("[dim]暂无已装配的工具[/dim]")
-                else:
-                    table = Table(title="可用 Tools")
-                    table.add_column("名称", style="cyan")
-                    table.add_column("类型", style="yellow")
-                    table.add_column("来源", style="magenta")
-                    table.add_column("描述", style="white")
-                    for tool in tools:
-                        table.add_row(
-                            tool["name"],
-                            tool.get("type", ""),
-                            tool.get("source", ""),
-                            tool.get("description", "")
-                        )
+                elif cmd == "/stats":
+                    stats = rag_service.get_stats()
+                    table = Table(title="知识库状态")
+                    table.add_column("属性", style="cyan")
+                    table.add_column("值", style="green")
+                    for key, value in stats.items():
+                        table.add_row(str(key), str(value))
                     console.print(table)
-                continue
+                    continue
 
-            elif user_input == "/skills":
-                skills = agent.list_skills()
-                if not skills:
-                    console.print("[dim]暂无已装配的技能[/dim]")
-                else:
-                    table = Table(title="已装配 Skills")
-                    table.add_column("名称", style="cyan")
-                    table.add_column("描述", style="white")
-                    table.add_column("版本", style="yellow")
-                    for skill in skills:
-                        table.add_row(skill["name"], skill["description"], skill["version"])
-                    console.print(table)
-                continue
+                elif cmd == "/tools":
+                    tools = agent.list_tools()
+                    if not tools:
+                        console.print("[dim]暂无已装配的工具[/dim]")
+                    else:
+                        table = Table(title="可用 Tools")
+                        table.add_column("名称", style="cyan")
+                        table.add_column("类型", style="yellow")
+                        table.add_column("来源", style="magenta")
+                        table.add_column("描述", style="white")
+                        for tool in tools:
+                            table.add_row(
+                                tool["name"],
+                                tool.get("type", ""),
+                                tool.get("source", ""),
+                                tool.get("description", "")
+                            )
+                        console.print(table)
+                    continue
 
-            elif user_input == "/mcp":
-                servers = agent.list_mcp_servers()
-                if not servers:
-                    console.print("[dim]暂无 MCP 服务器[/dim]")
+                elif cmd == "/skills":
+                    skills = agent.list_skills()
+                    if not skills:
+                        console.print("[dim]暂无已装配的技能[/dim]")
+                    else:
+                        table = Table(title="已装配 Skills")
+                        table.add_column("名称", style="cyan")
+                        table.add_column("描述", style="white")
+                        table.add_column("版本", style="yellow")
+                        for skill in skills:
+                            table.add_row(skill["name"], skill["description"], skill["version"])
+                        console.print(table)
+                    continue
+
+                elif cmd == "/mcp":
+                    servers = agent.list_mcp_servers()
+                    if not servers:
+                        console.print("[dim]暂无 MCP 服务器[/dim]")
+                    else:
+                        table = Table(title="MCP 服务器")
+                        table.add_column("名称", style="cyan")
+                        table.add_column("描述", style="white")
+                        table.add_column("已初始化", style="green")
+                        table.add_column("工具数", style="yellow")
+                        for server in servers:
+                            table.add_row(
+                                server["name"],
+                                server["description"],
+                                str(server["initialized"]),
+                                str(server["tool_count"])
+                            )
+                        console.print(table)
+                    continue
+
                 else:
-                    table = Table(title="MCP 服务器")
-                    table.add_column("名称", style="cyan")
-                    table.add_column("描述", style="white")
-                    table.add_column("已初始化", style="green")
-                    table.add_column("工具数", style="yellow")
-                    for server in servers:
-                        table.add_row(
-                            server["name"],
-                            server["description"],
-                            str(server["initialized"]),
-                            str(server["tool_count"])
-                        )
-                    console.print(table)
-                continue
+                    console.print(f"[red]未知命令: {cmd}[/red]")
+                    continue
 
             elif not user_input:
                 continue
+
+            # 确保有当前会话
+            if not session_mgr.current_session:
+                session_mgr.create_session()
+
+            # 记录用户消息到会话
+            session_mgr.append_message("user", user_input)
 
             # 安全护栏检查
             result = safety_engine.check(user_input)
             if result.blocked:
                 msg = result.user_message or "小伊卡发现了一些不太对劲的内容呢~请换个话题吧！"
                 console.print(f"[yellow]小伊卡：{msg}[/yellow]")
+                session_mgr.append_message("assistant", f"[小伊卡拦截] {msg}")
+                session_mgr.flush()
                 continue
 
             # 发送消息（chat() 内部已流式输出）
-            console.print("[bold green]Agent:[/bold green]")
+            console.print("[bold green]风堇:[/bold green]")
             if result.action.value == "comfort":
-                agent.chat(user_input, safety_context=result.comfort_prompt)
+                reply = agent.chat(user_input, safety_context=result.comfort_prompt)
             else:
-                agent.chat(user_input)
+                reply = agent.chat(user_input)
+
+            # 记录助手回复到会话
+            session_mgr.append_message("assistant", reply)
+            session_mgr.flush()
+
             console.print(f"[dim]对话轮数: {agent.history_count}[/dim]\n")
 
         except KeyboardInterrupt:
+            session_mgr.flush()
             agent.cleanup()
             memory_manager.cleanup()
             console.print("\n[yellow]再见！[/yellow]")
