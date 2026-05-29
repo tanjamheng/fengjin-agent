@@ -34,8 +34,12 @@ class DenseIndex(IndexStrategy):
         # 初始化 Embedding 模型
         try:
             from sentence_transformers import SentenceTransformer
+            model_path = self.embedding_model_name
+            # 相对路径解析为项目根目录下的绝对路径
+            if not Path(model_path).is_absolute():
+                model_path = str(Path(__file__).parent.parent.parent.parent.parent / model_path)
             self._embedding_model = SentenceTransformer(
-                self.embedding_model_name,
+                model_path,
                 device=self.device
             )
         except ImportError:

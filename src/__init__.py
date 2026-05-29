@@ -1,37 +1,5 @@
-"""Src 包"""
+"""Src 包
 
-from .config import Config, RAGSettings, RAGConfig
-from .agent import Agent, SkillRegistry, ToolRegistry, MCPManager
-from .capabilities import SkillBase, ToolBase, MCPServerBase
-from .rag import (
-    DocumentLoader, Document,
-    TextSplitter, Indexer, Retriever,
-    QueryEnhancer, Reranker
-)
-from .rag.rag_service import RAGService
-from .mcp_servers.rag_server import RAGMCPServer
-from .utils import setup_logger, get_logger
-
-__all__ = [
-    "Config",
-    "RAGSettings",
-    "RAGConfig",
-    "Agent",
-    "SkillRegistry",
-    "ToolRegistry",
-    "MCPManager",
-    "SkillBase",
-    "ToolBase",
-    "MCPServerBase",
-    "RAGService",
-    "RAGMCPServer",
-    "setup_logger",
-    "get_logger",
-    "DocumentLoader",
-    "Document",
-    "TextSplitter",
-    "Indexer",
-    "Retriever",
-    "QueryEnhancer",
-    "Reranker",
-]
+不在这里 import 子模块，避免 import 时拖入 torch/tensorflow 等重量级依赖。
+各子模块在 main.py 中按需显式 import。
+"""

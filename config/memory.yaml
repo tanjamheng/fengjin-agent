@@ -1,10 +1,11 @@
 # 记忆系统配置
 memory:
   # ChromaDB 存储配置
+  # embedding_model: 支持 HuggingFace model_id 或本地目录路径
   chroma:
     persist_directory: "data/memory_chroma"
     collection_name: "memories"
-    embedding_model: "BAAI/bge-m3"
+    embedding_model: "models/bge-m3"
 
   # 内容提取配置（每轮对话后异步调用的小模型）
   extraction:

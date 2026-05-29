@@ -5,6 +5,7 @@
 """
 
 from typing import List
+from pathlib import Path
 from .base import RerankerStrategy
 from ..retriever.base import SearchResult
 
@@ -40,7 +41,12 @@ class CrossEncoderReranker(RerankerStrategy):
             if self.device == "cuda" and not torch.cuda.is_available():
                 effective_device = "cpu"
 
-            self._model = CrossEncoder(self.model_name, device=effective_device)
+            model_path = self.model_name
+            # 相对路径解析为项目根目录下的绝对路径
+            if not Path(model_path).is_absolute():
+                model_path = str(Path(__file__).parent.parent.parent.parent.parent / model_path)
+
+            self._model = CrossEncoder(model_path, device=effective_device)
         except ImportError:
             raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")
 

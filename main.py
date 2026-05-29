@@ -1,13 +1,37 @@
 """CLI 入口"""
 
+import logging
+import os
 import sys
+import warnings
 from pathlib import Path
+
+# ── 抑制第三方库噪音 + 加速初始化（必须在 import 之前设置）──
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"           # TensorFlow C++: 只显示 FATAL
+os.environ["TOKENIZERS_PARALLELISM"] = "false"      # tokenizers: 禁止并行化警告
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"      # transformers: 只显示错误
+os.environ["CUDA_MODULE_LOADING"] = "LAZY"          # PyTorch: 延迟加载 CUDA 模块
+# HF_HUB_OFFLINE 和 TRANSFORMERS_OFFLINE 在 ensure_models() 完成后设置
+
+# 抑制第三方库 Python logger
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+logging.getLogger("tf_keras").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
+warnings.filterwarnings("ignore", module="tensorflow.*")
+warnings.filterwarnings("ignore", module="tf_keras.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*torch_dtype.*")
+warnings.filterwarnings("ignore", message=".*attention mask.*")
+warnings.filterwarnings("ignore", message=".*pad_token_id.*")
+warnings.filterwarnings("ignore", message=".*generation flags.*")
+warnings.filterwarnings("ignore", message=".*meta device.*")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.markdown import Markdown
 from rich.table import Table
 from src.config import Config, RAGSettings, ContextSettings
 from src.agent import Agent
@@ -19,6 +43,42 @@ from src.agent.context_manager import ContextManager
 from src.safety import SafetyManager
 from src.utils import setup_logger, LogConfig
 
+# ── 模型目录 ──
+PROJECT_ROOT = Path(__file__).parent
+MODELS_DIR = PROJECT_ROOT / "models"
+
+# 模型清单：(本地子目录, ModelScope model_id)
+MODELS = [
+    ("bge-m3", "BAAI/bge-m3"),
+    ("bge-reranker-v2-m3", "BAAI/bge-reranker-v2-m3"),
+    ("Llama-Guard-3-1B", "LLM-Research/Llama-Guard-3-1B"),
+]
+
+
+def ensure_models(console: Console) -> None:
+    """检查本地模型是否存在，缺失则通过 ModelScope 自动下载"""
+    from modelscope.hub.snapshot_download import snapshot_download
+
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+    missing = []
+    for local_name, ms_id in MODELS:
+        local_path = MODELS_DIR / local_name
+        if not local_path.exists() or not any(local_path.iterdir()):
+            missing.append((local_name, ms_id))
+
+    if not missing:
+        console.print("[green]所有模型已在本地就绪[/green]")
+        return
+
+    for local_name, ms_id in missing:
+        console.print(f"[yellow]模型 {local_name} 未找到，正在从 ModelScope 下载...[/yellow]")
+        local_path = MODELS_DIR / local_name
+        snapshot_download(ms_id, local_dir=str(local_path))
+        console.print(f"[green]  {local_name} 下载完成[/green]")
+
+    console.print("[green]所有模型下载完成[/green]")
+
 
 def main():
     """主函数"""
@@ -28,19 +88,26 @@ def main():
     log_config = LogConfig(log_level="INFO", json_format=False)
     setup_logger(log_config)
 
+    # 检查并下载模型（需要网络，完成后切离线）
+    ensure_models(console)
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+    console.print("[dim]正在加载模型和初始化组件，请稍候...[/dim]")
+
     # 加载配置
-    config_path = Path(__file__).parent / "config" / "config.yaml"
+    config_path = PROJECT_ROOT / "config" / "config.yaml"
     config = Config.load(str(config_path))
 
-    rag_config_path = Path(__file__).parent / "config" / "rag.yaml"
+    rag_config_path = PROJECT_ROOT / "config" / "rag.yaml"
     rag_config = RAGSettings.load(str(rag_config_path))
 
     # 加载上下文管理配置
-    context_config_path = Path(__file__).parent / "config" / "context.yaml"
+    context_config_path = PROJECT_ROOT / "config" / "context.yaml"
     context_settings = ContextSettings.load(str(context_config_path))
 
     # 初始化记忆系统
-    memory_config_path = Path(__file__).parent / "config" / "memory.yaml"
+    memory_config_path = PROJECT_ROOT / "config" / "memory.yaml"
     memory_settings = MemorySettings.load(str(memory_config_path))
     memory_manager = MemoryManager(memory_settings.memory)
 
@@ -57,16 +124,14 @@ def main():
         memory_manager=memory_manager
     )
 
-    # 创建 RAG 服务（纯功能层）
+    # 创建 RAG 服务（纯功能层）并装配到 Agent
     rag_service = RAGService(rag_config, llm_client=agent.client)
-
-    # 将 RAG 封装为 MCP 服务器并装配到 Agent
     rag_server = RAGMCPServer(rag_service)
     agent.register_mcp(rag_server)
 
     # 初始化安全护栏（P0 规则引擎 + P1 Llama Guard）
     safety_engine = SafetyManager(
-        config_path=str(Path(__file__).parent / "config" / "safety.yaml")
+        config_path=str(PROJECT_ROOT / "config" / "safety.yaml")
     )
 
     # 显示欢迎信息

@@ -26,10 +26,11 @@ rag:
   # Dense: BGE-M3 embedding + ChromaDB
   # Sparse: BM25 (rank_bm25)
   # RRF 融合权重: Dense 0.7, Sparse 0.3
+  # embedding_model: 支持 HuggingFace model_id 或本地目录路径
   index:
     type: "hybrid"
     params:
-      embedding_model: "BAAI/bge-m3"
+      embedding_model: "models/bge-m3"
       persist_directory: "data/chroma"
       collection_name: "fengjin_knowledge"
       store_type: "chroma"
@@ -56,9 +57,10 @@ rag:
   # 重排序 — Cross-Encoder (BGE-reranker-v2-m3)
   # GPU 加速：device 设为 "cuda"（需安装 CUDA 版 PyTorch）
   # 4GB 显存（RTX 3050）放得下 v2-m3（~1.1GB FP16），放不下 minicpm-layerwise（2B）
+  # model: 支持 HuggingFace model_id 或本地目录路径
   reranker:
     type: "cross_encoder"
     params:
-      model: "BAAI/bge-reranker-v2-m3"
+      model: "models/bge-reranker-v2-m3"
       top_n: 4
       device: "cuda"

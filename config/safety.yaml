@@ -83,12 +83,14 @@ safety:
       - 保持风堇的语气和角色，用她的方式表达关心
 
   # P1 Llama Guard 模型（语义安全检测）
+  # source: "local" 使用本地模型（由 main.py ensure_models 自动下载到 models/）
+  # source: "modelscope" 使用 ModelScope 在线缓存
   guard_model:
     enabled: true
-    model_id: "LLM-Research/Llama-Guard-3-1B"
-    source: "modelscope"
+    model_id: "models/Llama-Guard-3-1B"
+    source: "local"
     device: "auto"
     dtype: "bfloat16"
-    lazy_load: true
+    lazy_load: false
     timeout: 5.0
     fallback: "pass"

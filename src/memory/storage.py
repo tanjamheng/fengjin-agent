@@ -1,6 +1,7 @@
 """ChromaDB 存储封装"""
 
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import chromadb
@@ -22,8 +23,13 @@ class MemoryStorage:
         self.config = config
         self.client = chromadb.PersistentClient(path=config.chroma.persist_directory)
 
+        # 相对路径解析为项目根目录下的绝对路径
+        embedding_model = config.chroma.embedding_model
+        if not Path(embedding_model).is_absolute():
+            embedding_model = str(Path(__file__).parent.parent.parent / embedding_model)
+
         embedding_fn = SentenceTransformerEmbeddingFunction(
-            model_name=config.chroma.embedding_model
+            model_name=embedding_model
         )
         self.collection = self.client.get_or_create_collection(
             name=config.chroma.collection_name,

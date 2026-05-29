@@ -1,5 +1,7 @@
 """P1: Llama Guard 3 1B 语义安全检测"""
 
+import contextlib
+import os
 import threading
 from pathlib import Path
 from typing import Optional
@@ -90,11 +92,14 @@ class GuardModel:
             ).to(self._device)
 
             import torch
+            attention_mask = torch.ones_like(input_ids)
             with torch.no_grad():
                 output = self._model.generate(
                     input_ids,
+                    attention_mask=attention_mask,
                     max_new_tokens=100,
                     do_sample=False,
+                    pad_token_id=self._tokenizer.eos_token_id,
                 )
 
             prompt_len = input_ids.shape[1]
@@ -146,11 +151,14 @@ class GuardModel:
             }
             torch_dtype = dtype_map.get(self.config.dtype, torch.bfloat16)
 
-            self._model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                torch_dtype=torch_dtype,
-                device_map=self.config.device,
-            )
+            # 抑制 transformers 加载时的 stderr 噪音（如 "meta device" 警告）
+            with open(os.devnull, "w") as devnull:
+                with contextlib.redirect_stderr(devnull):
+                    self._model = AutoModelForCausalLM.from_pretrained(
+                        model_path,
+                        torch_dtype=torch_dtype,
+                        device_map=self.config.device,
+                    )
             self._device = self._model.device
 
             self._loaded = True
@@ -221,8 +229,17 @@ class GuardModel:
     # ── 配置加载 ──────────────────────────────────────────
 
     def _resolve_model_path(self) -> str:
-        """解析模型路径：ModelScope 缓存 / HuggingFace / 本地路径"""
+        """解析模型路径：本地路径 / ModelScope 缓存 / HuggingFace"""
         model_id = self.config.model_id
+
+        if self.config.source == "local":
+            path = Path(model_id)
+            if not path.is_absolute():
+                path = Path(__file__).parent.parent.parent / path
+            if not path.exists():
+                raise FileNotFoundError(f"本地模型路径不存在: {path}")
+            self.log.info(f"从本地加载: {path}")
+            return str(path)
 
         if self.config.source == "modelscope":
             from modelscope.hub.snapshot_download import snapshot_download
