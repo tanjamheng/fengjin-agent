@@ -48,12 +48,12 @@ class DecomposeEnhancer(QueryEnhancerStrategy):
 
         try:
             prompt = self.DECOMPOSE_PROMPT.format(query=query)
-            response = self.llm_client.messages.create(
+            response = self.llm_client.chat.completions.create(
                 model=self.llm_model,
                 max_tokens=200,
                 messages=[{"role": "user", "content": prompt}]
             )
-            text = response.content[0].text.strip()
+            text = response.choices[0].message.content.strip()
 
             # 解析子问题
             sub_questions = []

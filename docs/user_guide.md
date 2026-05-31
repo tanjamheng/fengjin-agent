@@ -66,10 +66,10 @@ cp .env.example .env
 
 ```env
 # 必填：你的 API Key
-ANTHROPIC_API_KEY=sk-your-real-key-here
+FENGJIN_API_KEY=sk-your-real-key-here
 
 # 必填：API 基础地址（根据你的服务商填写）
-ANTHROPIC_BASE_URL=https://your-api-endpoint
+FENGJIN_BASE_URL=https://your-api-endpoint
 
 # 可选：HuggingFace 镜像
 HF_ENDPOINT=https://hf-mirror.com
@@ -333,7 +333,7 @@ Agent: (Skills: rag)
 
 ## 7 常见问题
 
-### Q: 启动报错 `请在 .env 文件中设置 ANTHROPIC_API_KEY`
+### Q: 启动报错 `请在 .env 文件中设置 FENGJIN_API_KEY`
 
 确认 `.env` 文件存在且已填入有效的 API Key。检查是否在项目根目录下。
 
@@ -356,7 +356,7 @@ Agent: (Skills: rag)
 
 ### Q: 如何更换模型
 
-编辑 `config/config.yaml` 中的 `model` 字段，并在 `.env` 中更新 `ANTHROPIC_BASE_URL` 为对应服务商的地址。
+编辑 `config/config.yaml` 中的 `model` 字段，并在 `.env` 中更新 `FENGJIN_BASE_URL` 为对应服务商的地址。
 
 ---
 

@@ -9,7 +9,8 @@
 - 日志追踪
 """
 
-from anthropic import Anthropic
+import json
+from openai import OpenAI
 from typing import Optional, List, Dict, Any
 from ..config import Config
 from ..capabilities.skill import SkillBase, SkillContext, SkillResult
@@ -38,7 +39,7 @@ class Agent:
         self.config = config
 
         # 初始化 API Client
-        self.client = Anthropic(
+        self.client = OpenAI(
             api_key=config.api_key,
             base_url=config.base_url
         )
@@ -120,45 +121,43 @@ class Agent:
         # 4. 获取所有 tool 定义
         tool_definitions = self.tool_registry.get_all_definitions()
 
-        # 5. 构建 API 参数
+        # 5. 构建 API 参数（system prompt 置顶于 messages）
         system_prompt = self.config.system_prompt
         if safety_context:
             system_prompt = f"{system_prompt}\n\n{safety_context}"
+
+        api_messages = [{"role": "system", "content": system_prompt}]
+        api_messages.extend(self._build_api_messages(api_input))
 
         api_params = {
             "model": self.config.model,
             "max_tokens": self.config.agent.max_tokens,
             "temperature": self.config.agent.temperature,
-            "system": system_prompt,
-            "messages": self._build_api_messages(api_input),
+            "messages": api_messages,
             "tools": tool_definitions if tool_definitions else None,
         }
 
-        # 控制 GLM 深度思考（默认开启，需显式关闭）
-        if not self.config.agent.thinking_enabled:
-            api_params["thinking"] = {"type": "disabled"}
-
         # 6. 流式调用 API
-        self.log.info(f"调用 API: {self.config.model} (thinking={self.config.agent.thinking_enabled})")
+        self.log.info(f"调用 API: {self.config.model}")
         response = self._stream_call(api_params)
 
         # 7. Tool calling 循环
         tool_rounds = 0
         while self._has_tool_use(response) and tool_rounds < MAX_TOOL_ROUNDS:
             tool_rounds += 1
-            tool_results = self._process_tool_calls(response)
+            tool_calls, tool_messages = self._process_tool_calls(response)
 
+            # assistant 消息（含 tool_calls）
             self.messages.append({
                 "role": "assistant",
-                "content": response.content,
+                "content": response.choices[0].message.content or "",
+                "tool_calls": tool_calls,
             })
-            self.messages.append({
-                "role": "user",
-                "content": tool_results,
-            })
+            # tool 结果消息（每条独立）
+            self.messages.extend(tool_messages)
 
             self.log.info(f"Tool calling 第 {tool_rounds} 轮")
-            api_params["messages"] = self._build_api_messages_from_history()
+            api_params["messages"] = self._build_api_messages_with_system(system_prompt)
             response = self._stream_call(api_params)
 
         # 8. 提取最终文本回复
@@ -184,7 +183,7 @@ class Agent:
     # ── 内部方法 ────────────────────────────────────────────
 
     def _build_api_messages(self, current_input: str) -> list:
-        """构建首次 API 调用的 messages
+        """构建首次 API 调用的 messages（不含 system）
 
         = 历史消息（self.messages[:-1]）+ 当前输入（合并了记忆）
         self.messages 里存的是原始输入，这里用合并后的版本替换最后一条
@@ -194,79 +193,156 @@ class Agent:
         return api_messages
 
     def _build_api_messages_from_history(self) -> list:
-        """构建 tool calling 后续轮次的 messages
+        """构建 tool calling 后续轮次的 messages（不含 system）
 
-        此时 self.messages 已包含 tool_use 和 tool_result，直接用
+        此时 self.messages 已包含 assistant(tool_calls) 和 tool 结果，直接用
         """
         return [m.copy() for m in self.messages]
 
+    def _build_api_messages_with_system(self, system_prompt: str) -> list:
+        """构建带 system prompt 的完整 messages"""
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(self._build_api_messages_from_history())
+        return messages
+
     def _stream_call(self, api_params: dict):
-        """流式调用 API，实时输出文本，返回完整 response 对象"""
+        """流式调用 API，实时输出文本，返回模拟的统一响应对象"""
         import sys
         safe_stdout = getattr(sys.stdout, 'reconfigure', None)
         if safe_stdout:
             sys.stdout.reconfigure(errors='replace')
-        with self.client.messages.stream(**api_params) as stream:
-            for text in stream.text_stream:
-                print(text, end="", flush=True)
-            response = stream.get_final_message()
+
+        stream = self.client.chat.completions.create(**api_params, stream=True)
+
+        full_text = ""
+        tool_calls_data = {}  # index -> {id, name, arguments}
+
+        for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if not delta:
+                continue
+
+            # 文本内容
+            if delta.content:
+                full_text += delta.content
+                print(delta.content, end="", flush=True)
+
+            # tool_calls 增量
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_data:
+                        tool_calls_data[idx] = {
+                            "id": tc_delta.id or "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    if tc_delta.id:
+                        tool_calls_data[idx]["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tool_calls_data[idx]["name"] = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
+
         print()  # 流式结束后换行
-        return response
+
+        # 构造统一的响应对象
+        return self._build_response(full_text, tool_calls_data)
+
+    def _build_response(self, text: str, tool_calls_data: dict):
+        """构造统一的响应对象，兼容 _has_tool_use / _process_tool_calls / _extract_text"""
+
+        class FunctionCall:
+            def __init__(self, name, arguments):
+                self.name = name
+                self.arguments = arguments
+
+        class ToolCall:
+            def __init__(self, id, function):
+                self.id = id
+                self.type = "function"
+                self.function = function
+
+        class Message:
+            def __init__(self, content, tool_calls):
+                self.content = content
+                self.tool_calls = tool_calls
+
+        class Choice:
+            def __init__(self, message):
+                self.message = message
+
+        class Response:
+            def __init__(self, choices):
+                self.choices = choices
+
+        tool_calls = []
+        for idx in sorted(tool_calls_data.keys()):
+            data = tool_calls_data[idx]
+            tool_calls.append(ToolCall(
+                id=data["id"],
+                function=FunctionCall(data["name"], data["arguments"])
+            ))
+
+        message = Message(content=text, tool_calls=tool_calls if tool_calls else None)
+        return Response(choices=[Choice(message=message)])
 
     def _has_tool_use(self, response) -> bool:
-        """检查响应是否包含 tool_use"""
-        for block in response.content:
-            if hasattr(block, 'type') and block.type == 'tool_use':
-                return True
-        return False
+        """检查响应是否包含 tool_calls"""
+        msg = response.choices[0].message
+        return msg.tool_calls is not None and len(msg.tool_calls) > 0
 
-    def _process_tool_calls(self, response) -> list:
-        """处理 tool_use 块，返回 tool_result 内容列表"""
-        tool_results = []
-        for block in response.content:
-            if hasattr(block, 'type') and block.type == 'tool_use':
-                tool_name = block.name
-                tool_input = block.input
-                tool_use_id = block.id
+    def _process_tool_calls(self, response) -> tuple:
+        """处理 tool_calls，返回 (tool_calls_list, tool_messages_list)
 
-                self.log.info(f"调用 Tool: {tool_name}, 参数: {tool_input}")
+        tool_calls_list: assistant 消息中的 tool_calls 字段
+        tool_messages_list: 每条 tool 结果的独立消息
+        """
+        msg = response.choices[0].message
+        tool_calls_list = []
+        tool_messages = []
 
-                try:
-                    result_text = self.tool_registry.execute_tool(tool_name, tool_input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": result_text,
-                    })
-                except Exception as e:
-                    self.log.error(f"Tool {tool_name} 执行失败: {e}")
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": f"工具调用失败: {e}",
-                        "is_error": True,
-                    })
+        for tc in msg.tool_calls:
+            tool_name = tc.function.name
+            tool_use_id = tc.id
+            try:
+                tool_input = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                tool_input = {}
 
-        return tool_results
+            self.log.info(f"调用 Tool: {tool_name}, 参数: {tool_input}")
+
+            tool_calls_list.append({
+                "id": tool_use_id,
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": tc.function.arguments,
+                },
+            })
+
+            try:
+                result_text = self.tool_registry.execute_tool(tool_name, tool_input)
+                tool_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_use_id,
+                    "content": result_text,
+                })
+            except Exception as e:
+                self.log.error(f"Tool {tool_name} 执行失败: {e}")
+                tool_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_use_id,
+                    "content": f"工具调用失败: {e}",
+                })
+
+        return tool_calls_list, tool_messages
 
     def _extract_text(self, response) -> str:
         """从响应中提取文本内容"""
-        text_content = ""
-        for block in response.content:
-            if hasattr(block, 'text'):
-                text_content += block.text
-            elif hasattr(block, 'thinking'):
-                pass
-            elif hasattr(block, 'content'):
-                if isinstance(block.content, str):
-                    text_content += block.content
-            elif hasattr(block, 'type') and block.type == 'tool_use':
-                pass
-            else:
-                block_type = type(block).__name__
-                self.log.warning(f"未知的响应块类型: {block_type}")
-
-        return text_content.strip()
+        msg = response.choices[0].message
+        return (msg.content or "").strip()
 
     def _execute_skills(self, user_input: str, skill_names: List[str]) -> str:
         """执行Skills并返回处理后的prompt"""

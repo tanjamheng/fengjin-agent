@@ -66,10 +66,10 @@ class ContextManager:
         return messages
 
     def _pop_turn(self, messages: List[Dict]) -> None:
-        """从头部弹出一轮对话（2~4 条消息）
+        """从头部弹出一轮对话（2~N 条消息）
 
         一轮正常对话 = user + assistant（2 条）
-        一轮有 tool calling = user + assistant(tool_use) + user(tool_result) + assistant（4 条）
+        一轮有 tool calling = user + assistant(tool_calls) + tool + tool + ... + assistant（N 条）
 
         从头部开始删，直到遇到下一条独立的 user 消息为止。
         """
@@ -82,15 +82,21 @@ class ContextManager:
         # 继续删，直到遇到下一条独立的 user 消息
         while messages:
             msg = messages[0]
+            role = msg.get("role", "")
             content = msg.get("content", "")
 
-            # content 是 list（tool_result / tool_use），继续删
+            # content 是 list（兼容旧格式），继续删
             if isinstance(content, list):
                 messages.pop(0)
                 continue
 
-            # role=assistant（可能是 tool_use 或普通回复），继续删
-            if msg.get("role") == "assistant":
+            # role=assistant（可能是 tool_calls 或普通回复），继续删
+            if role == "assistant":
+                messages.pop(0)
+                continue
+
+            # role=tool（OpenAI tool 结果消息），继续删
+            if role == "tool":
                 messages.pop(0)
                 continue
 
@@ -110,4 +116,10 @@ class ContextManager:
                     if isinstance(block, dict):
                         total += len(str(block.get("content", "")))
                         total += len(str(block.get("text", "")))
+            # tool_calls 字段也计入估算
+            tool_calls = msg.get("tool_calls", [])
+            if tool_calls:
+                for tc in tool_calls:
+                    if isinstance(tc, dict):
+                        total += len(str(tc.get("function", {}).get("arguments", "")))
         return int(total * 1.5)

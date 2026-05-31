@@ -73,7 +73,7 @@
                      │
                      ├─ 将处理后的 prompt 添加到消息历史
                      │
-                     ├─ 调用 Anthropic API 获取回复
+                     ├─ 调用 OpenAI 兼容 API 获取回复
                      │
                      └─ 返回回复文本
 ```
@@ -441,7 +441,7 @@ import os
 import sys
 
 # 第二组：第三方库
-from anthropic import Anthropic
+from openai import OpenAI
 from pydantic import BaseModel
 
 # 第三组：本地模块
@@ -785,7 +785,7 @@ def test_skill_error_handling():
 
 | 场景 | 当前选型 | 替代方案 |
 |------|----------|----------|
-| LLM API | Anthropic SDK | OpenAI SDK、vLLM、Ollama |
+| LLM API | OpenAI SDK | vLLM、Ollama（均兼容 OpenAI 格式） |
 | 日志 | loguru | logging（标准库） |
 | 向量数据库 | ChromaDB | FAISS、Milvus、Qdrant |
 | Embedding | sentence-transformers | OpenAI Embedding、BGE |

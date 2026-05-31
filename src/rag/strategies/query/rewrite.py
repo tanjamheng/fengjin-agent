@@ -44,12 +44,12 @@ class RewriteEnhancer(QueryEnhancerStrategy):
 
         try:
             prompt = self.REWRITE_PROMPT.format(query=query)
-            response = self.llm_client.messages.create(
+            response = self.llm_client.chat.completions.create(
                 model=self.llm_model,
                 max_tokens=100,
                 messages=[{"role": "user", "content": prompt}]
             )
-            rewritten = response.content[0].text.strip()
+            rewritten = response.choices[0].message.content.strip()
 
             # 如果改写结果太短或无效，返回原查询
             if len(rewritten) < 5:

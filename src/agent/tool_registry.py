@@ -47,7 +47,7 @@ class ToolRegistry:
         return False
 
     def get_all_definitions(self) -> List[Dict[str, Any]]:
-        """返回所有 tool 定义（Anthropic API 格式）"""
+        """返回所有 tool 定义（OpenAI API 格式）"""
         definitions = []
         for tool in self._local_tools.values():
             definitions.append(tool.to_definition())

@@ -10,22 +10,25 @@ from ..utils.logger import get_logger
 
 
 RAG_RETRIEVE_TOOL = {
-    "name": "rag_retrieve",
-    "description": (
-        "从风堇的知识库中检索相关文档和设定资料。"
-        "当用户的问题涉及翁法罗斯世界、风堇的角色设定、人物关系、剧情事件、台词风格、"
-        "天空一族历史、泰坦、城邦、黄金裔等需要专业知识才能准确回答的内容时，调用此工具。"
-        "对于日常闲聊（如问候、简单的情感交流、天气等），不需要调用此工具。"
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "检索查询，提取用户问题的核心内容作为查询词",
-            }
+    "type": "function",
+    "function": {
+        "name": "rag_retrieve",
+        "description": (
+            "从风堇的知识库中检索相关文档和设定资料。"
+            "当用户的问题涉及翁法罗斯世界、风堇的角色设定、人物关系、剧情事件、台词风格、"
+            "天空一族历史、泰坦、城邦、黄金裔等需要专业知识才能准确回答的内容时，调用此工具。"
+            "对于日常闲聊（如问候、简单的情感交流、天气等），不需要调用此工具。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "检索查询，提取用户问题的核心内容作为查询词",
+                }
+            },
+            "required": ["query"],
         },
-        "required": ["query"],
     },
 }
 

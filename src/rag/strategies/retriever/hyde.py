@@ -39,7 +39,7 @@ class HyDERetriever(RetrieverStrategy):
             top_k: 返回数量
             score_threshold: 分数阈值
             num_hypotheses: 生成的假设文档数量
-            llm_client: LLM 客户端（Anthropic 等）
+            llm_client: LLM 客户端（OpenAI 兼容）
             llm_model: 使用的模型
         """
         self.index = index
@@ -71,12 +71,12 @@ class HyDERetriever(RetrieverStrategy):
                 ]
                 prompt = prompts[i % len(prompts)]
 
-                response = self.llm_client.messages.create(
+                response = self.llm_client.chat.completions.create(
                     model=self.llm_model,
                     max_tokens=200,
                     messages=[{"role": "user", "content": prompt}]
                 )
-                hypothesis = response.content[0].text
+                hypothesis = response.choices[0].message.content
                 hypotheses.append(hypothesis)
 
             except Exception:

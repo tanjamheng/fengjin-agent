@@ -13,8 +13,8 @@ print("=" * 60)
 
 # 1. 检查环境变量
 print("\n[1] 检查环境变量")
-anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "未设置")
-print(f"  ANTHROPIC_API_KEY: {anthropic_key[:20] if anthropic_key != '未设置' else '未设置'}...")
+fengjin_key = os.environ.get("FENGJIN_API_KEY", "未设置")
+print(f"  FENGJIN_API_KEY: {fengjin_key[:20] if fengjin_key != '未设置' else '未设置'}...")
 
 # 2. 检查配置文件
 print("\n[2] 检查配置文件")
@@ -30,18 +30,16 @@ if config_path.exists():
 else:
     print("  配置文件不存在!")
 
-# 3. 测试Anthropic SDK初始化
-print("\n[3] 测试Anthropic SDK初始化")
+# 3. 测试 OpenAI SDK 初始化
+print("\n[3] 测试 OpenAI SDK 初始化")
 try:
-    from anthropic import Anthropic
+    from openai import OpenAI
 
-    # 使用配置文件的值
-    client = Anthropic(
-        api_key=api_config.get('api_key'),
-        base_url=api_config.get('base_url')
+    client = OpenAI(
+        api_key=os.getenv("FENGJIN_API_KEY", api_config.get('api_key')),
+        base_url=os.getenv("FENGJIN_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
     )
     print(f"  SDK初始化成功")
-    print(f"  client.api_key: {client.api_key[:20]}...")
     print(f"  client.base_url: {client.base_url}")
 except Exception as e:
     print(f"  SDK初始化失败: {e}")
@@ -49,21 +47,21 @@ except Exception as e:
 # 4. 测试实际API调用
 print("\n[4] 测试API调用")
 try:
-    from anthropic import Anthropic
+    from openai import OpenAI
 
-    client = Anthropic(
-        api_key=api_config.get('api_key'),
-        base_url=api_config.get('base_url')
+    client = OpenAI(
+        api_key=os.getenv("FENGJIN_API_KEY", api_config.get('api_key')),
+        base_url=os.getenv("FENGJIN_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
     )
 
-    response = client.messages.create(
-        model=config_data.get('agent', {}).get('model', 'glm-5'),
+    response = client.chat.completions.create(
+        model=os.getenv("FENGJIN_MODEL", "glm-5.1"),
         max_tokens=100,
         messages=[{"role": "user", "content": "你好"}]
     )
 
     print(f"  API调用成功!")
-    print(f"  响应: {response.content[0].text[:50]}...")
+    print(f"  响应: {response.choices[0].message.content[:50]}...")
 
 except Exception as e:
     print(f"  API调用失败: {e}")
@@ -78,23 +76,22 @@ except Exception as e:
 # 5. 尝试备用配置
 print("\n[5] 尝试使用标准DashScope接口")
 try:
-    from anthropic import Anthropic
+    from openai import OpenAI
 
-    # 阿里云标准兼容接口（不是apps接口）
     alt_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    alt_client = Anthropic(
-        api_key=api_config.get('api_key'),
+    alt_client = OpenAI(
+        api_key=os.getenv("FENGJIN_API_KEY", api_config.get('api_key')),
         base_url=alt_base_url
     )
 
-    response = alt_client.messages.create(
-        model="qwen-plus",  # 使用通义千问模型
+    response = alt_client.chat.completions.create(
+        model="qwen-plus",
         max_tokens=100,
         messages=[{"role": "user", "content": "你好"}]
     )
 
     print(f"  备用接口调用成功!")
-    print(f"  响应: {response.content[0].text[:50]}...")
+    print(f"  响应: {response.choices[0].message.content[:50]}...")
 
 except Exception as e:
     print(f"  备用接口调用失败: {e}")

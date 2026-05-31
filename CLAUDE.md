@@ -373,7 +373,7 @@ agent框架->调用api->system_prompt->rag->memory->context_manage->小伊卡安
 
 | 类别 | 允许 | 说明 |
 |------|------|------|
-| LLM 调用 | `anthropic` SDK、`openai` SDK | 直接调用 API，不经过框架包装 |
+| LLM 调用 | `openai` SDK | 直接调用 API，不经过框架包装 |
 | 向量数据库 | `chromadb` | 直接使用，不用 LangChain VectorStore 包装 |
 | 文本处理 | `langchain-text-splitters` 的单个切分器 | 只用原子工具函数，不用 Chain/Agent |
 | 配置 | `pydantic`、`pyyaml` | 数据校验和配置解析 |
@@ -421,7 +421,7 @@ agent框架->调用api->system_prompt->rag->memory->context_manage->小伊卡安
 import os
 import sys
 
-from anthropic import Anthropic
+from openai import OpenAI
 from pydantic import BaseModel
 
 from src.config import Config

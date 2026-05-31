@@ -29,11 +29,14 @@ class ToolBase(ABC):
         pass
 
     def to_definition(self) -> Dict[str, Any]:
-        """转换为 Anthropic API tool 定义格式"""
+        """转换为 OpenAI API tool 定义格式"""
         return {
-            "name": self.meta.name,
-            "description": self.meta.description,
-            "input_schema": self.meta.input_schema,
+            "type": "function",
+            "function": {
+                "name": self.meta.name,
+                "description": self.meta.description,
+                "parameters": self.meta.input_schema,
+            },
         }
 
     def __repr__(self) -> str:

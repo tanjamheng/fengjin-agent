@@ -108,19 +108,18 @@ def patch_agent(agent: Agent, rag_service: RAGService):
         tool_definitions = agent.tool_registry.get_all_definitions()
 
         # ── ① 首次 API 调用 ──
+        api_messages = [{"role": "system", "content": agent.config.system_prompt}]
+        api_messages.extend(agent.messages)
         api_params = {
-            "model": agent.config.agent.model,
+            "model": agent.config.model,
             "max_tokens": agent.config.agent.max_tokens,
             "temperature": agent.config.agent.temperature,
-            "system": agent.config.system_prompt,
-            "messages": agent.messages,
+            "messages": api_messages,
             "tools": tool_definitions if tool_definitions else None,
         }
-        if not agent.config.agent.thinking_enabled:
-            api_params["thinking"] = {"type": "disabled"}
 
         stamp("T1_llm_first_req")
-        response = agent.client.messages.create(**api_params)
+        response = agent._stream_call(api_params)
         stamp("T1_llm_first_resp")
 
         # 检查是否需要 tool calling
@@ -130,15 +129,20 @@ def patch_agent(agent: Agent, rag_service: RAGService):
 
             # ── ② Tool 执行（RAG 检索）──
             stamp("T2_tool_exec_start")
-            tool_results = agent._process_tool_calls(response)
+            tool_calls_list, tool_messages = agent._process_tool_calls(response)
             stamp("T2_tool_exec_end")
 
-            agent.messages.append({"role": "assistant", "content": response.content})
-            agent.messages.append({"role": "user", "content": tool_results})
+            agent.messages.append({
+                "role": "assistant",
+                "content": response.choices[0].message.content or "",
+                "tool_calls": tool_calls_list,
+            })
+            agent.messages.extend(tool_messages)
 
             # ── ④ 二次 API 调用 ──
+            api_params["messages"] = agent._build_api_messages_with_system(agent.config.system_prompt)
             stamp("T3_llm_second_req")
-            response = agent.client.messages.create(**api_params)
+            response = agent._stream_call(api_params)
             stamp("T3_llm_second_resp")
 
         # 提取最终回复

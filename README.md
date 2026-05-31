@@ -111,9 +111,9 @@ cp .env.example .env
 编辑 `.env`，填入你的 API Key：
 
 ```bash
-# 主模型（Anthropic 兼容）
+# 主模型（OpenAI 兼容）
 FENGJIN_API_KEY=your-api-key
-FENGJIN_BASE_URL=https://open.bigmodel.cn/api/anthropic
+FENGJIN_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 FENGJIN_MODEL=glm-5.1
 
 # 记忆辅助模型（OpenAI 兼容）
@@ -166,7 +166,7 @@ python main.py
 
 | 模型 | 用途 | 协议 |
 |------|------|------|
-| 主模型（默认 GLM-5.1） | 对话推理 | Anthropic 兼容 |
+| 主模型（默认 GLM-5.1） | 对话推理 | OpenAI 兼容 |
 | 辅助模型（默认 GLM-4.5-air） | 记忆提取/合并 | OpenAI 兼容 |
 
 ### 安全护栏
@@ -223,7 +223,7 @@ P1 Llama Guard 3 1B（语义级，懒加载）
 
 | 类别 | 技术 |
 |------|------|
-| LLM 调用 | `anthropic` SDK、`openai` SDK |
+| LLM 调用 | `openai` SDK |
 | 向量数据库 | `chromadb` |
 | 嵌入模型 | BGE-M3（sentence-transformers） |
 | 重排序 | BGE-reranker-v2-m3 |

@@ -19,7 +19,7 @@ class MCPServerBase(ABC):
 
     @abstractmethod
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        """返回 MCP 服务器暴露的工具定义列表（Anthropic tool format）"""
+        """返回 MCP 服务器暴露的工具定义列表（OpenAI tool format）"""
         pass
 
     @abstractmethod

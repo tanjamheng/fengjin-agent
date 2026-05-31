@@ -58,12 +58,12 @@ class LLMReranker(RerankerStrategy):
 
         try:
             prompt = self.RERANK_PROMPT.format(query=query, document=document[:500])
-            response = self.llm_client.messages.create(
+            response = self.llm_client.chat.completions.create(
                 model=self.llm_model,
                 max_tokens=10,
                 messages=[{"role": "user", "content": prompt}]
             )
-            answer = response.content[0].text.strip()
+            answer = response.choices[0].message.content.strip()
 
             # 解析答案
             for key, score in self.RELEVANCE_SCORES.items():

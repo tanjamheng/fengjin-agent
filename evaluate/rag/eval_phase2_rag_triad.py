@@ -46,28 +46,30 @@ REFUSAL_PATTERNS = [
 
 def get_llm_client():
     """获取 LLM 客户端"""
-    from anthropic import Anthropic
+    from openai import OpenAI
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    base_url = os.getenv("ANTHROPIC_BASE_URL")
+    api_key = os.getenv("FENGJIN_API_KEY")
+    base_url = os.getenv("FENGJIN_BASE_URL")
 
     if not api_key:
-        raise ValueError("请在 .env 中设置 ANTHROPIC_API_KEY")
+        raise ValueError("请在 .env 中设置 FENGJIN_API_KEY")
 
-    return Anthropic(api_key=api_key, base_url=base_url)
+    return OpenAI(api_key=api_key, base_url=base_url)
 
 
 def call_llm(client, system_prompt: str, user_prompt: str, max_retries: int = 2) -> str:
     """调用 LLM，带重试"""
     for attempt in range(max_retries + 1):
         try:
-            response = client.messages.create(
+            response = client.chat.completions.create(
                 model=LLM_MODEL,
                 max_tokens=2048,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
             )
-            return response.content[0].text
+            return response.choices[0].message.content
         except Exception as e:
             if attempt < max_retries:
                 time.sleep(2 ** attempt)
