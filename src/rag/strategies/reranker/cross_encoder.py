@@ -23,7 +23,7 @@ class CrossEncoderReranker(RerankerStrategy):
         Args:
             model: CrossEncoder 模型名称
             top_n: 返回数量
-            device: 推理设备 ("cpu" / "cuda")
+            device: 推理设备 ("cpu" / "cuda" / "auto")，auto 下自动检测 GPU 可用性降级
         """
         self.model_name = model
         self.top_n = top_n
@@ -84,9 +84,9 @@ class CrossEncoderReranker(RerankerStrategy):
         if self._model is not None:
             del self._model
             self._model = None
-        if self.device != "cpu":
-            try:
-                import torch
+        try:
+            import torch
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            except Exception:
-                pass
+        except Exception:
+            pass

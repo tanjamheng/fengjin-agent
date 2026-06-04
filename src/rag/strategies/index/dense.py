@@ -187,9 +187,9 @@ class DenseIndex(IndexStrategy):
         self._collection = None
         self._store = None
         # 释放 GPU 缓存
-        if self.device != "cpu":
-            try:
-                import torch
+        try:
+            import torch
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            except Exception:
-                pass
+        except Exception:
+            pass

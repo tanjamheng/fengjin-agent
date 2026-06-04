@@ -16,6 +16,7 @@ class ChromaConfig(BaseModel):
     persist_directory: str = "data/memory_chroma"
     collection_name: str = "memories"
     embedding_model: str = "BAAI/bge-m3"
+    device: str = "cpu"
 
 
 class ExtractionConfig(BaseModel):
@@ -70,7 +71,8 @@ class MemorySettings(BaseModel):
         """从环境变量创建记忆辅助模型 OpenAI 客户端"""
         return OpenAI(
             api_key=os.getenv("MEMO_API_KEY"),
-            base_url=os.getenv("MEMO_BASE_URL")
+            base_url=os.getenv("MEMO_BASE_URL"),
+            timeout=45.0,
         )
 
     @staticmethod

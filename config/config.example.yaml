@@ -6,8 +6,9 @@ agent:
   name: "风堇"
   max_tokens: 4096
   temperature: 0.7
+  thinking_enabled: false  # 已废弃，保留兼容
 
-# 系统提示词（支持外部文件，system_prompt_file 优先级高于 system_prompt）
-# system_prompt_file: "system_prompt.md"
-system_prompt: |
-  你是一个有帮助的AI助手。请用中文回答用户的问题。
+# 系统提示词（推荐使用外部文件方式，便于维护角色设定）
+system_prompt_file: "system_prompt.md"
+# system_prompt: |
+#   你是一个有帮助的AI助手。请用中文回答用户的问题。

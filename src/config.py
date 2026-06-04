@@ -18,7 +18,7 @@ load_dotenv()
 
 class AgentConfig(BaseModel):
     """Agent 配置"""
-    name: str = "SimpleAgent"
+    name: str = "风堇"
     max_tokens: int = 4096
     temperature: float = 0.7
     thinking_enabled: bool = False
@@ -68,7 +68,8 @@ class RerankerConfig(BaseModel):
     type: str = "cross_encoder"
     params: Dict[str, Any] = Field(default_factory=lambda: {
         "model": "BAAI/bge-reranker-v2-m3",
-        "top_n": 4
+        "top_n": 4,
+        "device": "auto"
     })
 
 

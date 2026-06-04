@@ -112,14 +112,10 @@ class SessionManager:
         """获取当前会话的全部消息（dict 格式，兼容 Agent.messages）"""
         if not self.current_session:
             return []
-        result = []
-        for msg in self.current_session.messages:
-            entry = {"role": msg.role, "content": msg.content}
-            # 保留 tool_calls 字段（如果存在）
-            if msg.metadata and hasattr(msg.metadata, 'tool_calls') and msg.metadata.tool_calls:
-                entry["tool_calls"] = msg.metadata.tool_calls
-            result.append(entry)
-        return result
+        return [
+            {"role": msg.role, "content": msg.content}
+            for msg in self.current_session.messages
+        ]
 
     def get_recent_messages(self, n: int = 10) -> list[Message]:
         """获取当前会话最近 N 条消息"""

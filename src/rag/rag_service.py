@@ -188,6 +188,8 @@ class RAGService:
             self.retriever.cleanup()
         if self.indexer:
             self.indexer.cleanup()
+        if self.query_enhancer:
+            self.query_enhancer.cleanup()
 
         self._initialized = False
         self.log.info("RAG 服务资源已清理")

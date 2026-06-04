@@ -8,6 +8,7 @@ import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 from .config import MemoryConfig
+from ..utils.logger import get_logger
 
 
 class MemoryStorage:
@@ -21,6 +22,7 @@ class MemoryStorage:
 
     def __init__(self, config: MemoryConfig):
         self.config = config
+        self.log = get_logger("memory_storage")
         self.client = chromadb.PersistentClient(path=config.chroma.persist_directory)
 
         # 相对路径解析为项目根目录下的绝对路径
@@ -28,12 +30,13 @@ class MemoryStorage:
         if not Path(embedding_model).is_absolute():
             embedding_model = str(Path(__file__).parent.parent.parent / embedding_model)
 
-        embedding_fn = SentenceTransformerEmbeddingFunction(
-            model_name=embedding_model
+        self._embedding_fn = SentenceTransformerEmbeddingFunction(
+            model_name=embedding_model,
+            device=config.chroma.device,
         )
         self.collection = self.client.get_or_create_collection(
             name=config.chroma.collection_name,
-            embedding_function=embedding_fn,
+            embedding_function=self._embedding_fn,
             metadata={"hnsw:space": "cosine"}
         )
 
@@ -98,6 +101,20 @@ class MemoryStorage:
         return self.collection.count()
 
     def cleanup(self) -> None:
-        """关闭 ChromaDB 客户端连接"""
+        """关闭 ChromaDB 客户端连接并释放 GPU 模型"""
+        if self._embedding_fn is not None:
+            try:
+                if hasattr(self._embedding_fn, '_model') and self._embedding_fn._model is not None:
+                    del self._embedding_fn._model
+                self._embedding_fn = None
+            except Exception:
+                pass
         self.collection = None
         self.client = None
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        self.log.info("MemoryStorage 资源已清理")

@@ -6,6 +6,7 @@ memory:
     persist_directory: "data/memory_chroma"
     collection_name: "memories"
     embedding_model: "models/bge-m3"
+    device: "cpu"
 
   # 内容提取配置（每轮对话后异步调用的小模型）
   extraction:
@@ -20,7 +21,7 @@ memory:
   # 阈值体系（基于 cosine distance，0=相同，越大越不相关）
   thresholds:
     dedup_distance: 0.1        # < 0.1 视为重复，丢弃
-    conflict_distance: 0.10    # < 0.10 视为可能冲突，调 LLM 合并
+    conflict_distance: 0.15    # < 0.15 视为可能冲突，调 LLM 合并（必须 > dedup_distance）
 
   # 检索配置
   retrieval:
