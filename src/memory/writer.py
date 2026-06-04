@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from .config import MemoryConfig
 from .storage import MemoryStorage
+from ..utils.logger import get_logger
 
 
 class MemoryWriter:
@@ -33,6 +34,7 @@ class MemoryWriter:
 
         self._queue: queue.Queue = queue.Queue()
         self._running = True
+        self.log = get_logger("memory_writer")
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
 
@@ -44,8 +46,12 @@ class MemoryWriter:
     def stop(self) -> None:
         """停止写入线程"""
         self._running = False
+        pending = self._queue.qsize()
         self._queue.put(None)
-        self._thread.join(timeout=5)
+        self._thread.join(timeout=30)
+        if self._thread.is_alive():
+            remaining = self._queue.qsize()
+            self.log.warning(f"写入线程超时未退出，丢弃队列中约 {remaining} 条任务（原队列 {pending} 条）")
 
     def _writer_loop(self) -> None:
         """后台写入线程，串行处理所有写入任务"""
@@ -56,8 +62,7 @@ class MemoryWriter:
             try:
                 self._process_fact(item)
             except Exception as e:
-                from loguru import logger
-                logger.error(f"记忆写入失败: {e}")
+                self.log.error(f"记忆写入失败: {e}")
             finally:
                 self._queue.task_done()
 

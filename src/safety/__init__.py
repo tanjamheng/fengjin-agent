@@ -26,5 +26,9 @@ class SafetyManager:
 
         return SafetyResult()
 
+    def cleanup(self) -> None:
+        """释放安全模块资源（P1 模型显存等）"""
+        self.guard_model.cleanup()
+
 
 __all__ = ["RuleEngine", "SafetyManager", "SafetyResult", "Action"]

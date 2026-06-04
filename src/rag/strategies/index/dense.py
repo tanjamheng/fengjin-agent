@@ -180,7 +180,16 @@ class DenseIndex(IndexStrategy):
 
     def cleanup(self) -> None:
         """清理资源（不删除数据）"""
-        # 只释放模型资源，不删除collection中的数据
-        self._embedding_model = None
-        # 注意：不调用 delete_collection，保留向量数据
-        # 如果需要清空数据，请使用 clear() 方法
+        if self._embedding_model is not None:
+            del self._embedding_model
+            self._embedding_model = None
+        # 释放 ChromaDB 客户端连接（不删除 collection 数据）
+        self._collection = None
+        self._store = None
+        # 释放 GPU 缓存
+        if self.device != "cpu":
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass

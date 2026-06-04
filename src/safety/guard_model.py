@@ -164,6 +164,25 @@ class GuardModel:
             self._loaded = True
             self.log.info("Llama Guard 3 1B 加载完成")
 
+    def cleanup(self) -> None:
+        """释放 GPU 模型和显存"""
+        if not self.enabled:
+            return
+        if self._model is not None:
+            del self._model
+            self._model = None
+        if self._tokenizer is not None:
+            del self._tokenizer
+            self._tokenizer = None
+        self._loaded = False
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        self.log.info("Llama Guard 模型已释放")
+
     # ── 输出解析 ──────────────────────────────────────────
 
     def _parse_output(self, output_text: str) -> SafetyResult:

@@ -9,6 +9,7 @@
 
 from typing import Union, List
 from .base import QueryEnhancerStrategy
+from ....utils.logger import get_logger
 
 
 class ExpandEnhancer(QueryEnhancerStrategy):
@@ -39,6 +40,7 @@ class ExpandEnhancer(QueryEnhancerStrategy):
         self.llm_client = llm_client
         self.llm_model = llm_model
         self.num_variations = num_variations
+        self.log = get_logger("query_expand")
 
     def initialize(self) -> None:
         """无需初始化"""
@@ -75,7 +77,8 @@ class ExpandEnhancer(QueryEnhancerStrategy):
 
             return variations
 
-        except Exception:
+        except Exception as e:
+            self.log.error(f"查询扩展失败: {e}")
             return query
 
     def cleanup(self) -> None:

@@ -7,6 +7,7 @@
 from typing import List
 from .base import RerankerStrategy
 from ..retriever.base import SearchResult
+from ....utils.logger import get_logger
 
 
 class LLMReranker(RerankerStrategy):
@@ -46,6 +47,7 @@ class LLMReranker(RerankerStrategy):
         self.llm_client = llm_client
         self.llm_model = llm_model
         self.top_n = top_n
+        self.log = get_logger("llm_reranker")
 
     def initialize(self) -> None:
         """无需初始化"""
@@ -72,7 +74,8 @@ class LLMReranker(RerankerStrategy):
 
             return 0.5  # 无法解析时返回中等分数
 
-        except Exception:
+        except Exception as e:
+            self.log.error(f"LLM重排序评分失败: {e}")
             return 0.5
 
     def rerank(self, query: str, results: List[SearchResult]) -> List[SearchResult]:

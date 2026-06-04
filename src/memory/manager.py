@@ -45,5 +45,6 @@ class MemoryManager:
         thread.start()
 
     def cleanup(self) -> None:
-        """停止写入线程"""
+        """停止写入线程并关闭存储"""
         self.writer.stop()
+        self.storage.cleanup()

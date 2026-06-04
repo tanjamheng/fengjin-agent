@@ -5,6 +5,7 @@
 
 from typing import Union, List
 from .base import QueryEnhancerStrategy
+from ....utils.logger import get_logger
 
 
 class RewriteEnhancer(QueryEnhancerStrategy):
@@ -32,6 +33,7 @@ class RewriteEnhancer(QueryEnhancerStrategy):
         """
         self.llm_client = llm_client
         self.llm_model = llm_model
+        self.log = get_logger("query_rewrite")
 
     def initialize(self) -> None:
         """无需初始化"""
@@ -57,7 +59,8 @@ class RewriteEnhancer(QueryEnhancerStrategy):
 
             return rewritten
 
-        except Exception:
+        except Exception as e:
+            self.log.error(f"查询改写失败: {e}")
             return query
 
     def cleanup(self) -> None:

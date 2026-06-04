@@ -78,5 +78,13 @@ class CrossEncoderReranker(RerankerStrategy):
         return scored_results[:self.top_n]
 
     def cleanup(self) -> None:
-        """清理模型"""
-        self._model = None
+        """清理模型并释放 GPU 显存"""
+        if self._model is not None:
+            del self._model
+            self._model = None
+        if self.device != "cpu":
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass

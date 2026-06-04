@@ -104,6 +104,7 @@ def _print_recent_messages(console: Console, session_mgr: SessionManager, n: int
 def _handle_command(cmd: str, args: str, console: Console,
                     session_mgr: SessionManager, context_restorer: ContextRestorer,
                     agent: Agent, memory_manager: MemoryManager,
+                    rag_service, safety_engine,
                     max_turns: int) -> bool:
     """处理会话命令。返回 True 表示继续循环，False 表示退出。"""
 
@@ -111,6 +112,8 @@ def _handle_command(cmd: str, args: str, console: Console,
         session_mgr.flush()
         agent.cleanup()
         memory_manager.cleanup()
+        rag_service.cleanup()
+        safety_engine.cleanup()
         console.print("[yellow]再见！[/yellow]")
         return False
 
@@ -349,7 +352,7 @@ def main():
                 if cmd in ("/quit", "/new", "/list", "/switch", "/history", "/rename", "/delete"):
                     should_continue = _handle_command(
                         cmd, args, console, session_mgr, context_restorer,
-                        agent, memory_manager,
+                        agent, memory_manager, rag_service, safety_engine,
                         max_turns=context_settings.context.sliding_window.max_turns,
                     )
                     if not should_continue:
@@ -358,6 +361,7 @@ def main():
 
                 # RAG/工具命令
                 if cmd == "/clear":
+                    session_mgr.flush()
                     agent.clear_history()
                     session_mgr.create_session()
                     console.print("[green]对话历史已清空，新会话已创建[/green]")
@@ -483,9 +487,14 @@ def main():
             session_mgr.flush()
             agent.cleanup()
             memory_manager.cleanup()
+            rag_service.cleanup()
+            safety_engine.cleanup()
             console.print("\n[yellow]再见！[/yellow]")
             break
         except Exception as e:
+            from src.utils import get_logger
+            _log = get_logger("main")
+            _log.error(f"对话循环异常: {e}", exc_info=True)
             console.print(f"[red]错误: {e}[/red]")
 
 

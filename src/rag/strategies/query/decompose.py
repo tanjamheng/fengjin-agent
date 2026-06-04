@@ -9,6 +9,7 @@
 
 from typing import Union, List
 from .base import QueryEnhancerStrategy
+from ....utils.logger import get_logger
 
 
 class DecomposeEnhancer(QueryEnhancerStrategy):
@@ -36,6 +37,7 @@ class DecomposeEnhancer(QueryEnhancerStrategy):
         self.llm_client = llm_client
         self.llm_model = llm_model
         self.max_sub_questions = max_sub_questions
+        self.log = get_logger("query_decompose")
 
     def initialize(self) -> None:
         """无需初始化"""
@@ -75,7 +77,8 @@ class DecomposeEnhancer(QueryEnhancerStrategy):
 
             return sub_questions
 
-        except Exception:
+        except Exception as e:
+            self.log.error(f"查询分解失败: {e}")
             return query
 
     def cleanup(self) -> None:

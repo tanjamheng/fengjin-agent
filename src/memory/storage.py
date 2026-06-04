@@ -96,3 +96,8 @@ class MemoryStorage:
 
     def count(self) -> int:
         return self.collection.count()
+
+    def cleanup(self) -> None:
+        """关闭 ChromaDB 客户端连接"""
+        self.collection = None
+        self.client = None

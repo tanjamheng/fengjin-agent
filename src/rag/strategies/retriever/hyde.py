@@ -10,6 +10,7 @@ Hypothetical Document Embeddings：
 
 from typing import List
 from .base import RetrieverStrategy, SearchResult
+from ....utils.logger import get_logger
 
 
 class HyDERetriever(RetrieverStrategy):
@@ -48,6 +49,7 @@ class HyDERetriever(RetrieverStrategy):
         self.num_hypotheses = num_hypotheses
         self.llm_client = llm_client
         self.llm_model = llm_model
+        self.log = get_logger("hyde_retriever")
 
     def initialize(self) -> None:
         """初始化索引"""
@@ -79,8 +81,8 @@ class HyDERetriever(RetrieverStrategy):
                 hypothesis = response.choices[0].message.content
                 hypotheses.append(hypothesis)
 
-            except Exception:
-                # LLM 调用失败，使用原始查询
+            except Exception as e:
+                self.log.error(f"HyDE假设生成失败: {e}")
                 hypotheses.append(query)
 
         return hypotheses if hypotheses else [query]
