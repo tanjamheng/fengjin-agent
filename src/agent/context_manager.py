@@ -40,9 +40,10 @@ class ContextManager:
         if not memory_text:
             return user_input
 
-        return self.config.memory.template.format(
-            memory=memory_text,
-            input=user_input
+        return self.config.memory.template.replace(
+            "{memory}", memory_text
+        ).replace(
+            "{input}", user_input
         )
 
     def trim_messages(self, messages: List[Dict]) -> List[Dict]:

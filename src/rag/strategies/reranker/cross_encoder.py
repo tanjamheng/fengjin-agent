@@ -38,8 +38,10 @@ class CrossEncoderReranker(RerankerStrategy):
 
             # 自动检测 GPU 可用性
             effective_device = self.device
-            if self.device == "cuda" and not torch.cuda.is_available():
+            if self.device in ("cuda", "auto") and not torch.cuda.is_available():
                 effective_device = "cpu"
+            elif self.device == "auto" and torch.cuda.is_available():
+                effective_device = "cuda"
 
             model_path = self.model_name
             # 相对路径解析为项目根目录下的绝对路径

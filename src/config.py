@@ -138,9 +138,10 @@ class Config(BaseModel):
         return key
 
     @property
-    def base_url(self) -> str:
-        """从环境变量获取Base URL"""
-        return os.getenv("FENGJIN_BASE_URL", "")
+    def base_url(self) -> str | None:
+        """从环境变量获取Base URL，空字符串回退到 None（使用 SDK 默认值）"""
+        url = os.getenv("FENGJIN_BASE_URL", "")
+        return url if url else None
 
     @property
     def model(self) -> str:
@@ -160,9 +161,14 @@ class Config(BaseModel):
         """
         path = Path(config_path)
         if not path.exists():
-            raise FileNotFoundError(
-                f"配置文件不存在: {config_path}\n"
+            import warnings
+            warnings.warn(
+                f"配置文件不存在: {config_path}，使用默认配置。"
                 "请复制 config/config.example.yaml 为 config.yaml"
+            )
+            return cls(
+                agent=AgentConfig(),
+                system_prompt="你是一个有帮助的AI助手。"
             )
 
         with open(path, "r", encoding="utf-8") as f:

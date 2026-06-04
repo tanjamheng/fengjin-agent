@@ -55,6 +55,10 @@ MODELS = [
     ("Llama-Guard-3-1B", "LLM-Research/Llama-Guard-3-1B"),
 ]
 
+# ── 路径与限制常量 ──
+SESSIONS_DIR = PROJECT_ROOT / "data" / "sessions"
+MAX_INPUT_LENGTH = 10000
+
 
 def ensure_models(console: Console) -> None:
     """检查本地模型是否存在，缺失则通过 ModelScope 自动下载"""
@@ -75,8 +79,12 @@ def ensure_models(console: Console) -> None:
     for local_name, ms_id in missing:
         console.print(f"[yellow]模型 {local_name} 未找到，正在从 ModelScope 下载...[/yellow]")
         local_path = MODELS_DIR / local_name
-        snapshot_download(ms_id, local_dir=str(local_path))
-        console.print(f"[green]  {local_name} 下载完成[/green]")
+        try:
+            snapshot_download(ms_id, local_dir=str(local_path))
+            console.print(f"[green]  {local_name} 下载完成[/green]")
+        except Exception as e:
+            console.print(f"[red]  {local_name} 下载失败: {e}[/red]")
+            console.print(f"[yellow]  请检查网络连接或手动下载到 {local_path}[/yellow]")
 
     console.print("[green]所有模型下载完成[/green]")
 
@@ -297,7 +305,7 @@ def main():
     )
 
     # 初始化会话管理
-    session_mgr = SessionManager(str(PROJECT_ROOT / "data" / "sessions"))
+    session_mgr = SessionManager(str(SESSIONS_DIR))
     context_restorer = ContextRestorer(
         context_manager=context_manager,
         memory_retriever=memory_manager,
@@ -452,6 +460,11 @@ def main():
                     continue
 
             elif not user_input:
+                continue
+
+            # 输入长度检查
+            if len(user_input) > MAX_INPUT_LENGTH:
+                console.print(f"[red]输入过长（{len(user_input)}字符），请限制在 {MAX_INPUT_LENGTH} 字符以内[/red]")
                 continue
 
             # 确保有当前会话

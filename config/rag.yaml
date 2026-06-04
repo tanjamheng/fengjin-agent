@@ -63,4 +63,4 @@ rag:
     params:
       model: "models/bge-reranker-v2-m3"
       top_n: 4
-      device: "cuda"
+      device: "auto"  # cuda 不可用时自动降级 cpu

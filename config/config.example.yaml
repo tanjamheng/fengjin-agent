@@ -3,11 +3,11 @@
 # 注意：API Key 请在 .env 文件中配置，不要写在这里
 
 agent:
-  name: "SimpleAgent"
-  model: "glm-5"
+  name: "风堇"
   max_tokens: 4096
   temperature: 0.7
 
-# 系统提示词
+# 系统提示词（支持外部文件，system_prompt_file 优先级高于 system_prompt）
+# system_prompt_file: "system_prompt.md"
 system_prompt: |
   你是一个有帮助的AI助手。请用中文回答用户的问题。

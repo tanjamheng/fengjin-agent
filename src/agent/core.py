@@ -41,7 +41,8 @@ class Agent:
         # 初始化 API Client
         self.client = OpenAI(
             api_key=config.api_key,
-            base_url=config.base_url
+            base_url=config.base_url,
+            timeout=120.0,
         )
 
         # 三大能力管理器
@@ -160,6 +161,9 @@ class Agent:
             api_params["messages"] = self._build_api_messages_with_system(system_prompt)
             response = self._stream_call(api_params)
 
+        if tool_rounds >= MAX_TOOL_ROUNDS and self._has_tool_use(response):
+            self.log.warning(f"Tool calling 达到 {MAX_TOOL_ROUNDS} 轮上限，强制终止")
+
         # 8. 提取最终文本回复
         assistant_message = self._extract_text(response)
 
@@ -212,43 +216,54 @@ class Agent:
         if safe_stdout:
             sys.stdout.reconfigure(errors='replace')
 
-        stream = self.client.chat.completions.create(**api_params, stream=True)
+        stream = None
+        try:
+            stream = self.client.chat.completions.create(**api_params, stream=True)
 
-        full_text = ""
-        tool_calls_data = {}  # index -> {id, name, arguments}
+            full_text = ""
+            tool_calls_data = {}  # index -> {id, name, arguments}
 
-        for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if not delta:
-                continue
+            for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
+                    continue
 
-            # 文本内容
-            if delta.content:
-                full_text += delta.content
-                print(delta.content, end="", flush=True)
+                # 文本内容
+                if delta.content:
+                    full_text += delta.content
+                    print(delta.content, end="", flush=True)
 
-            # tool_calls 增量
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in tool_calls_data:
-                        tool_calls_data[idx] = {
-                            "id": tc_delta.id or "",
-                            "name": "",
-                            "arguments": "",
-                        }
-                    if tc_delta.id:
-                        tool_calls_data[idx]["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            tool_calls_data[idx]["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
+                # tool_calls 增量
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_calls_data:
+                            tool_calls_data[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        if tc_delta.id:
+                            tool_calls_data[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tool_calls_data[idx]["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
 
-        print()  # 流式结束后换行
+            print()  # 流式结束后换行
 
-        # 构造统一的响应对象
-        return self._build_response(full_text, tool_calls_data)
+            return self._build_response(full_text, tool_calls_data)
+
+        except Exception as e:
+            self.log.error(f"API调用失败: {e}", exc_info=True)
+            raise
+        finally:
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
 
     def _build_response(self, text: str, tool_calls_data: dict):
         """构造统一的响应对象，兼容 _has_tool_use / _process_tool_calls / _extract_text"""
