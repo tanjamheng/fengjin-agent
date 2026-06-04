@@ -121,6 +121,8 @@ class ContextSettings(BaseModel):
             return cls()
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+        if data is None:
+            return cls()
         return cls(context=ContextConfig(**data.get("context", {})))
 
 
@@ -139,7 +141,7 @@ class Config(BaseModel):
         return key
 
     @property
-    def base_url(self) -> str | None:
+    def base_url(self):
         """从环境变量获取Base URL，空字符串回退到 None（使用 SDK 默认值）"""
         url = os.getenv("FENGJIN_BASE_URL", "")
         return url if url else None
@@ -175,6 +177,9 @@ class Config(BaseModel):
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
+        if data is None:
+            data = {}
+
         # 加载 system prompt：优先从外部文件读取
         prompt = ""
         prompt_file = data.get("system_prompt_file")
@@ -208,4 +213,6 @@ class RAGSettings(BaseModel):
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
+        if data is None:
+            return cls(rag=RAGConfig())
         return cls(rag=RAGConfig(**data.get("rag", {})))

@@ -64,6 +64,8 @@ class MemorySettings(BaseModel):
             return cls()
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+        if data is None:
+            return cls()
         return cls(memory=MemoryConfig(**data.get("memory", {})))
 
     @staticmethod

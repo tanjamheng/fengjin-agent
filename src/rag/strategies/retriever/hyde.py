@@ -85,7 +85,10 @@ class HyDERetriever(RetrieverStrategy):
                 self.log.error(f"HyDE假设生成失败: {e}")
                 hypotheses.append(query)
 
-        return hypotheses if hypotheses else [query]
+        # 当所有LLM调用失败时降级：去重后仅保留一份原始query
+        if all(h == query for h in hypotheses):
+            return [query]
+        return hypotheses
 
     def retrieve(self, query: str) -> List[SearchResult]:
         """HyDE 检索"""

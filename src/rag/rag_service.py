@@ -184,12 +184,16 @@ class RAGService:
         """清理资源（不删除持久化数据）"""
         if self.reranker:
             self.reranker.cleanup()
+            self.reranker = None
         if self.retriever:
             self.retriever.cleanup()
+            self.retriever = None
         if self.indexer:
             self.indexer.cleanup()
+            self.indexer = None
         if self.query_enhancer:
             self.query_enhancer.cleanup()
+            self.query_enhancer = None
 
         self._initialized = False
         self.log.info("RAG 服务资源已清理")

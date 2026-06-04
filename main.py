@@ -180,8 +180,8 @@ def _handle_command(cmd: str, args: str, console: Console,
             console.print("[red]加载会话失败[/red]")
             return True
 
-        # 恢复 Agent 对话历史
-        agent.messages = session_mgr.get_current_messages()
+        # 恢复 Agent 对话历史（裁剪到滑动窗口限制）
+        agent.messages = context_restorer.restore_llm_context(session)
 
         console.print(f"[green]已加载会话: {session.title}[/green]")
         _print_recent_messages(console, session_mgr, n=max_turns)
@@ -317,7 +317,7 @@ def main():
         last = sessions[0]
         session = session_mgr.load_session(last["session_id"])
         if session:
-            agent.messages = session_mgr.get_current_messages()
+            agent.messages = context_restorer.restore_llm_context(session)
             console.print(f"[dim]已恢复上次会话: {session.title}[/dim]")
 
     # 显示欢迎信息
@@ -471,12 +471,10 @@ def main():
             if not session_mgr.current_session:
                 session_mgr.create_session()
 
-            # 记录用户消息到会话
-            session_mgr.append_message("user", user_input)
-
-            # 安全护栏检查
+            # 安全护栏检查（先于消息记录，避免拦截内容污染会话）
             result = safety_engine.check(user_input)
             if result.blocked:
+                session_mgr.append_message("user", user_input)
                 msg = result.user_message or "小伊卡发现了一些不太对劲的内容呢~请换个话题吧！"
                 console.print(f"[yellow]小伊卡：{msg}[/yellow]")
                 session_mgr.append_message("assistant", f"[小伊卡拦截] {msg}")
@@ -485,12 +483,14 @@ def main():
 
             # 发送消息（chat() 内部已流式输出）
             console.print("[bold green]风堇:[/bold green]")
+            # 先记录用户消息再调 Agent（Agent.chat 内部也记录一份）
+            session_mgr.append_message("user", user_input)
             if result.action.value == "comfort":
                 reply = agent.chat(user_input, safety_context=result.comfort_prompt)
             else:
                 reply = agent.chat(user_input)
 
-            # 记录助手回复到会话
+            # 记录助手回复到会话（与用户消息配对写入）
             session_mgr.append_message("assistant", reply)
             session_mgr.flush()
 
@@ -508,6 +508,13 @@ def main():
             from src.utils import get_logger
             _log = get_logger("main")
             _log.error(f"对话循环异常: {e}", exc_info=True)
+            # 回滚未配对的消息：agent.chat() 内部已将 user 消息加入 agent.messages，
+            # 但 assistant 未返回，需要清理避免 user/assistant 配对错乱
+            if agent.messages and agent.messages[-1].get("role") == "user":
+                agent.messages.pop()
+            if (session_mgr.current_session and session_mgr.current_session.messages
+                    and session_mgr.current_session.messages[-1].role == "user"):
+                session_mgr.current_session.messages.pop()
             console.print(f"[red]错误: {e}[/red]")
 
 

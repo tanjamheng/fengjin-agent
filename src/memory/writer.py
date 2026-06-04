@@ -104,7 +104,7 @@ class MemoryWriter:
         )
 
     def _resolve_conflict(self, old_id: str, fact: dict, is_core: bool) -> None:
-        """冲突消解"""
+        """冲突消解。LLM 合并失败时降级为直接插入新事实。"""
         old_result = self.storage.get(ids=[old_id])
         old_content = old_result["documents"][0]
         old_meta = old_result["metadatas"][0]
@@ -114,7 +114,12 @@ class MemoryWriter:
             self._insert(fact, is_core=False)
             return
 
-        merged = self._llm_merge(old_content, fact["content"])
+        try:
+            merged = self._llm_merge(old_content, fact["content"])
+        except Exception as e:
+            self.log.error(f"LLM记忆合并失败，降级为直接插入: {e}")
+            self._insert(fact, is_core)
+            return
 
         if merged == "NO_MERGE":
             self._insert(fact, is_core)
