@@ -22,6 +22,7 @@ class AgentConfig(BaseModel):
     max_tokens: int = 4096
     temperature: float = 0.7
     thinking_enabled: bool = False
+    max_tool_rounds: int = 5
 
 
 class LoaderConfig(BaseModel):
