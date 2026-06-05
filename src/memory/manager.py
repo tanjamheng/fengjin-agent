@@ -7,6 +7,7 @@ from .storage import MemoryStorage
 from .extractor import MemoryExtractor
 from .writer import MemoryWriter
 from .retriever import MemoryRetriever
+from ..utils.logger import get_logger
 
 
 class MemoryManager:
@@ -25,12 +26,14 @@ class MemoryManager:
         self.extractor = MemoryExtractor(config, small_client, model_name, self.storage)
         self.writer = MemoryWriter(config, small_client, model_name, self.storage)
         self.retriever = MemoryRetriever(config, self.storage)
+        self.log = get_logger("memory_manager")
 
     def retrieve(self, user_input: str) -> str:
         """检索记忆，返回格式化的记忆文本（用于注入 system prompt）"""
         return self.retriever.retrieve(user_input)
 
-    def extract_async(self, user_input: str, assistant_message: str) -> None:
+    def extract_async(self, user_input: str, assistant_message: str,
+                      trace_id: str = "") -> None:
         """异步提取记忆并写入（不阻塞主流程）"""
         def _worker():
             try:
@@ -38,8 +41,7 @@ class MemoryManager:
                 if facts:
                     self.writer.write(facts)
             except Exception as e:
-                from loguru import logger
-                logger.error(f"记忆提取失败: {e}")
+                self.log.error(f"记忆提取失败 [trace={trace_id}]: {e}")
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()

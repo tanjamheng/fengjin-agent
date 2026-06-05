@@ -194,6 +194,10 @@ class RAGService:
         if self.query_enhancer:
             self.query_enhancer.cleanup()
             self.query_enhancer = None
+        if self.loader:
+            self.loader = None
+        if self.splitter:
+            self.splitter = None
 
         self._initialized = False
         self.log.info("RAG 服务资源已清理")

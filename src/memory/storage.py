@@ -107,14 +107,14 @@ class MemoryStorage:
                 if hasattr(self._embedding_fn, '_model') and self._embedding_fn._model is not None:
                     del self._embedding_fn._model
                 self._embedding_fn = None
-            except Exception:
-                pass
+            except Exception as e:
+                self.log.warning(f"Embedding模型释放异常: {e}")
         self.collection = None
         self.client = None
         try:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.warning(f"CUDA缓存清理异常: {e}")
         self.log.info("MemoryStorage 资源已清理")

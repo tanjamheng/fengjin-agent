@@ -44,7 +44,7 @@ class MemoryWriter:
             self._queue.put(fact)
 
     def stop(self) -> None:
-        """停止写入线程"""
+        """停止写入线程，超时后持久化剩余任务以防数据丢失"""
         self._running = False
         pending = self._queue.qsize()
         self._queue.put(None)
@@ -52,6 +52,7 @@ class MemoryWriter:
         if self._thread.is_alive():
             remaining = self._queue.qsize()
             self.log.warning(f"写入线程超时未退出，丢弃队列中约 {remaining} 条任务（原队列 {pending} 条）")
+            self._dump_pending()
 
     def _writer_loop(self) -> None:
         """后台写入线程，串行处理所有写入任务"""
@@ -160,3 +161,38 @@ class MemoryWriter:
 
         Path(self.config.core_file).parent.mkdir(parents=True, exist_ok=True)
         Path(self.config.core_file).write_text(text, encoding="utf-8")
+
+    def _dump_pending(self) -> None:
+        """将队列中剩余任务持久化到临时文件，下次启动可回放"""
+        facts = []
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                continue
+            facts.append(item)
+
+        if not facts:
+            return
+
+        import json
+        from datetime import datetime
+        dump_path = Path(self.config.chroma.persist_directory) / "pending_facts.json"
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+
+        existing = []
+        if dump_path.exists():
+            try:
+                existing = json.loads(dump_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        for fact in facts:
+            fact["_dumped_at"] = datetime.now().isoformat()
+        existing.extend(facts)
+
+        dump_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+        self.log.info(f"已持久化 {len(facts)} 条未处理记忆到 {dump_path}")

@@ -179,8 +179,8 @@ class GuardModel:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.warning(f"CUDA缓存清理异常: {e}")
         self.log.info("Llama Guard 模型已释放")
 
     # ── 输出解析 ──────────────────────────────────────────

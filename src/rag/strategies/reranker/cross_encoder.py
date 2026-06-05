@@ -8,6 +8,7 @@ from typing import List
 from pathlib import Path
 from .base import RerankerStrategy
 from ..retriever.base import SearchResult
+from ....utils.logger import get_logger
 
 
 class CrossEncoderReranker(RerankerStrategy):
@@ -29,6 +30,7 @@ class CrossEncoderReranker(RerankerStrategy):
         self.top_n = top_n
         self.device = device
         self._model = None
+        self.log = get_logger("cross_encoder_reranker")
 
     def initialize(self) -> None:
         """加载模型"""
@@ -88,5 +90,5 @@ class CrossEncoderReranker(RerankerStrategy):
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.warning(f"CUDA缓存清理异常: {e}")

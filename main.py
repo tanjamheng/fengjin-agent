@@ -89,6 +89,34 @@ def ensure_models(console: Console) -> None:
     console.print("[green]所有模型下载完成[/green]")
 
 
+def _validate_ingest_path(path_str: str) -> bool:
+    """校验导入路径合法性：必须存在、在项目目录内、非系统敏感目录"""
+    target = Path(path_str).resolve()
+
+    if not target.exists():
+        return False
+
+    # 限制在项目目录内
+    try:
+        target.relative_to(PROJECT_ROOT)
+    except ValueError:
+        return False
+
+    # 拒绝系统敏感目录
+    forbidden_prefixes = [
+        Path("/etc"), Path("/sys"), Path("/proc"), Path("/dev"),
+        Path("C:\\Windows"), Path("C:\\System"),
+    ]
+    for prefix in forbidden_prefixes:
+        try:
+            target.relative_to(prefix)
+            return False
+        except ValueError:
+            continue
+
+    return True
+
+
 def _print_recent_messages(console: Console, session_mgr: SessionManager, n: int) -> None:
     """打印最近 N 条消息"""
     recent = session_mgr.get_recent_messages(n)
@@ -122,6 +150,8 @@ def _handle_command(cmd: str, args: str, console: Console,
         memory_manager.cleanup()
         rag_service.cleanup()
         safety_engine.cleanup()
+        from loguru import logger
+        logger.complete()
         console.print("[yellow]再见！[/yellow]")
         return False
 
@@ -377,6 +407,9 @@ def main():
 
                 elif cmd == "/ingest_dir" and args:
                     try:
+                        if not _validate_ingest_path(args):
+                            console.print("[red]无效路径：请提供项目目录下的合法路径[/red]")
+                            continue
                         result = rag_service.ingest_directory(args, recursive=True)
                         console.print(f"[green]成功导入 {result['document_count']} 个文档，共 {result['total_chunks']} 个文本块[/green]")
                     except Exception as e:
@@ -385,6 +418,9 @@ def main():
 
                 elif cmd == "/ingest" and args:
                     try:
+                        if not _validate_ingest_path(args):
+                            console.print("[red]无效路径：请提供项目目录下的合法路径[/red]")
+                            continue
                         result = rag_service.ingest_document(args)
                         console.print(f"[green]成功导入文档，生成 {result['chunk_count']} 个文本块[/green]")
                     except Exception as e:
@@ -502,6 +538,8 @@ def main():
             memory_manager.cleanup()
             rag_service.cleanup()
             safety_engine.cleanup()
+            from loguru import logger
+            logger.complete()
             console.print("\n[yellow]再见！[/yellow]")
             break
         except Exception as e:
@@ -515,7 +553,7 @@ def main():
             if (session_mgr.current_session and session_mgr.current_session.messages
                     and session_mgr.current_session.messages[-1].role == "user"):
                 session_mgr.current_session.messages.pop()
-            console.print(f"[red]错误: {e}[/red]")
+            console.print("[red]对话处理出错，请重试。详情见日志文件。[/red]")
 
 
 if __name__ == "__main__":

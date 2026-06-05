@@ -20,6 +20,7 @@ class SessionStore:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.log = get_logger("session_store")
+        self._cleanup_temp_files()
 
     def save_session(self, session: Session) -> None:
         """原子写入单个会话文件
@@ -69,3 +70,12 @@ class SessionStore:
 
     def _session_path(self, session_id: str) -> Path:
         return self.data_dir / f"{session_id}.json"
+
+    def _cleanup_temp_files(self) -> None:
+        """清理崩溃残留的 .tmp 临时文件"""
+        for tmp_file in self.data_dir.glob("*.json.tmp"):
+            try:
+                tmp_file.unlink()
+                self.log.debug(f"已清理残留临时文件: {tmp_file.name}")
+            except OSError as e:
+                self.log.warning(f"清理临时文件失败: {tmp_file.name}, {e}")

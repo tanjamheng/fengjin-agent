@@ -179,7 +179,8 @@ class Agent:
 
         # 11. 异步提取记忆
         if self.memory_manager:
-            self.memory_manager.extract_async(user_input, assistant_message)
+            self.memory_manager.extract_async(user_input, assistant_message,
+                                              trace_id=self.trace_id)
 
         self.log.info(f"回复完成，长度: {len(assistant_message)}")
         return assistant_message
@@ -263,7 +264,7 @@ class Agent:
                 try:
                     stream.close()
                 except Exception:
-                    pass
+                    pass  # 流关闭失败不影响主流程
 
     def _build_response(self, text: str, tool_calls_data: dict):
         """构造统一的响应对象，兼容 _has_tool_use / _process_tool_calls / _extract_text"""

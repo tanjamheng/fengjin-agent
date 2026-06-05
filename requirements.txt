@@ -31,3 +31,6 @@ python-docx>=0.8.11
 # Safety: Llama Guard 3 1B
 torch>=2.0.0
 transformers>=4.43.0
+
+# Model download (ModelScope)
+modelscope>=1.0.0

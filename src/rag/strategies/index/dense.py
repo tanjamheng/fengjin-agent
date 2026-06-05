@@ -6,6 +6,7 @@
 from typing import List
 from pathlib import Path
 from .base import IndexStrategy
+from ....utils.logger import get_logger
 
 
 class DenseIndex(IndexStrategy):
@@ -28,6 +29,7 @@ class DenseIndex(IndexStrategy):
         self._embedding_model = None
         self._store = None
         self._collection = None
+        self.log = get_logger("dense_index")
 
     def initialize(self) -> None:
         """初始化"""
@@ -191,5 +193,5 @@ class DenseIndex(IndexStrategy):
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.warning(f"CUDA缓存清理异常: {e}")
