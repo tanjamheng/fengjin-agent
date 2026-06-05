@@ -48,7 +48,8 @@ class CrossEncoderReranker(RerankerStrategy):
             model_path = self.model_name
             # 相对路径解析为项目根目录下的绝对路径
             if not Path(model_path).is_absolute():
-                model_path = str(Path(__file__).parent.parent.parent.parent.parent / model_path)
+                from ....utils.helpers import get_project_root
+                model_path = str(get_project_root() / model_path)
 
             self._model = CrossEncoder(model_path, device=effective_device)
         except ImportError:

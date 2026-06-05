@@ -22,9 +22,6 @@ from .mcp_manager import MCPManager
 from .context_manager import ContextManager
 from ..utils.logger import get_logger, generate_trace_id
 
-# tool_use 循环最大轮数，防止无限循环
-MAX_TOOL_ROUNDS = 5
-
 
 class Agent:
     """Agent 核心类（纯净胚子）
@@ -43,6 +40,7 @@ class Agent:
             api_key=config.api_key,
             base_url=config.base_url,
             timeout=120.0,
+            max_retries=3,
         )
 
         # 三大能力管理器
@@ -98,6 +96,10 @@ class Agent:
         Returns:
             Agent回复
         """
+        # 输入防御性校验
+        if not user_input or not user_input.strip():
+            return ""
+
         self.trace_id = generate_trace_id()
         self.log = get_logger(self.trace_id)
 
@@ -144,7 +146,7 @@ class Agent:
 
         # 7. Tool calling 循环
         tool_rounds = 0
-        while self._has_tool_use(response) and tool_rounds < MAX_TOOL_ROUNDS:
+        while self._has_tool_use(response) and tool_rounds < self.config.agent.max_tool_rounds:
             tool_rounds += 1
             tool_calls, tool_messages = self._process_tool_calls(response)
 
@@ -161,8 +163,8 @@ class Agent:
             api_params["messages"] = self._build_api_messages_with_system(system_prompt)
             response = self._stream_call(api_params)
 
-        if tool_rounds >= MAX_TOOL_ROUNDS and self._has_tool_use(response):
-            self.log.warning(f"Tool calling 达到 {MAX_TOOL_ROUNDS} 轮上限，强制终止")
+        if tool_rounds >= self.config.agent.max_tool_rounds and self._has_tool_use(response):
+            self.log.warning(f"Tool calling 达到 {self.config.agent.max_tool_rounds} 轮上限，强制终止")
 
         # 8. 提取最终文本回复
         assistant_message = self._extract_text(response)

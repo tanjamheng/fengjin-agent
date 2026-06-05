@@ -35,14 +35,24 @@ class DenseIndex(IndexStrategy):
         """初始化"""
         # 初始化 Embedding 模型
         try:
+            import torch
             from sentence_transformers import SentenceTransformer
+            from ....utils.helpers import get_project_root
             model_path = self.embedding_model_name
             # 相对路径解析为项目根目录下的绝对路径
             if not Path(model_path).is_absolute():
-                model_path = str(Path(__file__).parent.parent.parent.parent.parent / model_path)
+                model_path = str(get_project_root() / model_path)
+
+            # 自动检测 GPU 可用性
+            effective_device = self.device
+            if self.device in ("cuda", "auto") and not torch.cuda.is_available():
+                effective_device = "cpu"
+            elif self.device == "auto" and torch.cuda.is_available():
+                effective_device = "cuda"
+
             self._embedding_model = SentenceTransformer(
                 model_path,
-                device=self.device
+                device=effective_device
             )
         except ImportError:
             raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")

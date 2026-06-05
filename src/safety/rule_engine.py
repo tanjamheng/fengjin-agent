@@ -164,7 +164,7 @@ class RuleEngine:
 
     def _check_invisible_chars(self, text: str) -> Optional[SafetyResult]:
         """检测不可见字符（零宽空格、私有区字符等）"""
-        banned_categories = {"Cf", "Co", "Cn"}
+        banned_categories = {"Cc", "Cf", "Co", "Cn"}
         found_chars = []
 
         for char in text:

@@ -1,36 +1,36 @@
 # Core
-openai>=1.0.0
-pydantic>=2.0.0
+openai==2.30.0
+pydantic==2.9.2
 
 # Config
-pyyaml>=6.0
-python-dotenv>=1.0.0
+pyyaml==6.0.2
+python-dotenv==1.1.1
 
 # Logging
-loguru>=0.7.0
+loguru==0.7.3
 
 # BM25 sparse index
-rank_bm25>=0.2.2
+rank-bm25==0.2.2
 
 # CLI
-rich>=13.0.0
+rich==13.9.3
 
 # RAG
-chromadb>=0.4.0
-sentence-transformers>=2.2.0
-langchain-text-splitters>=0.3.0
+chromadb==1.0.15
+sentence-transformers==5.0.0
+langchain-text-splitters==0.3.8
 
 # Document Loading
-pypdf>=3.0.0
-python-docx>=0.8.11
+pypdf==6.5.0
+python-docx==1.2.0
 
 # Optional: FAISS vector store
 # faiss-cpu>=1.7.0
-# faiss-gpu>=1.7.0  # GPU version
+# faiss-gpu>=1.7.0
 
 # Safety: Llama Guard 3 1B
-torch>=2.0.0
-transformers>=4.43.0
+torch==2.6.0
+transformers==4.57.6
 
 # Model download (ModelScope)
-modelscope>=1.0.0
+modelscope==1.35.0

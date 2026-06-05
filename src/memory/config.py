@@ -71,9 +71,15 @@ class MemorySettings(BaseModel):
     @staticmethod
     def create_memo_model_client() -> OpenAI:
         """从环境变量创建记忆辅助模型 OpenAI 客户端"""
+        api_key = os.getenv("MEMO_API_KEY")
+        if not api_key:
+            raise ValueError("请在 .env 文件中设置 MEMO_API_KEY")
+        base_url = os.getenv("MEMO_BASE_URL")
+        if not base_url:
+            raise ValueError("请在 .env 文件中设置 MEMO_BASE_URL")
         return OpenAI(
-            api_key=os.getenv("MEMO_API_KEY"),
-            base_url=os.getenv("MEMO_BASE_URL"),
+            api_key=api_key,
+            base_url=base_url,
             timeout=45.0,
         )
 

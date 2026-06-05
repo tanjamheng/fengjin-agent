@@ -41,7 +41,7 @@ class MemoryManager:
                 if facts:
                     self.writer.write(facts)
             except Exception as e:
-                self.log.error(f"记忆提取失败 [trace={trace_id}]: {e}")
+                self.log.error(f"记忆提取失败 [trace={trace_id}]: {e}", exc_info=True)
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()

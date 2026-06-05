@@ -32,7 +32,7 @@ class MemoryWriter:
             encoding="utf-8"
         )
 
-        self._queue: queue.Queue = queue.Queue()
+        self._queue: queue.Queue = queue.Queue(maxsize=300)
         self._running = True
         self.log = get_logger("memory_writer")
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
@@ -48,7 +48,7 @@ class MemoryWriter:
         self._running = False
         pending = self._queue.qsize()
         self._queue.put(None)
-        self._thread.join(timeout=30)
+        self._thread.join(timeout=60)
         if self._thread.is_alive():
             remaining = self._queue.qsize()
             self.log.warning(f"写入线程超时未退出，丢弃队列中约 {remaining} 条任务（原队列 {pending} 条）")

@@ -28,11 +28,21 @@ class MemoryStorage:
         # 相对路径解析为项目根目录下的绝对路径
         embedding_model = config.chroma.embedding_model
         if not Path(embedding_model).is_absolute():
-            embedding_model = str(Path(__file__).parent.parent.parent / embedding_model)
+            from ..utils.helpers import get_project_root
+            embedding_model = str(get_project_root() / embedding_model)
+
+        # 自动检测 GPU 可用性
+        effective_device = config.chroma.device
+        if effective_device in ("cuda", "auto"):
+            import torch
+            if not torch.cuda.is_available():
+                effective_device = "cpu"
+            elif effective_device == "auto" and torch.cuda.is_available():
+                effective_device = "cuda"
 
         self._embedding_fn = SentenceTransformerEmbeddingFunction(
             model_name=embedding_model,
-            device=config.chroma.device,
+            device=effective_device,
         )
         self.collection = self.client.get_or_create_collection(
             name=config.chroma.collection_name,

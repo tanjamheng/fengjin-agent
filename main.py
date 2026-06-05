@@ -544,12 +544,16 @@ def main():
             break
         except Exception as e:
             from src.utils import get_logger
-            _log = get_logger("main")
-            _log.error(f"对话循环异常: {e}", exc_info=True)
-            # 回滚未配对的消息：agent.chat() 内部已将 user 消息加入 agent.messages，
-            # 但 assistant 未返回，需要清理避免 user/assistant 配对错乱
-            if agent.messages and agent.messages[-1].get("role") == "user":
-                agent.messages.pop()
+            _log = get_logger(agent.trace_id)
+            _log.error(f"对话循环异常 [input={user_input[:50]}]: {e}", exc_info=True)
+            # 回滚本轮所有消息：agent.chat() 内部可能已加入 user、assistant(tool_calls)、
+            # tool 结果等消息，但最终 assistant 回复未完成，需要全部回滚避免状态损坏。
+            # 回滚策略：从末尾向前移除，直到遇到本轮 user 消息并将其一并移除。
+            if agent.messages:
+                while agent.messages and agent.messages[-1].get("role") != "user":
+                    agent.messages.pop()
+                if agent.messages:
+                    agent.messages.pop()  # 移除 user 消息
             if (session_mgr.current_session and session_mgr.current_session.messages
                     and session_mgr.current_session.messages[-1].role == "user"):
                 session_mgr.current_session.messages.pop()
