@@ -277,6 +277,8 @@ class GuardModel:
             return {}
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+        if data is None:
+            return {}
         return data.get("safety", {}).get("guard_model", {})
 
     @staticmethod
@@ -287,6 +289,8 @@ class GuardModel:
             return {}
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+        if data is None:
+            return {}
         categories = data.get("safety", {}).get("categories", {})
         return {
             cat_id: cat.get("user_message", "")
@@ -302,6 +306,8 @@ class GuardModel:
             return "该内容已被安全系统拦截。"
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+        if data is None:
+            return "该内容已被安全系统拦截。"
         return data.get("safety", {}).get(
             "default_user_message", "该内容已被安全系统拦截。"
         )
@@ -314,5 +320,7 @@ class GuardModel:
             return ""
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+        if data is None:
+            return ""
         comfort = data.get("safety", {}).get("comfort", {})
         return comfort.get("self_harm_prompt", "")

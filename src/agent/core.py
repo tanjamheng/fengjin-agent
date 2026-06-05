@@ -263,8 +263,8 @@ class Agent:
             if stream is not None:
                 try:
                     stream.close()
-                except Exception:
-                    pass  # 流关闭失败不影响主流程
+                except Exception as e:
+                    self.log.debug(f"流关闭异常: {e}")
 
     def _build_response(self, text: str, tool_calls_data: dict):
         """构造统一的响应对象，兼容 _has_tool_use / _process_tool_calls / _extract_text"""

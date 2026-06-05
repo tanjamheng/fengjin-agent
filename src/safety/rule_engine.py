@@ -86,6 +86,8 @@ class SafetyConfig(BaseModel):
             return cls()
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+        if data is None:
+            return cls()
         safety_data = data.get("safety", {})
         return cls(
             enabled=safety_data.get("enabled", True),
