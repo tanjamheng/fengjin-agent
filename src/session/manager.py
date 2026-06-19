@@ -53,6 +53,7 @@ class SessionManager:
                     "session_id": session.session_id,
                     "title": session.title,
                     "message_count": session.message_count,
+                    "created_at": session.created_at,
                     "updated_at": session.updated_at,
                 })
         sessions.sort(key=lambda s: s["updated_at"], reverse=True)

@@ -266,8 +266,11 @@ def _handle_command(cmd: str, args: str, console: Console,
             console.print("[dim]已取消[/dim]")
             return True
 
-        session_mgr.delete_session(target["session_id"])
-        console.print(f"[green]已删除会话: {target['title']}[/green]")
+        deleted = session_mgr.delete_session(target["session_id"])
+        if deleted:
+            console.print(f"[green]已删除会话: {target['title']}[/green]")
+        else:
+            console.print(f"[yellow]会话「{target['title']}」已不存在（可能已被删除）[/yellow]")
 
         # 如果删的是当前会话，清空 Agent
         if target["session_id"] == session_mgr.get_current_session_id():
