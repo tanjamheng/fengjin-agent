@@ -82,7 +82,7 @@ class HyDERetriever(RetrieverStrategy):
                 hypotheses.append(hypothesis)
 
             except Exception as e:
-                self.log.error(f"HyDE假设生成失败: {e}")
+                self.log.error("HyDE假设生成失败: {}", e)
                 hypotheses.append(query)
 
         # 当所有LLM调用失败时降级：去重后仅保留一份原始query

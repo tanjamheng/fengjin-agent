@@ -204,4 +204,4 @@ class DenseIndex(IndexStrategy):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception as e:
-            self.log.warning(f"CUDA缓存清理异常: {e}")
+            self.log.warning("CUDA缓存清理异常: {}", e)

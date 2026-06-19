@@ -43,7 +43,7 @@ class Indexer:
 
     def initialize(self) -> None:
         """初始化索引"""
-        self.log.info(f"初始化索引，策略: {self.strategy_type}")
+        self.log.info("初始化索引，策略: {}", self.strategy_type)
         strategy = self._get_strategy()
         strategy.initialize()
         self.log.info("索引初始化完成")
@@ -55,7 +55,7 @@ class Indexer:
 
         strategy = self._get_strategy()
         strategy.add(chunks)
-        self.log.info(f"添加 {len(chunks)} 个文本块到索引")
+        self.log.info("添加 {} 个文本块到索引", len(chunks))
 
     def search(self, query: str, top_k: int = 5) -> List[dict]:
         """搜索"""

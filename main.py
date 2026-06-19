@@ -548,7 +548,7 @@ def main():
         except Exception as e:
             from src.utils import get_logger
             _log = get_logger(agent.trace_id)
-            _log.error(f"对话循环异常 [input={user_input[:50]}]: {e}", exc_info=True)
+            _log.opt(exception=True).error("对话循环异常 [input={}]: {}", user_input[:50], e)
             # 回滚本轮所有消息：agent.chat() 内部可能已加入 user、assistant(tool_calls)、
             # tool 结果等消息，但最终 assistant 回复未完成，需要全部回滚避免状态损坏。
             # 回滚策略：从末尾向前移除，直到遇到本轮 user 消息并将其一并移除。

@@ -46,14 +46,14 @@ class QueryEnhancer:
 
     def enhance(self, query: str) -> Union[str, List[str]]:
         """增强查询"""
-        self.log.info(f"增强查询，策略: {self.strategy_type}")
+        self.log.info("增强查询，策略: {}", self.strategy_type)
         strategy = self._get_strategy()
         enhanced = strategy.enhance(query)
 
         if isinstance(enhanced, list):
-            self.log.info(f"生成 {len(enhanced)} 个查询变体")
+            self.log.info("生成 {} 个查询变体", len(enhanced))
         else:
-            self.log.info(f"查询已增强")
+            self.log.info("查询已增强")
 
         return enhanced
 

@@ -111,7 +111,7 @@ class GuardModel:
             return self._parse_output(output_text)
 
         except Exception as e:
-            self.log.error(f"P1 检测失败: {e}")
+            self.log.error("P1 检测失败: {}", e)
             if self.config.fallback == "pass":
                 return SafetyResult()
             return SafetyResult(
@@ -134,7 +134,7 @@ class GuardModel:
             if self._loaded:
                 return
 
-            self.log.info(f"正在加载 Llama Guard 3 1B ({self.config.model_id})...")
+            self.log.info("正在加载 Llama Guard 3 1B ({})...", self.config.model_id)
 
             import torch
             from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -180,7 +180,7 @@ class GuardModel:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception as e:
-            self.log.warning(f"CUDA缓存清理异常: {e}")
+            self.log.warning("CUDA缓存清理异常: {}", e)
         self.log.info("Llama Guard 模型已释放")
 
     # ── 输出解析 ──────────────────────────────────────────
@@ -257,13 +257,13 @@ class GuardModel:
                 path = Path(__file__).parent.parent.parent / path
             if not path.exists():
                 raise FileNotFoundError(f"本地模型路径不存在: {path}")
-            self.log.info(f"从本地加载: {path}")
+            self.log.info("从本地加载: {}", path)
             return str(path)
 
         if self.config.source == "modelscope":
             from modelscope.hub.snapshot_download import snapshot_download
             cache_dir = snapshot_download(model_id)
-            self.log.info(f"从 ModelScope 加载: {cache_dir}")
+            self.log.info("从 ModelScope 加载: {}", cache_dir)
             return cache_dir
 
         # huggingface 源：model_id 直接传给 transformers

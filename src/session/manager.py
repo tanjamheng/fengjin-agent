@@ -32,7 +32,7 @@ class SessionManager:
         )
         self.current_session = session
         self.store.save_session(session)
-        self.log.info(f"创建会话: {session.session_id}")
+        self.log.info("创建会话: {}", session.session_id)
         return session
 
     def load_session(self, session_id: str) -> Optional[Session]:
@@ -40,7 +40,7 @@ class SessionManager:
         session = self.store.load_session(session_id)
         if session:
             self.current_session = session
-            self.log.info(f"加载会话: {session_id}, 消息数: {session.message_count}")
+            self.log.info("加载会话: {}, 消息数: {}", session_id, session.message_count)
         return session
 
     def list_sessions(self) -> list[dict]:
@@ -68,7 +68,7 @@ class SessionManager:
         self.store.save_session(session)
         if self.current_session and self.current_session.session_id == session_id:
             self.current_session = session
-        self.log.info(f"重命名会话: {session_id} -> {title}")
+        self.log.info("重命名会话: {} -> {}", session_id, title)
         return True
 
     def delete_session(self, session_id: str) -> bool:

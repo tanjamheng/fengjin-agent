@@ -42,7 +42,7 @@ class Reranker:
 
     def initialize(self) -> None:
         """初始化"""
-        self.log.info(f"初始化重排序器，策略: {self.strategy_type}")
+        self.log.info("初始化重排序器，策略: {}", self.strategy_type)
         strategy = self._get_strategy()
         strategy.initialize()
         self.log.info("重排序器初始化完成")
@@ -52,10 +52,10 @@ class Reranker:
         if self.strategy_type == "none":
             return results
 
-        self.log.info(f"重排序 {len(results)} 个结果")
+        self.log.info("重排序 {} 个结果", len(results))
         strategy = self._get_strategy()
         reranked = strategy.rerank(query, results)
-        self.log.info(f"重排序完成，返回 {len(reranked)} 个结果")
+        self.log.info("重排序完成，返回 {} 个结果", len(reranked))
         return reranked
 
     def cleanup(self) -> None:

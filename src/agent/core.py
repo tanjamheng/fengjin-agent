@@ -59,14 +59,14 @@ class Agent:
         self.trace_id = generate_trace_id()
         self.log = get_logger(self.trace_id)
 
-        self.log.info(f"Agent 初始化: {config.agent.name}")
+        self.log.info("Agent 初始化: {}", config.agent.name)
 
     # ── Skill ──────────────────────────────────────────────
 
     def register_skill(self, skill: SkillBase) -> None:
         """注册 Skill（提示词模版）"""
         self.registry.register(skill)
-        self.log.info(f"注册 Skill: {skill.meta.name}")
+        self.log.info("注册 Skill: {}", skill.meta.name)
 
     # ── Tool ───────────────────────────────────────────────
 
@@ -80,7 +80,7 @@ class Agent:
         """注册 MCP 服务器"""
         self.mcp_manager.register(server)
         self.tool_registry.register_mcp_server(server)
-        self.log.info(f"注册 MCP 服务器: {server.name}")
+        self.log.info("注册 MCP 服务器: {}", server.name)
 
     # ── 对话 ───────────────────────────────────────────────
 
@@ -103,7 +103,7 @@ class Agent:
         self.trace_id = generate_trace_id()
         self.log = get_logger(self.trace_id)
 
-        self.log.info(f"用户输入: {user_input[:50]}...")
+        self.log.info("用户输入: {}...", user_input[:50])
 
         # 1. Skills 注入提示词（如有）
         message_content = user_input
@@ -141,7 +141,7 @@ class Agent:
         }
 
         # 6. 流式调用 API
-        self.log.info(f"调用 API: {self.config.model}")
+        self.log.info("调用 API: {}", self.config.model)
         response = self._stream_call(api_params)
 
         # 7. Tool calling 循环
@@ -159,12 +159,12 @@ class Agent:
             # tool 结果消息（每条独立）
             self.messages.extend(tool_messages)
 
-            self.log.info(f"Tool calling 第 {tool_rounds} 轮")
+            self.log.info("Tool calling 第 {} 轮", tool_rounds)
             api_params["messages"] = self._build_api_messages_with_system(system_prompt)
             response = self._stream_call(api_params)
 
         if tool_rounds >= self.config.agent.max_tool_rounds and self._has_tool_use(response):
-            self.log.warning(f"Tool calling 达到 {self.config.agent.max_tool_rounds} 轮上限，强制终止")
+            self.log.warning("Tool calling 达到 {} 轮上限，强制终止", self.config.agent.max_tool_rounds)
 
         # 8. 提取最终文本回复
         assistant_message = self._extract_text(response)
@@ -184,7 +184,7 @@ class Agent:
             self.memory_manager.extract_async(user_input, assistant_message,
                                               trace_id=self.trace_id)
 
-        self.log.info(f"回复完成，长度: {len(assistant_message)}")
+        self.log.info("回复完成，长度: {}", len(assistant_message))
         return assistant_message
 
     # ── 内部方法 ────────────────────────────────────────────
@@ -259,14 +259,14 @@ class Agent:
             return self._build_response(full_text, tool_calls_data)
 
         except Exception as e:
-            self.log.error(f"API调用失败: {e}", exc_info=True)
+            self.log.opt(exception=True).error("API调用失败: {}", e)
             raise
         finally:
             if stream is not None:
                 try:
                     stream.close()
                 except Exception as e:
-                    self.log.debug(f"流关闭异常: {e}")
+                    self.log.debug("流关闭异常: {}", e)
 
     def _build_response(self, text: str, tool_calls_data: dict):
         """构造统一的响应对象，兼容 _has_tool_use / _process_tool_calls / _extract_text"""
@@ -329,7 +329,7 @@ class Agent:
             except json.JSONDecodeError:
                 tool_input = {}
 
-            self.log.info(f"调用 Tool: {tool_name}, 参数: {tool_input}")
+            self.log.info("调用 Tool: {}, 参数: {}", tool_name, tool_input)
 
             tool_calls_list.append({
                 "id": tool_use_id,
@@ -348,7 +348,7 @@ class Agent:
                     "content": result_text,
                 })
             except Exception as e:
-                self.log.error(f"Tool {tool_name} 执行失败: {e}")
+                self.log.error("Tool {} 执行失败: {}", tool_name, e)
                 tool_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_use_id,
@@ -378,7 +378,7 @@ class Agent:
             if result.success and result.data:
                 if "prompt" in result.data:
                     current_prompt = result.data["prompt"]
-                    self.log.info(f"Skill {skill_name} 已注入prompt")
+                    self.log.info("Skill {} 已注入prompt", skill_name)
 
         return current_prompt
 

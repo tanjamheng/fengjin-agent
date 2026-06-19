@@ -42,17 +42,17 @@ class Retriever:
 
     def initialize(self) -> None:
         """初始化"""
-        self.log.info(f"初始化检索器，策略: {self.strategy_type}")
+        self.log.info("初始化检索器，策略: {}", self.strategy_type)
         strategy = self._get_strategy()
         strategy.initialize()
         self.log.info("检索器初始化完成")
 
     def retrieve(self, query: str) -> List[SearchResult]:
         """检索"""
-        self.log.info(f"检索查询: {query[:50]}...")
+        self.log.info("检索查询: {}...", query[:50])
         strategy = self._get_strategy()
         results = strategy.retrieve(query)
-        self.log.info(f"检索到 {len(results)} 个相关文档")
+        self.log.info("检索到 {} 个相关文档", len(results))
         return results
 
     def get_context(self, query: str, max_length: int = 2000) -> str:

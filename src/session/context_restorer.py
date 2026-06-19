@@ -34,7 +34,7 @@ class ContextRestorer:
         if self.context_manager:
             messages = self.context_manager.trim_messages(messages)
 
-        self.log.info(f"恢复上下文: {len(messages)} 条消息")
+        self.log.info("恢复上下文: {} 条消息", len(messages))
         return messages
 
     def restore_memory_context(self, session: Session) -> Optional[str]:
@@ -50,5 +50,5 @@ class ContextRestorer:
         query = " ".join(user_msgs[-3:])
         memory_text = self.memory_retriever.retrieve(query)
         if memory_text:
-            self.log.info(f"检索到相关记忆")
+            self.log.info("检索到相关记忆")
         return memory_text

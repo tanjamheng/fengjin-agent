@@ -111,12 +111,12 @@ def with_trace_id(func):
     def wrapper(*args, **kwargs):
         trace_id = generate_trace_id()
         log = get_logger(trace_id)
-        log.info(f"开始执行: {func.__name__}")
+        log.info("开始执行: {}", func.__name__)
         try:
             result = func(*args, **kwargs, _log=log, _trace_id=trace_id)
-            log.info(f"完成执行: {func.__name__}")
+            log.info("完成执行: {}", func.__name__)
             return result
         except Exception as e:
-            log.error(f"执行失败: {func.__name__}, 错误: {sanitize_message(str(e))}")
+            log.error("执行失败: {}, 错误: {}", func.__name__, sanitize_message(str(e)))
             raise
     return wrapper

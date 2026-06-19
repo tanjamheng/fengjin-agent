@@ -79,7 +79,7 @@ class ContextManager:
 
         # 第一条必须是 user（对话起点）；若状态异常（非 user），记录警告后弹出非 user 消息
         if messages[0].get("role") != "user":
-            self.log.warning(f"_pop_turn: 首条消息非 user (role={messages[0].get('role')})，消息序列可能已损坏")
+            self.log.warning("_pop_turn: 首条消息非 user (role={})，消息序列可能已损坏", messages[0].get('role'))
         messages.pop(0)
 
         # 继续删，直到遇到下一条独立的 user 消息

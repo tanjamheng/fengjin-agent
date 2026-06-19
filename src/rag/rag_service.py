@@ -94,7 +94,7 @@ class RAGService:
         if not self._initialized:
             self.initialize()
 
-        self.log.info(f"RAG 检索: {query[:50]}...")
+        self.log.info("RAG 检索: {}...", query[:50])
 
         # 查询增强
         enhanced_query = self.query_enhancer.enhance(query)
@@ -114,7 +114,7 @@ class RAGService:
 
         # 构建上下文
         context_text = self._build_context(reranked_results, max_length=1500)
-        self.log.info(f"RAG 检索完成: 召回 {len(recall_results)} 条, 精排 {len(reranked_results)} 条")
+        self.log.info("RAG 检索完成: 召回 {} 条, 精排 {} 条", len(recall_results), len(reranked_results))
 
         return context_text
 
@@ -127,7 +127,7 @@ class RAGService:
         if not self._initialized:
             self.initialize()
 
-        self.log.info(f"导入文档: {file_path}")
+        self.log.info("导入文档: {}", file_path)
 
         document = self.loader.load(file_path, category=category)
         chunks = self.splitter.split_document(document)
@@ -149,7 +149,7 @@ class RAGService:
         if not self._initialized:
             self.initialize()
 
-        self.log.info(f"批量导入: {dir_path}")
+        self.log.info("批量导入: {}", dir_path)
 
         if recursive:
             documents = self.loader.load_directory_recursive(dir_path)

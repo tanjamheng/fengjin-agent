@@ -78,7 +78,7 @@ class ExpandEnhancer(QueryEnhancerStrategy):
             return variations
 
         except Exception as e:
-            self.log.error(f"查询扩展失败: {e}")
+            self.log.error("查询扩展失败: {}", e)
             return query
 
     def cleanup(self) -> None:

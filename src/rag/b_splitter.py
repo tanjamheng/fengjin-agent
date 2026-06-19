@@ -42,11 +42,11 @@ class TextSplitter:
         if not text:
             return []
 
-        self.log.info(f"切分文本，策略: {self.strategy_type}")
+        self.log.info("切分文本，策略: {}", self.strategy_type)
         strategy = self._get_strategy()
         chunks = strategy.split(text, metadata)
 
-        self.log.info(f"切分完成，共 {len(chunks)} 个块")
+        self.log.info("切分完成，共 {} 个块", len(chunks))
         return chunks
 
     def split_document(self, document) -> List[TextChunk]:

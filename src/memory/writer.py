@@ -51,7 +51,7 @@ class MemoryWriter:
         self._thread.join(timeout=60)
         if self._thread.is_alive():
             remaining = self._queue.qsize()
-            self.log.warning(f"写入线程超时未退出，丢弃队列中约 {remaining} 条任务（原队列 {pending} 条）")
+            self.log.warning("写入线程超时未退出，丢弃队列中约 {} 条任务（原队列 {} 条）", remaining, pending)
             self._dump_pending()
 
     def _writer_loop(self) -> None:
@@ -63,7 +63,7 @@ class MemoryWriter:
             try:
                 self._process_fact(item)
             except Exception as e:
-                self.log.error(f"记忆写入失败: {e}")
+                self.log.error("记忆写入失败: {}", e)
             finally:
                 self._queue.task_done()
 
@@ -118,7 +118,7 @@ class MemoryWriter:
         try:
             merged = self._llm_merge(old_content, fact["content"])
         except Exception as e:
-            self.log.error(f"LLM记忆合并失败，降级为直接插入: {e}")
+            self.log.error("LLM记忆合并失败，降级为直接插入: {}", e)
             self._insert(fact, is_core)
             return
 
@@ -195,4 +195,4 @@ class MemoryWriter:
 
         dump_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2),
                              encoding="utf-8")
-        self.log.info(f"已持久化 {len(facts)} 条未处理记忆到 {dump_path}")
+        self.log.info("已持久化 {} 条未处理记忆到 {}", len(facts), dump_path)

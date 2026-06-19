@@ -25,7 +25,7 @@ def load_keywords(words_dir: Path, categories: dict) -> dict[str, list[str]]:
     for cat_id in categories:
         file_path = words_dir / f"{cat_id}.txt"
         if not file_path.exists():
-            log.warning(f"词库文件不存在: {file_path}，类别 {cat_id} 关键词为空")
+            log.warning("词库文件不存在: {}，类别 {} 关键词为空", file_path, cat_id)
             keywords[cat_id] = []
             continue
 
@@ -37,11 +37,11 @@ def load_keywords(words_dir: Path, categories: dict) -> dict[str, list[str]]:
                     if line and not line.startswith("#"):
                         words.append(line)
         except Exception as e:
-            log.warning(f"读取词库文件失败: {file_path}, {e}")
+            log.warning("读取词库文件失败: {}, {}", file_path, e)
             words = []
 
         keywords[cat_id] = words
-        log.debug(f"加载词库 {cat_id}: {len(words)} 个关键词")
+        log.debug("加载词库 {}: {} 个关键词", cat_id, len(words))
 
     return keywords
 
@@ -59,14 +59,14 @@ def load_regex_patterns(regex_path: Path) -> list[dict]:
     log = get_logger("safety_loader")
 
     if not regex_path.exists():
-        log.warning(f"正则规则文件不存在: {regex_path}")
+        log.warning("正则规则文件不存在: {}", regex_path)
         return []
 
     try:
         with open(regex_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except Exception as e:
-        log.warning(f"读取正则规则文件失败: {regex_path}, {e}")
+        log.warning("读取正则规则文件失败: {}, {}", regex_path, e)
         return []
 
     raw_patterns = data.get("patterns", [])
@@ -87,7 +87,7 @@ def load_regex_patterns(regex_path: Path) -> list[dict]:
                 "raw": raw,
             })
         except re.error as e:
-            log.warning(f"正则编译失败 [{category}]: {raw}, 错误: {e}")
+            log.warning("正则编译失败 [{}]: {}, 错误: {}", category, raw, e)
 
-    log.debug(f"加载正则规则: {len(compiled)}/{len(raw_patterns)} 条成功")
+    log.debug("加载正则规则: {}/{} 条成功", len(compiled), len(raw_patterns))
     return compiled

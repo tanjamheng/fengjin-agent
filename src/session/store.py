@@ -35,7 +35,7 @@ class SessionStore:
             json.dump(session.model_dump(), f, ensure_ascii=False, indent=2, default=str)
 
         os.replace(tmp_path, path)
-        self.log.debug(f"会话已保存: {session.session_id}")
+        self.log.debug("会话已保存: {}", session.session_id)
 
     def load_session(self, session_id: str) -> Optional[Session]:
         """读取单个会话文件"""
@@ -48,7 +48,7 @@ class SessionStore:
                 data = json.load(f)
             return Session(**data)
         except (json.JSONDecodeError, Exception) as e:
-            self.log.error(f"会话文件损坏: {session_id}, 错误: {e}")
+            self.log.error("会话文件损坏: {}, 错误: {}", session_id, e)
             return None
 
     def list_session_files(self) -> list[Path]:
@@ -64,7 +64,7 @@ class SessionStore:
         path = self._session_path(session_id)
         if path.exists():
             path.unlink()
-            self.log.info(f"会话已删除: {session_id}")
+            self.log.info("会话已删除: {}", session_id)
             return True
         return False
 
@@ -76,6 +76,6 @@ class SessionStore:
         for tmp_file in self.data_dir.glob("*.json.tmp"):
             try:
                 tmp_file.unlink()
-                self.log.debug(f"已清理残留临时文件: {tmp_file.name}")
+                self.log.debug("已清理残留临时文件: {}", tmp_file.name)
             except OSError as e:
-                self.log.warning(f"清理临时文件失败: {tmp_file.name}, {e}")
+                self.log.warning("清理临时文件失败: {}, {}", tmp_file.name, e)

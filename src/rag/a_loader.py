@@ -54,7 +54,7 @@ class DocumentLoader:
         if method_name is None:
             raise ValueError(f"不支持的文件格式: {ext}")
 
-        self.log.info(f"加载文档: {file_path}")
+        self.log.info("加载文档: {}", file_path)
 
         method = getattr(self, method_name)
         content = method(path)
@@ -86,9 +86,9 @@ class DocumentLoader:
                     doc = self.load(str(file_path))
                     documents.append(doc)
                 except Exception as e:
-                    self.log.warning(f"加载文件失败: {file_path}, 错误: {e}")
+                    self.log.warning("加载文件失败: {}, 错误: {}", file_path, e)
 
-        self.log.info(f"从目录 {dir_path} 加载了 {len(documents)} 个文档")
+        self.log.info("从目录 {} 加载了 {} 个文档", dir_path, len(documents))
         return documents
 
     def load_directory_recursive(self, dir_path: str) -> List[Document]:
@@ -123,7 +123,7 @@ class DocumentLoader:
                         doc = self.load(str(file_path), category=category)
                         documents.append(doc)
                     except Exception as e:
-                        self.log.warning(f"加载文件失败: {file_path}, 错误: {e}")
+                        self.log.warning("加载文件失败: {}, 错误: {}", file_path, e)
 
         # 也检查根目录下的文件（无分类）
         for file_path in sorted(root.iterdir()):
@@ -132,9 +132,9 @@ class DocumentLoader:
                     doc = self.load(str(file_path))
                     documents.append(doc)
                 except Exception as e:
-                    self.log.warning(f"加载文件失败: {file_path}, 错误: {e}")
+                    self.log.warning("加载文件失败: {}, 错误: {}", file_path, e)
 
-        self.log.info(f"递归加载 {dir_path}，共 {len(documents)} 个文档")
+        self.log.info("递归加载 {}，共 {} 个文档", dir_path, len(documents))
         return documents
 
     def _load_text(self, path: Path) -> str:

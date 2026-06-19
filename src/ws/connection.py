@@ -17,12 +17,13 @@ from ..config import Config
 from ..agent.context_manager import ContextManager
 from ..agent.streaming import stream_reply, BlockedError
 from ..agent.stream_controller import StreamController
-from ..utils.logger import get_logger
+from ..utils.logger import get_logger, generate_trace_id
 
 router = APIRouter()
 log = get_logger("ws")
 
 HEARTBEAT_TIMEOUT = 10       # 秒，前端 10s 未收到 pong 判定断线
+MAX_INPUT_LENGTH = 10000     # 超长输入拒绝（对齐 CLI / CLAUDE.md 技术约束）
 
 
 @router.websocket("/ws")
@@ -62,8 +63,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 log.warning("心跳超时，关闭连接")
                 try:
                     await websocket.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("心跳关闭连接异常: {}", e)
                 break
 
     heartbeat_task = asyncio.create_task(_heartbeat_checker())
@@ -73,7 +74,7 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
-                log.warning(f"收到非法 JSON: {raw[:100]}")
+                log.warning("收到非法 JSON: {}", raw[:100])
                 continue
 
             msg_type = data.get("type")
@@ -89,11 +90,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     current_controller.cancel()
                     try:
                         await current_stream
-                    except (asyncio.CancelledError, BlockedError, Exception):
+                    except asyncio.CancelledError:
                         pass
+                    except BlockedError:
+                        pass
+                    except Exception as e:
+                        log.opt(exception=True).error("旧流异常收尾: {}", e)
 
-                # 切换/创建会话
-                _ensure_session(session_mgr, data.get("session_id", ""))
+                # 切换/创建会话（目标会话不存在则报错，不继续）
+                if not _ensure_session(session_mgr, data.get("session_id", "")):
+                    await websocket.send_json({"type": "error", "message": "会话不存在"})
+                    continue
 
                 current_controller = StreamController()
                 current_stream = asyncio.create_task(
@@ -110,8 +117,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 if current_stream and not current_stream.done():
                     try:
                         await current_stream
-                    except (asyncio.CancelledError, BlockedError, Exception):
+                    except asyncio.CancelledError:
                         pass
+                    except BlockedError:
+                        pass
+                    except Exception as e:
+                        log.opt(exception=True).error("取消旧流异常: {}", e)
                 partial = current_controller.partial_text if current_controller else ""
                 await websocket.send_json({
                     "type": "end",
@@ -161,7 +172,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         log.info("客户端主动断开")
     except Exception as e:
-        log.error(f"WebSocket 异常: {e}")
+        log.opt(exception=True).error("WebSocket 异常: {}", e)
     finally:
         heartbeat_task.cancel()
         try:
@@ -196,11 +207,25 @@ async def _handle_user_msg(
 ):
     """消费 stream_reply() 的 token，映射为 WS 报文"""
     user_content = data.get("content", "")
+
+    # 输入校验（对齐 CLI / CLAUDE.md 技术约束）
+    if not isinstance(user_content, str) or not user_content.strip():
+        await websocket.send_json({"type": "error", "message": "消息不能为空"})
+        return
+    if len(user_content) > MAX_INPUT_LENGTH:
+        await websocket.send_json({"type": "error", "message": "消息过长，请缩短后重试"})
+        return
+
+    trace_id = generate_trace_id()
+    logger = log.bind(trace_id=trace_id)
+    logger.info("处理 user_msg: {}", user_content[:50])
+
     try:
         await websocket.send_json({"type": "thinking"})
         full_text = ""
         async for token in stream_reply(
             user_content, session_mgr, safety, controller, client, config, context_mgr,
+            trace_id=trace_id,
         ):
             full_text += token
             await websocket.send_json({"type": "stream", "text": token})
@@ -227,28 +252,31 @@ async def _handle_user_msg(
         raise
 
     except Exception as e:
-        log.error(f"流式生成异常: {e}")
+        logger.opt(exception=True).error("流式生成异常: {}", e)
         try:
             await websocket.send_json({
                 "type": "error",
                 "message": "AI 服务暂时不可用，请稍后重试",
             })
-        except Exception:
-            pass
+        except Exception as send_err:
+            logger.warning("发送 error 报文失败（连接可能已断）: {}", send_err)
 
 
 # ── 辅助函数 ─────────────────────────────────────────────────
 
-def _ensure_session(session_mgr: SessionManager, target_id: str) -> None:
-    """确保当前会话正确：空 ID 建新会话，不同 ID 加载目标会话"""
+def _ensure_session(session_mgr: SessionManager, target_id: str) -> bool:
+    """确保当前会话正确。返回 True=就绪，False=目标会话不存在"""
     if not target_id:
         session_mgr.flush()
         session_mgr.create_session()
-        return
+        return True
 
     if session_mgr.get_current_session_id() != target_id:
         session_mgr.flush()
-        session_mgr.load_session(target_id)
+        loaded = session_mgr.load_session(target_id)
+        if loaded is None:
+            return False
+    return True
 
 
 def _format_session_list(raw_list: list[dict]) -> list[dict]:

@@ -19,11 +19,11 @@ class MCPManager:
         """注册并初始化 MCP 服务器"""
         name = server.name
         if name in self._servers:
-            self.log.warning(f"MCP 服务器 {name} 已存在，将被覆盖")
+            self.log.warning("MCP 服务器 {} 已存在，将被覆盖", name)
 
         server.initialize()
         self._servers[name] = server
-        self.log.info(f"注册 MCP 服务器: {name}")
+        self.log.info("注册 MCP 服务器: {}", name)
 
     def unregister(self, name: str) -> bool:
         """注销并清理 MCP 服务器"""
@@ -32,7 +32,7 @@ class MCPManager:
 
         server = self._servers.pop(name)
         server.cleanup()
-        self.log.info(f"注销 MCP 服务器: {name}")
+        self.log.info("注销 MCP 服务器: {}", name)
         return True
 
     def get_server(self, name: str) -> Optional[MCPServerBase]:
@@ -71,7 +71,7 @@ class MCPManager:
             try:
                 server.cleanup()
             except Exception as e:
-                self.log.error(f"清理 MCP 服务器 {server.name} 失败: {e}")
+                self.log.error("清理 MCP 服务器 {} 失败: {}", server.name, e)
         self._servers.clear()
         self.log.info("所有 MCP 服务器已清理")
 

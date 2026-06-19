@@ -78,7 +78,7 @@ class DecomposeEnhancer(QueryEnhancerStrategy):
             return sub_questions
 
         except Exception as e:
-            self.log.error(f"查询分解失败: {e}")
+            self.log.error("查询分解失败: {}", e)
             return query
 
     def cleanup(self) -> None:

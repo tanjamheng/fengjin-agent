@@ -75,7 +75,7 @@ class LLMReranker(RerankerStrategy):
             return 0.5  # 无法解析时返回中等分数
 
         except Exception as e:
-            self.log.error(f"LLM重排序评分失败: {e}")
+            self.log.error("LLM重排序评分失败: {}", e)
             return 0.5
 
     def rerank(self, query: str, results: List[SearchResult]) -> List[SearchResult]:

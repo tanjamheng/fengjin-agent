@@ -60,7 +60,7 @@ class RewriteEnhancer(QueryEnhancerStrategy):
             return rewritten
 
         except Exception as e:
-            self.log.error(f"查询改写失败: {e}")
+            self.log.error("查询改写失败: {}", e)
             return query
 
     def cleanup(self) -> None:

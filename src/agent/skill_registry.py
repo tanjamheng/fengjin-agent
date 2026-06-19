@@ -28,10 +28,10 @@ class SkillRegistry:
 
         name = skill.meta.name
         if name in self._skills:
-            log.warning(f"Skill {name} 已存在，将被覆盖")
+            log.warning("Skill {} 已存在，将被覆盖", name)
 
         self._skills[name] = skill
-        log.info(f"注册 Skill: {name} v{skill.meta.version}")
+        log.info("注册 Skill: {} v{}", name, skill.meta.version)
 
     def register_class(self, skill_class: Type[SkillBase], **kwargs) -> None:
         """通过类注册 Skill"""
@@ -67,9 +67,9 @@ class SkillRegistry:
         for name, skill in self._skills.items():
             try:
                 skill.initialize()
-                log.info(f"初始化 Skill: {name}")
+                log.info("初始化 Skill: {}", name)
             except Exception as e:
-                log.error(f"初始化 Skill {name} 失败: {e}")
+                log.error("初始化 Skill {} 失败: {}", name, e)
 
     def cleanup_all(self) -> None:
         """清理所有 Skill"""
@@ -79,9 +79,9 @@ class SkillRegistry:
         for name, skill in self._skills.items():
             try:
                 skill.cleanup()
-                log.info(f"清理 Skill: {name}")
+                log.info("清理 Skill: {}", name)
             except Exception as e:
-                log.error(f"清理 Skill {name} 失败: {e}")
+                log.error("清理 Skill {} 失败: {}", name, e)
 
     def execute(self, name: str, context) -> "SkillResult":
         """执行指定 Skill"""
@@ -92,7 +92,7 @@ class SkillRegistry:
 
         skill = self.get(name)
         if skill is None:
-            log.error(f"Skill {name} 不存在")
+            log.error("Skill {} 不存在", name)
             return SkillResult(
                 success=False,
                 error=f"Skill {name} not found"
@@ -102,19 +102,19 @@ class SkillRegistry:
             try:
                 skill.initialize()
             except Exception as e:
-                log.error(f"Skill {name} 初始化失败: {e}")
+                log.error("Skill {} 初始化失败: {}", name, e)
                 return SkillResult(
                     success=False,
                     error=f"Skill initialization failed: {e}"
                 )
 
-        log.info(f"执行 Skill: {name}")
+        log.info("执行 Skill: {}", name)
         try:
             result = skill.execute(context)
-            log.info(f"Skill {name} 执行完成: success={result.success}")
+            log.info("Skill {} 执行完成: success={}", name, result.success)
             return result
         except Exception as e:
-            log.error(f"Skill {name} 执行失败: {e}")
+            log.error("Skill {} 执行失败: {}", name, e)
             return SkillResult(
                 success=False,
                 error=str(e)

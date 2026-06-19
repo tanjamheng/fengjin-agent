@@ -22,9 +22,9 @@ class ToolRegistry:
         """注册本地 Tool"""
         name = tool.meta.name
         if name in self._local_tools or name in self._mcp_tools:
-            self.log.warning(f"Tool {name} 已存在，将被覆盖")
+            self.log.warning("Tool {} 已存在，将被覆盖", name)
         self._local_tools[name] = tool
-        self.log.info(f"注册 Tool: {name}")
+        self.log.info("注册 Tool: {}", name)
 
     def register_mcp_server(self, server: MCPServerBase) -> None:
         """注册 MCP 服务器的所有工具"""
@@ -32,9 +32,9 @@ class ToolRegistry:
         for tool_def in tool_defs:
             name = tool_def["name"]
             if name in self._local_tools or name in self._mcp_tools:
-                self.log.warning(f"MCP Tool {name} 已存在，将被覆盖")
+                self.log.warning("MCP Tool {} 已存在，将被覆盖", name)
             self._mcp_tools[name] = (server, tool_def)
-            self.log.info(f"注册 MCP Tool: {name} (来自 {server.name})")
+            self.log.info("注册 MCP Tool: {} (来自 {})", name, server.name)
 
     def unregister_tool(self, name: str) -> bool:
         """注销 Tool"""

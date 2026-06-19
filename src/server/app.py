@@ -21,21 +21,29 @@ async def lifespan(app: FastAPI):
     提升为应用级单例后只加载一次（而非每个连接重载），符合资源红线。
     """
     log.info("正在加载应用级单例（配置 / OpenAI / 安全模型）...")
-    config = Config.load()
-    app.state.config = config
-    app.state.client = AsyncOpenAI(
-        api_key=config.api_key,
-        base_url=config.base_url,
-        timeout=120.0,
-        max_retries=3,
-    )
-    app.state.context_config = ContextSettings.load().context
-    app.state.safety = SafetyManager()   # Llama Guard 在此加载（仅一次）
-    log.info("应用级单例加载完成")
+    try:
+        config = Config.load()
+        app.state.config = config
+        app.state.client = AsyncOpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            timeout=120.0,
+            max_retries=3,
+        )
+        app.state.context_config = ContextSettings.load().context
+        app.state.safety = SafetyManager()   # Llama Guard 在此加载（仅一次）
+        log.info("应用级单例加载完成")
+    except Exception as e:
+        log.opt(exception=True).error("应用级单例加载失败，服务无法启动: {}", e)
+        raise
 
     yield
 
-    # 关闭：释放 GPU 资源
+    # 关闭：释放资源（对称释放，client 也需 close）
+    try:
+        await app.state.client.close()
+    except Exception as e:
+        log.warning("OpenAI client 关闭异常: {}", e)
     app.state.safety.cleanup()
     log.info("应用资源已释放")
 
