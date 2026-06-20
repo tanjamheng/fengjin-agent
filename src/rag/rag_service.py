@@ -129,25 +129,29 @@ class RAGService:
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         log.info("RAG 检索: {}...", query[:50])
 
-        # 查询增强
-        enhanced_query = self.query_enhancer.enhance(query)
+        try:
+            # 查询增强
+            enhanced_query = self.query_enhancer.enhance(query)
 
-        # 召回
-        if isinstance(enhanced_query, list):
-            all_results = []
-            for q in enhanced_query:
-                results = self.retriever.retrieve(q)
-                all_results.extend(results)
-            recall_results = self._deduplicate_results(all_results)
-        else:
-            recall_results = self.retriever.retrieve(enhanced_query)
+            # 召回
+            if isinstance(enhanced_query, list):
+                all_results = []
+                for q in enhanced_query:
+                    results = self.retriever.retrieve(q)
+                    all_results.extend(results)
+                recall_results = self._deduplicate_results(all_results)
+            else:
+                recall_results = self.retriever.retrieve(enhanced_query)
 
-        # 精排
-        reranked_results = self.reranker.rerank(query, recall_results)
+            # 精排
+            reranked_results = self.reranker.rerank(query, recall_results)
 
-        # 构建上下文
-        context_text = self._build_context(reranked_results, max_length=1500)
-        log.info("RAG 检索完成: 召回 {} 条, 精排 {} 条", len(recall_results), len(reranked_results))
+            # 构建上下文
+            context_text = self._build_context(reranked_results, max_length=1500)
+            log.info("RAG 检索完成: 召回 {} 条, 精排 {} 条", len(recall_results), len(reranked_results))
+        except Exception as e:
+            log.error("RAG 检索管道异常（降级为空结果，LLM凭自身知识回复）: {}", e)
+            context_text = ""
 
         return context_text
 

@@ -192,6 +192,6 @@ class DenseIndex(IndexStrategy):
         if self._store is not None:
             try:
                 self._store._system.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                self.log.warning("ChromaDB 客户端关闭异常: {}", e)
             self._store = None

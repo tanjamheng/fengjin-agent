@@ -42,7 +42,7 @@ from src.memory.manager import MemoryManager
 from src.agent.context_manager import ContextManager
 from src.safety import SafetyManager
 from src.session import SessionManager, ContextRestorer
-from src.utils import setup_logger, LogConfig
+from src.utils import setup_logger, LogConfig, get_logger
 from src.utils.logger import generate_trace_id
 
 # ── 模型目录 ──
