@@ -106,7 +106,9 @@ class SemanticSplitter(SplitterStrategy):
 
         # 计算句子 embedding
         model = self._get_embedding_model()
-        embeddings = model.encode(sentences, convert_to_numpy=True)
+        import torch
+        with torch.no_grad():
+            embeddings = model.encode(sentences, convert_to_numpy=True)
 
         # 计算相邻句子相似度
         similarities = []

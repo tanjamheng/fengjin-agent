@@ -118,6 +118,8 @@ async def lifespan(app: FastAPI):
             log.warning("MemoryManager 清理异常: {}", e)
     app.state.safety.cleanup()
     log.info("应用资源已释放")
+    from loguru import logger
+    logger.complete()  # 等待异步日志队列排空（enqueue=True 的 handler）
 
 
 def create_app() -> FastAPI:

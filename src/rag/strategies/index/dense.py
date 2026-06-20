@@ -96,7 +96,9 @@ class DenseIndex(IndexStrategy):
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
         """生成向量"""
-        embeddings = self._embedding_model.encode(texts, convert_to_numpy=True)
+        import torch
+        with torch.no_grad():
+            embeddings = self._embedding_model.encode(texts, convert_to_numpy=True)
         return embeddings.tolist()
 
     def add(self, chunks: List) -> None:

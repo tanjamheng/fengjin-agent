@@ -473,6 +473,9 @@ def main():
                     continue
 
                 elif cmd == "/ingest_dir" and args:
+                    if rag_service is None:
+                        console.print("[red]RAG 知识库未初始化，无法导入[/red]")
+                        continue
                     try:
                         if not _validate_ingest_path(args):
                             console.print("[red]无效路径：请提供项目目录下的合法路径[/red]")
@@ -484,6 +487,9 @@ def main():
                     continue
 
                 elif cmd == "/ingest" and args:
+                    if rag_service is None:
+                        console.print("[red]RAG 知识库未初始化，无法导入[/red]")
+                        continue
                     try:
                         if not _validate_ingest_path(args):
                             console.print("[red]无效路径：请提供项目目录下的合法路径[/red]")

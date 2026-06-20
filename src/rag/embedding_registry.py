@@ -98,7 +98,9 @@ class SharedEmbeddingFunction:
         """ChromaDB 调用入口：将文本列表转为嵌入向量列表"""
         if self._model is None:
             raise RuntimeError("嵌入模型已释放")
-        embeddings = self._model.encode(input_texts, convert_to_numpy=True)
+        import torch
+        with torch.no_grad():
+            embeddings = self._model.encode(input_texts, convert_to_numpy=True)
         return embeddings.tolist()
 
     def cleanup(self) -> None:

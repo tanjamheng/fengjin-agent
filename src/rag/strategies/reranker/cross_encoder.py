@@ -61,7 +61,9 @@ class CrossEncoderReranker(RerankerStrategy):
         pairs = [(query, result.content) for result in results]
 
         # 打分
-        scores = self._model.predict(pairs)
+        import torch
+        with torch.no_grad():
+            scores = self._model.predict(pairs)
 
         # 按分数排序
         scored_results = []
