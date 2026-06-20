@@ -515,6 +515,10 @@ def main():
             if not session_mgr.current_session:
                 session_mgr.create_session()
 
+            # 初始化回滚基准（异常处理器中引用，必须在任何可能抛异常的操作之前）
+            msg_count_before = len(agent.messages)
+            session_msg_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0
+
             # 安全护栏检查（核心1 §2.5：被拦截消息仍记录到会话，但不送入AI）
             result = safety_engine.check(user_input)
             if result.blocked:
