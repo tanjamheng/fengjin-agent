@@ -45,18 +45,17 @@ class MemoryWriter:
             self._queue.put(fact)
 
     def stop(self) -> None:
-        """停止写入线程，超时后持久化剩余任务以防数据丢失"""
+        """停止写入线程，持久化剩余任务以防数据丢失"""
         self._running = False
-        pending = self._queue.qsize()
         try:
             self._queue.put(None, timeout=5)
         except queue.Full:
-            self.log.warning("写入队列已满，无法发送停止信号，直接持久化剩余任务")
+            self.log.warning("写入队列已满，无法发送停止信号")
         self._thread.join(timeout=10)
         if self._thread.is_alive():
-            remaining = self._queue.qsize()
-            self.log.warning("写入线程超时未退出，丢弃队列中约 {} 条任务（原队列 {} 条）", remaining, pending)
-            self._dump_pending()
+            self.log.warning("写入线程超时未退出，剩余队列任务将被持久化")
+        # 无论线程是否正常退出，都将队列剩余任务持久化
+        self._dump_pending()
 
     def _writer_loop(self) -> None:
         """后台写入线程，串行处理所有写入任务"""

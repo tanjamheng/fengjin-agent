@@ -38,7 +38,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # 每连接独立：会话管理器（per-user 状态）+ 上下文管理器
     session_mgr = SessionManager()
-    context_mgr = ContextManager(websocket.app.state.context_config)
+    memory_mgr = getattr(websocket.app.state, "memory_manager", None)
+    context_mgr = ContextManager(
+        websocket.app.state.context_config,
+        memory_retriever=memory_mgr.retriever if memory_mgr else None,
+    )
 
     # 创建新会话
     session = session_mgr.create_session()
@@ -106,7 +110,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 current_stream = asyncio.create_task(
                     _handle_user_msg(
                         websocket, data, session_mgr, safety,
-                        current_controller, client, config, context_mgr,
+                        current_controller, client, config, context_mgr, memory_mgr,
                     )
                 )
 
@@ -204,6 +208,7 @@ async def _handle_user_msg(
     client: AsyncOpenAI,
     config: Config,
     context_mgr: ContextManager,
+    memory_mgr=None,
 ):
     """消费 stream_reply() 的 token，映射为 WS 报文"""
     user_content = data.get("content", "")
@@ -231,6 +236,9 @@ async def _handle_user_msg(
             await websocket.send_json({"type": "stream", "text": token})
 
         # 生成器正常结束（含协作式取消），service 层已落盘
+        # 异步提取记忆（对齐 CLI 路径 core.py:183-185）
+        if memory_mgr and full_text:
+            memory_mgr.extract_async(user_content, full_text, trace_id=trace_id)
         await websocket.send_json({
             "type": "end",
             "full_text": full_text,

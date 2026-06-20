@@ -16,6 +16,7 @@
     # 被 task.cancel() 强制中断时抛 CancelledError，调用方需自行保存 partial_text
 """
 
+import asyncio
 from typing import AsyncGenerator, Optional
 
 from openai import AsyncOpenAI
@@ -105,6 +106,10 @@ async def stream_reply(
             except Exception as e:
                 logger.error("stream 关闭异常: {}", e)
 
+    except asyncio.CancelledError:
+        # task.cancel() 强制中断：回滚已入历史的 user 消息，保持 user/assistant 成对
+        _rollback_last_user(session_mgr, user_content, logger)
+        raise
     except Exception:
         # LLM 侧失败：回滚已入历史的 user 消息，保持 user/assistant 成对
         # （避免下一轮出现连续 user 消息破坏上下文组装）

@@ -77,6 +77,10 @@ class ContextManager:
         if not messages:
             return
 
+        # 跳过 system prompt（不在裁剪范围内）
+        if messages[0].get("role") == "system":
+            return
+
         # 第一条必须是 user（对话起点）；若状态异常（非 user），记录警告后弹出非 user 消息
         if messages[0].get("role") != "user":
             self.log.warning("_pop_turn: 首条消息非 user (role={})，消息序列可能已损坏", messages[0].get('role'))
@@ -87,6 +91,10 @@ class ContextManager:
             msg = messages[0]
             role = msg.get("role", "")
             content = msg.get("content", "")
+
+            # 跳过 system prompt（不应被裁剪）
+            if role == "system":
+                return
 
             # content 是 list（兼容旧格式），继续删
             if isinstance(content, list):
