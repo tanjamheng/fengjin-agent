@@ -389,6 +389,11 @@ def main():
     user_input = ""
     while True:
         try:
+            # 初始化异常兜底变量（命令处理器抛异常时异常处理器引用它们）
+            trace_id = ""
+            msg_count_before = 0
+            session_count_before = 0
+
             try:
                 user_input = console.input("[bold blue]你:[/bold blue] ").strip()
             except (EOFError, KeyboardInterrupt):

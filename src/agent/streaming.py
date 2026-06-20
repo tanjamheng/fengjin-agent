@@ -185,6 +185,8 @@ async def stream_reply(
                 try:
                     tool_input = json.loads(tc["arguments"])
                 except json.JSONDecodeError:
+                    logger.warning("WS Tool {} 参数 JSON 解析失败: {}", tool_name,
+                                   tc["arguments"][:100])
                     tool_input = {}
 
                 try:
@@ -194,7 +196,7 @@ async def stream_reply(
                     logger.info("WS Tool {} 执行成功", tool_name)
                 except Exception as e:
                     logger.error("WS Tool {} 执行失败: {}", tool_name, e)
-                    result_text = f"工具调用失败: {e}"
+                    result_text = "工具调用失败，请稍后重试"
 
                 tool_loop_messages.append({
                     "role": "tool",

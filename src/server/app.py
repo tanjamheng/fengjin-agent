@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # 关闭：释放资源（对称释放）
+    # 关闭：释放资源（对称释放，清理顺序：RAG→MCP→Tool→Memory→Safety）
     try:
         await app.state.client.close()
     except Exception as e:
@@ -97,6 +97,13 @@ async def lifespan(app: FastAPI):
             rag_service.cleanup()
         except Exception as e:
             log.warning("RAGService 清理异常: {}", e)
+    if getattr(app.state, "mcp_manager", None):
+        try:
+            app.state.mcp_manager.cleanup_all()
+        except Exception as e:
+            log.warning("MCPManager 清理异常: {}", e)
+    if getattr(app.state, "tool_registry", None):
+        app.state.tool_registry.clear()
     if memory_manager:
         try:
             memory_manager.cleanup()

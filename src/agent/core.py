@@ -328,6 +328,8 @@ class Agent:
             try:
                 tool_input = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
+                self.log.warning("Tool {} 参数 JSON 解析失败: {}", tool_name,
+                                 tc.function.arguments[:100])
                 tool_input = {}
 
             self.log.info("调用 Tool: {}, 参数: {}", tool_name, tool_input)
@@ -353,7 +355,7 @@ class Agent:
                 tool_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_use_id,
-                    "content": f"工具调用失败: {e}",
+                    "content": "工具调用失败，请稍后重试",
                 })
 
         return tool_calls_list, tool_messages

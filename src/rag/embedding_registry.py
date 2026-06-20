@@ -56,6 +56,7 @@ def release() -> None:
 
     with _lock:
         if _refcount <= 0:
+            log.warning("release() 调用次数超过 acquire()，refcount 已为 {}", _refcount)
             return
         _refcount -= 1
         if _refcount > 0:

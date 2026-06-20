@@ -71,6 +71,5 @@ class RAGMCPServer(MCPServerBase):
         self.log.info("RAG MCP 服务器已初始化")
 
     def cleanup(self) -> None:
-        self.rag_service.cleanup()
         self._initialized = False
         self.log.info("RAG MCP 服务器已清理")

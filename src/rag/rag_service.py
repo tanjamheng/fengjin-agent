@@ -64,9 +64,10 @@ class RAGService:
                 )
                 self.indexer.initialize()
 
-                # 将 llm_client 注入 retriever 参数（HyDE 策略需要）
+                # HyDE 策略需要 llm_client 生成假设文档，仅对 hyde 注入
                 retriever_params = dict(self.rag_config.retriever.params)
-                retriever_params.setdefault("llm_client", self.llm_client)
+                if self.rag_config.retriever.type == "hyde":
+                    retriever_params.setdefault("llm_client", self.llm_client)
                 self.retriever = Retriever(
                     index=self.indexer.strategy,
                     strategy_type=self.rag_config.retriever.type,

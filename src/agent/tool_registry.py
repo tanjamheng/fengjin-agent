@@ -84,7 +84,7 @@ class ToolRegistry:
                 "name": name,
                 "type": "mcp",
                 "source": server.name,
-                "description": tool_def.get("description", ""),
+                "description": tool_def.get("function", {}).get("description", ""),
             })
         return tools
 

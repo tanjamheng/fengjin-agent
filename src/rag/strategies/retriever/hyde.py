@@ -60,7 +60,9 @@ class HyDERetriever(RetrieverStrategy):
         hypotheses = []
 
         if self.llm_client is None:
-            # 没有 LLM 客户端，使用原始查询
+            # 没有 LLM 客户端，使用原始查询（HyDE 降级为普通检索）
+            from ....utils.logger import get_logger
+            get_logger("hyde").warning("HyDE 策略在无 LLM 客户端下运行，降级为原始查询检索")
             return [query]
 
         for i in range(self.num_hypotheses):
