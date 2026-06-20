@@ -82,7 +82,11 @@ def setup_logger(config: Optional[LogConfig] = None) -> None:
     logger.add(
         f"{config.log_dir}/agent_{config.log_level.lower()}.log",
         level=config.log_level,
-        format=log_format,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | "
+               "{level: <8} | "
+               "{extra[trace_id]} | "
+               "{name}:{function}:{line} | "
+               "{message}",
         rotation=config.rotation_size,
         retention=config.retention_days,
         encoding="utf-8",

@@ -219,24 +219,24 @@ class RAGService:
         }
 
     def cleanup(self) -> None:
-        """清理资源（不删除持久化数据）"""
+        """清理资源（不删除持久化数据；顺序与 init 对称：reranker→query_enhancer→retriever→indexer→splitter→loader）"""
         if self.reranker:
             self.reranker.cleanup()
             self.reranker = None
+        if self.query_enhancer:
+            self.query_enhancer.cleanup()
+            self.query_enhancer = None
         if self.retriever:
             self.retriever.cleanup()
             self.retriever = None
         if self.indexer:
             self.indexer.cleanup()
             self.indexer = None
-        if self.query_enhancer:
-            self.query_enhancer.cleanup()
-            self.query_enhancer = None
-        if self.loader:
-            self.loader = None
         if self.splitter:
             self.splitter.cleanup()
             self.splitter = None
+        if self.loader:
+            self.loader = None
 
         self._initialized = False
         self.log.info("RAG 服务资源已清理")

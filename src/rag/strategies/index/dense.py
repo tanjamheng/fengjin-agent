@@ -189,7 +189,10 @@ class DenseIndex(IndexStrategy):
         return 0
 
     def cleanup(self) -> None:
-        """清理资源（不删除数据）"""
+        """清理资源（不删除数据；幂等：重复调用安全）"""
+        if getattr(self, "_cleaned", False):
+            return
+        self._cleaned = True
         if self._embedding_model is not None:
             if self._embedding_is_shared:
                 from ...embedding_registry import release
@@ -201,8 +204,8 @@ class DenseIndex(IndexStrategy):
                     import torch
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.log.warning("独立嵌入模型GPU缓存清理异常: {}", e)
             self._embedding_model = None
             self._embedding_is_shared = False
         # 释放 ChromaDB 客户端连接（不删除 collection 数据）
@@ -218,5 +221,5 @@ class DenseIndex(IndexStrategy):
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.warning("安全线GPU缓存清理异常: {}", e)

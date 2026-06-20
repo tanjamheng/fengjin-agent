@@ -46,7 +46,9 @@ async def websocket_endpoint(websocket: WebSocket):
         return await asyncio.to_thread(tool_registry.execute_tool, name, args) if tool_registry else "工具系统未加载"
 
     # 每连接独立：会话管理器（per-user 状态）+ 上下文管理器
-    session_mgr = SessionManager()
+    from pathlib import Path
+    _sessions_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "sessions")
+    session_mgr = SessionManager(data_dir=_sessions_dir)
     memory_mgr = getattr(websocket.app.state, "memory_manager", None)
     context_mgr = ContextManager(
         websocket.app.state.context_config,
