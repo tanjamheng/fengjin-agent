@@ -49,15 +49,12 @@ async def lifespan(app: FastAPI):
 
         # RAG 知识库 + 工具注册表（可选：知识库为空时仍可正常对话）
         try:
-            from ..config import RAGSettings
             from ..rag.rag_service import RAGService
             from ..agent.tool_registry import ToolRegistry
             from ..agent.mcp_manager import MCPManager
             from ..mcp_servers.rag_server import RAGMCPServer
 
-            rag_config = RAGSettings.load().rag
             rag_service = RAGService(
-                rag_config=rag_config,
                 llm_client=None,  # WS 路径不传同步 client，RAG 仅用检索能力
             )
 
