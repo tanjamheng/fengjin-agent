@@ -138,6 +138,21 @@ def _print_recent_messages(console: Console, session_mgr: SessionManager, n: int
     console.print("")
 
 
+def _safe_cleanup(agent, memory_manager, rag_service, safety_engine):
+    """逐组件安全清理：每个组件独立 try/except，单点失败不阻塞其余清理"""
+    for name, cleanup_fn in [
+        ("Agent", lambda: agent.cleanup()),
+        ("Memory", lambda: memory_manager.cleanup() if memory_manager else None),
+        ("RAG", lambda: rag_service.cleanup()),
+        ("Safety", lambda: safety_engine.cleanup()),
+    ]:
+        try:
+            cleanup_fn()
+        except Exception as ex:
+            from src.utils import get_logger
+            get_logger("main").warning("{} 清理异常: {}", name, ex)
+
+
 def _handle_command(cmd: str, args: str, console: Console,
                     session_mgr: SessionManager, context_restorer: ContextRestorer,
                     agent: Agent, memory_manager: MemoryManager,
@@ -147,11 +162,7 @@ def _handle_command(cmd: str, args: str, console: Console,
 
     if cmd == "/quit":
         session_mgr.flush()
-        agent.cleanup()
-        if memory_manager:
-            memory_manager.cleanup()
-        rag_service.cleanup()
-        safety_engine.cleanup()
+        _safe_cleanup(agent, memory_manager, rag_service, safety_engine)
         from loguru import logger
         logger.complete()
         console.print("[yellow]再见！[/yellow]")
@@ -267,15 +278,15 @@ def _handle_command(cmd: str, args: str, console: Console,
         if confirm != "y":
             console.print("[dim]已取消[/dim]")
             return True
-
+        # 如果删的是当前会话，清空 Agent（需在删除前记录，delete后current为None）
+        current_id_before = session_mgr.get_current_session_id()
         deleted = session_mgr.delete_session(target["session_id"])
         if deleted:
             console.print(f"[green]已删除会话: {target['title']}[/green]")
         else:
             console.print(f"[yellow]会话「{target['title']}」已不存在（可能已被删除）[/yellow]")
 
-        # 如果删的是当前会话，清空 Agent
-        if target["session_id"] == session_mgr.get_current_session_id():
+        if target["session_id"] == current_id_before:
             agent.clear_history()
             console.print("[dim]当前会话已清空，请用 /new 创建新会话[/dim]")
         return True
@@ -328,11 +339,16 @@ def main():
     )
 
     # 创建 Agent（传入上下文管理器和记忆管理器）
-    agent = Agent(
-        config=config,
-        context_manager=context_manager,
-        memory_manager=memory_manager
-    )
+    try:
+        agent = Agent(
+            config=config,
+            context_manager=context_manager,
+            memory_manager=memory_manager
+        )
+    except Exception as e:
+        console.print(f"[red]Agent 初始化失败（环境变量缺失或配置错误）: {e}[/red]")
+        get_logger("main").opt(exception=True).error("Agent 初始化失败")
+        return
 
     # 创建 RAG 服务（纯功能层）并装配到 Agent
     rag_service = RAGService(rag_config, llm_client=agent.client)
@@ -389,7 +405,8 @@ def main():
     user_input = ""
     while True:
         try:
-            # 初始化异常兜底变量（命令处理器抛异常时异常处理器引用它们）
+            # 异常兜底变量（命令处理器中异常时不触发回滚，仅在聊天路径中赋值有效值）
+            in_chat = False
             trace_id = ""
             msg_count_before = 0
             session_count_before = 0
@@ -527,6 +544,8 @@ def main():
             if not session_mgr.current_session:
                 session_mgr.create_session()
 
+            # 标记进入聊天路径（异常处理器仅在此路径下才执行回滚，命令路径不触发回滚）
+            in_chat = True
             trace_id = generate_trace_id()
 
             # 安全护栏检查（核心1 §2.5：被拦截消息仍记录到会话，但不送入AI）
@@ -562,15 +581,11 @@ def main():
             console.print(f"[dim]对话轮数: {agent.history_count}[/dim]\n")
 
         except KeyboardInterrupt:
-            # 回滚本轮新增消息，避免孤儿 user 持久化
-            from src.agent.message_builder import rollback_last_user
-            rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before, session_count_before)
-            session_mgr.flush()
-            agent.cleanup()
-            if memory_manager:
-                memory_manager.cleanup()
-            rag_service.cleanup()
-            safety_engine.cleanup()
+            if in_chat:
+                from src.agent.message_builder import rollback_last_user
+                rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before, session_count_before)
+                session_mgr.flush()
+            _safe_cleanup(agent, memory_manager, rag_service, safety_engine)
             from loguru import logger
             logger.complete()
             console.print("\n[yellow]再见！[/yellow]")
@@ -579,10 +594,10 @@ def main():
             from src.utils import get_logger
             _log = get_logger(trace_id)
             _log.opt(exception=True).error("对话循环异常 [input={}]: {}", user_input[:50], e)
-            # 回滚本轮所有消息：复用共享回滚函数
-            from src.agent.message_builder import rollback_last_user
-            rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before, session_count_before)
-            session_mgr.flush()
+            if in_chat:
+                from src.agent.message_builder import rollback_last_user
+                rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before, session_count_before)
+                session_mgr.flush()
             console.print("[red]对话处理出错，请重试。详情见日志文件。[/red]")
 
 

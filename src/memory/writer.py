@@ -228,6 +228,10 @@ class MemoryWriter:
             fact["_dumped_at"] = datetime.now().isoformat()
         existing.extend(facts)
 
-        dump_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2),
-                             encoding="utf-8")
+        # 原子写入：先写 .tmp 再 os.replace()，防止中途崩溃损坏文件（红线7）
+        tmp_path = str(dump_path) + ".tmp"
+        tmp_path_obj = Path(tmp_path)
+        tmp_path_obj.write_text(json.dumps(existing, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+        os.replace(tmp_path, str(dump_path))
         self.log.info("已持久化 {} 条未处理记忆到 {}", len(facts), dump_path)

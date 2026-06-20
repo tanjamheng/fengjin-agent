@@ -40,10 +40,14 @@ class MemoryManager:
         def _worker():
             try:
                 facts = self.extractor.extract(user_input, assistant_message, trace_id=trace_id)
-                if facts:
+                if facts and self.writer._running:
                     self.writer.write(facts)
             except Exception as e:
                 self.log.opt(exception=True).error("记忆提取失败 [trace={}]: {}", trace_id, e)
+
+        # 清理已完成线程，防止列表无界增长
+        with self._lock:
+            self._extract_threads = [t for t in self._extract_threads if t.is_alive()]
 
         thread = threading.Thread(target=_worker, daemon=True)
         with self._lock:

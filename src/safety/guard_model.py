@@ -113,6 +113,7 @@ class GuardModel:
                     input_ids,
                     attention_mask=attention_mask,
                     max_new_tokens=100,
+                    max_time=self.config.timeout,
                     do_sample=False,
                     pad_token_id=self._tokenizer.eos_token_id,
                 )
