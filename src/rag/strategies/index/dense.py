@@ -36,24 +36,15 @@ class DenseIndex(IndexStrategy):
         """初始化（幂等：已初始化时跳过，防止非hybrid+hybrid配置下重复加载）"""
         if self._embedding_model is not None:
             return
-        # 初始化 Embedding 模型
+        # 初始化 Embedding 模型（通过注册表单例共享，避免重复加载）
         try:
-            import torch
-            from sentence_transformers import SentenceTransformer
-            from ....utils.helpers import get_project_root
+            from ....utils.helpers import get_project_root, resolve_device
+            from ...embedding_registry import acquire
             model_path = self.embedding_model_name
-            # 相对路径解析为项目根目录下的绝对路径
             if not Path(model_path).is_absolute():
                 model_path = str(get_project_root() / model_path)
-
-            # 自动检测 GPU 可用性
-            from ....utils.helpers import resolve_device
             effective_device = resolve_device(self.device)
-
-            self._embedding_model = SentenceTransformer(
-                model_path,
-                device=effective_device
-            )
+            self._embedding_model = acquire(model_path, effective_device)
         except ImportError:
             raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")
 
@@ -193,7 +184,8 @@ class DenseIndex(IndexStrategy):
     def cleanup(self) -> None:
         """清理资源（不删除数据）"""
         if self._embedding_model is not None:
-            del self._embedding_model
+            from ...embedding_registry import release
+            release()
             self._embedding_model = None
         # 释放 ChromaDB 客户端连接（不删除 collection 数据）
         self._collection = None
@@ -203,10 +195,3 @@ class DenseIndex(IndexStrategy):
             except Exception:
                 pass
             self._store = None
-        # 释放 GPU 缓存
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception as e:
-            self.log.warning("CUDA缓存清理异常: {}", e)

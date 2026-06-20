@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Optional
 
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 from .config import MemoryConfig
 from ..utils.logger import get_logger
@@ -31,12 +30,13 @@ class MemoryStorage:
             from ..utils.helpers import get_project_root
             embedding_model = str(get_project_root() / embedding_model)
 
-        # 自动检测 GPU 可用性
+        # 自动检测 GPU 可用性（通过共享注册表，避免与 RAG DenseIndex 重复加载）
         from ..utils.helpers import resolve_device
+        from ..rag.embedding_registry import SharedEmbeddingFunction
         effective_device = resolve_device(config.chroma.device)
 
-        self._embedding_fn = SentenceTransformerEmbeddingFunction(
-            model_name=embedding_model,
+        self._embedding_fn = SharedEmbeddingFunction(
+            model_path=embedding_model,
             device=effective_device,
         )
         self.collection = self.client.get_or_create_collection(
@@ -109,8 +109,7 @@ class MemoryStorage:
         """关闭 ChromaDB 客户端连接并释放 GPU 模型"""
         if self._embedding_fn is not None:
             try:
-                if hasattr(self._embedding_fn, '_model') and self._embedding_fn._model is not None:
-                    del self._embedding_fn._model
+                self._embedding_fn.cleanup()
                 self._embedding_fn = None
             except Exception as e:
                 self.log.warning("Embedding模型释放异常: {}", e)
