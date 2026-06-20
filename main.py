@@ -523,6 +523,7 @@ def main():
             # 发送消息（chat() 内部已流式输出）
             console.print("[bold green]风堇:[/bold green]")
             # 先记录用户消息再调 Agent（Agent.chat 内部也记录一份）
+            session_msg_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0
             session_mgr.append_message("user", user_input)
             msg_count_before = len(agent.messages)
             if result.action.value == "comfort":
@@ -557,15 +558,15 @@ def main():
             _log.opt(exception=True).error("对话循环异常 [input={}]: {}", user_input[:50], e)
             # 回滚本轮所有消息：agent.chat() 内部可能已加入 user、assistant(tool_calls)、
             # tool 结果等消息，但最终 assistant 回复未完成，需要全部回滚避免状态损坏。
-            # 回滚策略：从末尾向前移除，直到遇到本轮 user 消息并将其一并移除。
+            # 回滚策略：基于本轮开始前的消息数精确截断
             if agent.messages:
-                while agent.messages and agent.messages[-1].get("role") != "user":
-                    agent.messages.pop()
-                if agent.messages:
-                    agent.messages.pop()  # 移除 user 消息
-            if (session_mgr.current_session and session_mgr.current_session.messages
-                    and session_mgr.current_session.messages[-1].role == "user"):
-                session_mgr.current_session.messages.pop()
+                agent.messages = agent.messages[:msg_count_before]
+            # session 回滚：同样基于本轮开始前的计数（含已写入的 user）
+            if session_mgr.current_session and session_mgr.current_session.messages:
+                session_msgs = session_mgr.current_session.messages
+                # 移除本轮新增的所有消息（user + tool + 可能的assistant片段）
+                while len(session_msgs) > session_msg_count_before:
+                    session_msgs.pop()
             console.print("[red]对话处理出错，请重试。详情见日志文件。[/red]")
 
 
