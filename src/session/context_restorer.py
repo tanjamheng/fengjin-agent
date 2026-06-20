@@ -29,7 +29,8 @@ class ContextRestorer:
 
         返回的消息列表和原会话最后一轮窗口里的内容一致。
         """
-        messages = [{"role": msg.role, "content": msg.content} for msg in session.messages]
+        messages = [{"role": msg.role, "content": msg.content} for msg in session.messages
+                     if msg.role in ("user", "assistant")]
 
         if self.context_manager:
             messages = self.context_manager.trim_messages(messages)

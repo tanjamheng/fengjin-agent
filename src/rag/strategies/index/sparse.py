@@ -20,7 +20,8 @@ class SparseIndex(IndexStrategy):
         self.b = b
 
         self._bm25 = None
-        self._corpus = []
+        self._corpus = []       # tokenized texts (for BM25)
+        self._raw_texts = []    # original texts (for search results)
         self._metadatas = []
 
     def initialize(self) -> None:
@@ -56,6 +57,7 @@ class SparseIndex(IndexStrategy):
 
             for chunk in chunks:
                 self._corpus.append(self._tokenize(chunk.content))
+                self._raw_texts.append(chunk.content)
                 self._metadatas.append(chunk.metadata)
 
             # 重建 BM25 索引
@@ -78,7 +80,7 @@ class SparseIndex(IndexStrategy):
         results = []
         for idx in ranked_indices:
             results.append({
-                "content": " ".join(self._corpus[idx]),  # 重建原始文本需要额外存储
+                "content": self._raw_texts[idx],  # 使用原始文本，避免token拼接损坏中文
                 "metadata": self._metadatas[idx],
                 "score": scores[idx],
                 "id": str(idx)
@@ -94,4 +96,5 @@ class SparseIndex(IndexStrategy):
         """清理资源"""
         self._bm25 = None
         self._corpus = []
+        self._raw_texts = []
         self._metadatas = []

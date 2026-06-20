@@ -48,7 +48,10 @@ class MemoryWriter:
         """停止写入线程，超时后持久化剩余任务以防数据丢失"""
         self._running = False
         pending = self._queue.qsize()
-        self._queue.put(None)
+        try:
+            self._queue.put(None, timeout=5)
+        except queue.Full:
+            self.log.warning("写入队列已满，无法发送停止信号，直接持久化剩余任务")
         self._thread.join(timeout=10)
         if self._thread.is_alive():
             remaining = self._queue.qsize()

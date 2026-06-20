@@ -131,7 +131,9 @@ def _build_api_messages(
     if comfort_prompt:
         system_content = f"{config.system_prompt}\n\n{comfort_prompt}"
     messages = [{"role": "system", "content": system_content}]
-    messages.extend(session_mgr.get_current_messages())
+    # 过滤 tool 角色消息：WS 路径不做 tool calling，tool 消息缺少 tool_call_id 会导致 API 报错
+    history = [m for m in session_mgr.get_current_messages() if m.get("role") != "tool"]
+    messages.extend(history)
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user":
             messages[i]["content"] = current_input

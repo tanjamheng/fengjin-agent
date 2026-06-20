@@ -127,9 +127,9 @@ class RuleEngine:
 
         total_keywords = sum(len(v) for v in self._keywords.values())
         self.log.info(
-            f"安全护栏初始化: {total_keywords} 个关键词, "
-            f"{len(self._regex_patterns)} 条正则, "
-            f"{sum(1 for c in self.config.categories.values() if c.enabled)} 个类别"
+            "安全护栏初始化: {} 个关键词, {} 条正则, {} 个类别",
+            total_keywords, len(self._regex_patterns),
+            sum(1 for c in self.config.categories.values() if c.enabled)
         )
 
     def check(self, text: str) -> SafetyResult:
