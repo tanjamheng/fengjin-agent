@@ -169,11 +169,12 @@ class Agent:
         # 8. 提取最终文本回复
         assistant_message = self._extract_text(response)
 
-        # 9. 添加助手回复到历史
-        self.messages.append({
-            "role": "assistant",
-            "content": assistant_message
-        })
+        # 9. 添加助手回复到历史（跳过空消息，如Tool Calling达上限时仅有tool_calls无text）
+        if assistant_message:
+            self.messages.append({
+                "role": "assistant",
+                "content": assistant_message
+            })
 
         # 10. 滑动窗口裁剪
         if self.context_manager:
