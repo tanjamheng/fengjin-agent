@@ -524,8 +524,8 @@ def main():
             console.print("[bold green]风堇:[/bold green]")
             # 先记录用户消息再调 Agent（Agent.chat 内部也记录一份）
             session_msg_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0
-            session_mgr.append_message("user", user_input)
             msg_count_before = len(agent.messages)
+            session_mgr.append_message("user", user_input)
             if result.action.value == "comfort":
                 reply = agent.chat(user_input, safety_context=result.comfort_prompt)
             else:
