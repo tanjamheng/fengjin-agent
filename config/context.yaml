@@ -17,4 +17,4 @@ context:
 
     # 注入模板（{memory} 和 {input} 是占位符）
     # 记忆检索结果合并到当前 user message 的格式
-    template: "[关于灰宝的信息]\n{memory}\n\n{input}"
+    template: "{memory}\n\n{input}"

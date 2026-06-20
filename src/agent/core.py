@@ -160,7 +160,7 @@ class Agent:
             self.messages.extend(tool_messages)
 
             self.log.info("Tool calling 第 {} 轮", tool_rounds)
-            api_params["messages"] = self._build_api_messages_with_system(system_prompt)
+            api_params["messages"] = self._build_api_messages_with_system(system_prompt, api_input)
             response = self._stream_call(api_params)
 
         if tool_rounds >= self.config.agent.max_tool_rounds and self._has_tool_use(response):
@@ -200,17 +200,23 @@ class Agent:
         api_messages.append({"role": "user", "content": current_input})
         return api_messages
 
-    def _build_api_messages_from_history(self) -> list:
+    def _build_api_messages_from_history(self, enhanced_input: str = None) -> list:
         """构建 tool calling 后续轮次的 messages（不含 system）
 
-        此时 self.messages 已包含 assistant(tool_calls) 和 tool 结果，直接用
+        若提供 enhanced_input，替换最后一条 user 消息为记忆增强版本。
         """
-        return [m.copy() for m in self.messages]
+        messages = [m.copy() for m in self.messages]
+        if enhanced_input is not None:
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i]["role"] == "user":
+                    messages[i] = {"role": "user", "content": enhanced_input}
+                    break
+        return messages
 
-    def _build_api_messages_with_system(self, system_prompt: str) -> list:
+    def _build_api_messages_with_system(self, system_prompt: str, enhanced_input: str = None) -> list:
         """构建带 system prompt 的完整 messages"""
         messages = [{"role": "system", "content": system_prompt}]
-        messages.extend(self._build_api_messages_from_history())
+        messages.extend(self._build_api_messages_from_history(enhanced_input))
         return messages
 
     def _stream_call(self, api_params: dict):

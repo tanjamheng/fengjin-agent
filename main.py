@@ -153,8 +153,8 @@ def _safe_cleanup(agent, memory_manager, rag_service, safety_engine):
     for name, cleanup_fn in [
         ("Agent", lambda: agent.cleanup()),
         ("Memory", lambda: memory_manager.cleanup() if memory_manager else None),
-        ("RAG", lambda: rag_service.cleanup()),
-        ("Safety", lambda: safety_engine.cleanup()),
+        ("RAG", lambda: rag_service.cleanup() if rag_service else None),
+        ("Safety", lambda: safety_engine.cleanup() if safety_engine else None),
     ]:
         try:
             cleanup_fn()
@@ -360,15 +360,29 @@ def main():
         get_logger("main").opt(exception=True).error("Agent 初始化失败")
         return
 
-    # 创建 RAG 服务（纯功能层）并装配到 Agent
-    rag_service = RAGService(rag_config, llm_client=agent.client)
-    rag_server = RAGMCPServer(rag_service)
-    agent.register_mcp(rag_server)
+    # 创建 RAG 服务（纯功能层）并装配到 Agent（可选：初始化失败降级为纯对话）
+    rag_service = None
+    try:
+        rag_service = RAGService(rag_config, llm_client=agent.client)
+        rag_server = RAGMCPServer(rag_service)
+        agent.register_mcp(rag_server)
+    except Exception as e:
+        console.print(f"[yellow]⚠ RAG 知识库加载失败，知识检索不可用: {e}[/yellow]")
+        get_logger("main").warning("RAG 初始化失败（ChromaDB/模型问题？），降级为纯对话模式: {}", e)
 
     # 初始化安全护栏（P0 规则引擎 + P1 Llama Guard）
-    safety_engine = SafetyManager(
-        config_path=str(PROJECT_ROOT / "config" / "safety.yaml")
-    )
+    try:
+        safety_engine = SafetyManager(
+            config_path=str(PROJECT_ROOT / "config" / "safety.yaml")
+        )
+    except Exception as e:
+        console.print(f"[yellow]⚠ 安全护栏 P1 模型加载失败，仅规则引擎可用: {e}[/yellow]")
+        get_logger("main").warning("SafetyManager 初始化失败: {}", e)
+        # 降级：仅启用 P0 规则引擎
+        from src.safety.rule_engine import RuleEngine
+        safety_engine = SafetyManager.__new__(SafetyManager)
+        safety_engine.rule_engine = RuleEngine(str(PROJECT_ROOT / "config" / "safety.yaml"))
+        safety_engine.guard_model = None
 
     # 初始化会话管理
     session_mgr = SessionManager(str(SESSIONS_DIR))
@@ -425,6 +439,10 @@ def main():
                 user_input = console.input("[bold blue]你:[/bold blue] ").strip()
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[yellow]再见！[/yellow]")
+                session_mgr.flush()
+                _safe_cleanup(agent, memory_manager, rag_service, safety_engine)
+                from loguru import logger
+                logger.complete()
                 break
 
             # 会话管理命令
@@ -601,7 +619,6 @@ def main():
             console.print("\n[yellow]再见！[/yellow]")
             break
         except Exception as e:
-            from src.utils import get_logger
             _log = get_logger(trace_id)
             _log.opt(exception=True).error("对话循环异常 [input={}]: {}", user_input[:50], e)
             if in_chat:
