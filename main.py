@@ -510,7 +510,7 @@ def main():
             if not session_mgr.current_session:
                 session_mgr.create_session()
 
-            # 安全护栏检查（先于消息记录，避免拦截内容污染会话）
+            # 安全护栏检查（核心1 §2.5：被拦截消息仍记录到会话，但不送入AI）
             result = safety_engine.check(user_input)
             if result.blocked:
                 session_mgr.append_message("user", user_input)
@@ -524,10 +524,16 @@ def main():
             console.print("[bold green]风堇:[/bold green]")
             # 先记录用户消息再调 Agent（Agent.chat 内部也记录一份）
             session_mgr.append_message("user", user_input)
+            msg_count_before = len(agent.messages)
             if result.action.value == "comfort":
                 reply = agent.chat(user_input, safety_context=result.comfort_prompt)
             else:
                 reply = agent.chat(user_input)
+
+            # 同步 Tool calling 中间消息到会话（保证会话恢复时上下文完整）
+            for msg in agent.messages[msg_count_before:]:
+                if msg.get("role") == "tool":
+                    session_mgr.append_message("tool", msg["content"])
 
             # 记录助手回复到会话（与用户消息配对写入）
             session_mgr.append_message("assistant", reply)

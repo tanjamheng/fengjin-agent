@@ -4,7 +4,7 @@
 不含任何传输层细节（WebSocket / CLI 报文由调用方处理），可被多入口复用。
 
 安全三态（核心3 红线10 / 核心1 §2.5）：
-- BLOCK     → raise BlockedError（拦截，不入历史）
+- BLOCK     → raise BlockedError（拦截，消息记录到会话但不送入 LLM）
 - COMFORT   → 放行，comfort_prompt 注入 system_prompt（自杀自伤安抚，不拦截）
 - PASS      → 正常
 
@@ -12,6 +12,7 @@
     async for token in stream_reply(...):
         # 调用方决定怎么展示 token（WS 发报文 / CLI 打印）
     # 生成器正常结束（含协作式取消）时，已 append assistant 消息 + flush
+    # 协作式取消且无 token 产出时，回滚已入历史的 user 消息
     # 被 task.cancel() 强制中断时抛 CancelledError，调用方需自行保存 partial_text
 """
 
@@ -30,7 +31,7 @@ log = get_logger("streaming")
 
 
 class BlockedError(Exception):
-    """BLOCK 拦截（非 COMFORT），调用方向用户展示拦截话术，消息不入历史"""
+    """BLOCK 拦截（非 COMFORT），调用方向用户展示拦截话术，消息已入历史"""
 
     def __init__(self, message: str, category: str):
         super().__init__(message)
@@ -51,9 +52,15 @@ async def stream_reply(
     """流式对话主链路，yield 每个 token"""
     logger = log.bind(trace_id=trace_id) if trace_id else log
 
-    # 1. 安全检测（三态分流）
+    # 1. 用户消息先入历史（无论安全判定如何，见核心1 §2.5）
+    session_mgr.append_message("user", user_content)
+
+    # 2. 安全检测（三态分流）
     result = safety.check(user_content)
     if result.action == Action.BLOCK:
+        # 记录拦截占位消息到会话再抛出，保持 user/assistant 成对
+        session_mgr.append_message("assistant", f"[小伊卡拦截] {result.user_message or _default_blocked_message()}")
+        session_mgr.flush()
         raise BlockedError(
             result.user_message or _default_blocked_message(),
             result.category,
@@ -61,17 +68,17 @@ async def stream_reply(
     # COMFORT（自杀自伤安抚）：放行，安抚指令注入 system_prompt（红线10）
     comfort_prompt = result.comfort_prompt if result.action == Action.COMFORT else None
 
-    # 2. 记忆合并（复用 ContextManager）+ 用户消息入历史
+    # 3. 记忆合并（复用 ContextManager）
     api_input = context_mgr.build_input(user_content)
-    session_mgr.append_message("user", user_content)
 
     full_text = ""
+    was_cancelled = False
     try:
-        # 3. 组装上下文 + 滑动窗口
+        # 4. 组装上下文 + 滑动窗口
         api_messages = _build_api_messages(config, session_mgr, api_input, comfort_prompt)
         api_messages = context_mgr.trim_messages(api_messages)
 
-        # 4. 流式调用 LLM
+        # 5. 流式调用 LLM
         stream = await client.chat.completions.create(
             model=config.model,
             messages=api_messages,
@@ -83,6 +90,7 @@ async def stream_reply(
         try:
             async for chunk in stream:
                 if controller.cancel_requested:
+                    was_cancelled = True
                     break  # 协作式取消：break 后 finally 自动 response.aclose()
 
                 delta = chunk.choices[0].delta if chunk.choices else None
@@ -103,10 +111,13 @@ async def stream_reply(
         _rollback_last_user(session_mgr, user_content, logger)
         raise
 
-    # 5. 落盘（正常完成或协作式取消都会走到这里；被 task.cancel 强制中断则不走到）
+    # 6. 落盘（正常完成或协作式取消都会走到这里；被 task.cancel 强制中断则不走到）
     if full_text:
         session_mgr.append_message("assistant", full_text)
         session_mgr.flush()
+    elif was_cancelled:
+        # 协作式取消且无 token 产出：回滚已入历史的 user 消息，避免孤立 user
+        _rollback_last_user(session_mgr, user_content, logger)
 
 
 def _build_api_messages(

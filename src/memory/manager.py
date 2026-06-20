@@ -27,6 +27,8 @@ class MemoryManager:
         self.writer = MemoryWriter(config, small_client, model_name, self.storage)
         self.retriever = MemoryRetriever(config, self.storage)
         self.log = get_logger("memory_manager")
+        self._extract_threads: list[threading.Thread] = []
+        self._lock = threading.Lock()
 
     def retrieve(self, user_input: str) -> str:
         """检索记忆，返回格式化的记忆文本（用于注入 system prompt）"""
@@ -44,9 +46,18 @@ class MemoryManager:
                 self.log.opt(exception=True).error("记忆提取失败 [trace={}]: {}", trace_id, e)
 
         thread = threading.Thread(target=_worker, daemon=True)
+        with self._lock:
+            self._extract_threads.append(thread)
         thread.start()
 
     def cleanup(self) -> None:
         """停止写入线程并关闭存储"""
+        # 等待进行中的提取线程完成（最多 10s），保证其产生的事实进入 writer 队列
+        with self._lock:
+            active = [t for t in self._extract_threads if t.is_alive()]
+        for t in active:
+            t.join(timeout=10)
+        self._extract_threads.clear()
+        # 停止写入线程（处理队列中剩余任务）
         self.writer.stop()
         self.storage.cleanup()

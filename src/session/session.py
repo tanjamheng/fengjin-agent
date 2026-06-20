@@ -14,7 +14,7 @@ class MessageMeta(BaseModel):
 
 class Message(BaseModel):
     """单条消息"""
-    role: str               # "user" | "assistant"
+    role: str               # "user" | "assistant" | "tool"
     content: str
     timestamp: datetime = Field(default_factory=datetime.now)
     metadata: MessageMeta = Field(default_factory=MessageMeta)

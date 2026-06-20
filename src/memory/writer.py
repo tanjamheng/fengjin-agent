@@ -37,6 +37,7 @@ class MemoryWriter:
         self.log = get_logger("memory_writer")
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
+        self._replay_pending()
 
     def write(self, facts: list[dict]) -> None:
         """将过滤后的事实加入写入队列（非阻塞）"""
@@ -48,7 +49,7 @@ class MemoryWriter:
         self._running = False
         pending = self._queue.qsize()
         self._queue.put(None)
-        self._thread.join(timeout=60)
+        self._thread.join(timeout=10)
         if self._thread.is_alive():
             remaining = self._queue.qsize()
             self.log.warning("写入线程超时未退出，丢弃队列中约 {} 条任务（原队列 {} 条）", remaining, pending)
@@ -140,7 +141,8 @@ class MemoryWriter:
         response = self.client.chat.completions.create(
             model=self.model,
             max_tokens=self.config.merge.max_tokens,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            timeout=30.0,
         )
         return response.choices[0].message.content.strip()
 
@@ -161,6 +163,23 @@ class MemoryWriter:
 
         Path(self.config.core_file).parent.mkdir(parents=True, exist_ok=True)
         Path(self.config.core_file).write_text(text, encoding="utf-8")
+
+    def _replay_pending(self) -> None:
+        """启动时回放上次异常退出遗留的 pending_facts.json"""
+        import json
+        dump_path = Path(self.config.chroma.persist_directory) / "pending_facts.json"
+        if not dump_path.exists():
+            return
+        try:
+            facts = json.loads(dump_path.read_text(encoding="utf-8"))
+            dump_path.unlink()
+            if facts:
+                self.log.info("回放 {} 条遗留未处理记忆", len(facts))
+                for fact in facts:
+                    fact.pop("_dumped_at", None)
+                    self._queue.put(fact)
+        except (json.JSONDecodeError, OSError) as e:
+            self.log.warning("pending_facts.json 读取失败，已跳过: {}", e)
 
     def _dump_pending(self) -> None:
         """将队列中剩余任务持久化到临时文件，下次启动可回放"""

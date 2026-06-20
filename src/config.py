@@ -190,8 +190,15 @@ class Config(BaseModel):
                 p = path.parent / p
             if p.exists():
                 prompt = p.read_text(encoding="utf-8").strip()
+            else:
+                from loguru import logger
+                logger.warning("system_prompt_file 配置为 '{}' 但文件不存在，回退到内嵌 prompt", prompt_file)
         if not prompt:
-            prompt = data.get("system_prompt", "你是一个有帮助的AI助手。")
+            prompt = data.get("system_prompt", "")
+        if not prompt:
+            prompt = "你是一个有帮助的AI助手。"
+            from loguru import logger
+            logger.warning("未配置 system_prompt，回退到通用默认值——风堇人设可能丢失！请检查 config/config.yaml")
 
         return cls(
             agent=AgentConfig(**data.get("agent", {})),

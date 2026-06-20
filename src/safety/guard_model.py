@@ -74,7 +74,11 @@ class GuardModel:
         self._lock = threading.Lock()
 
         if not self.config.lazy_load:
-            self._ensure_loaded()
+            try:
+                self._ensure_loaded()
+            except Exception as e:
+                self.log.error("Llama Guard 模型加载失败，P1 语义检测已禁用: {}", e)
+                self.enabled = False
 
     def check(self, text: str) -> SafetyResult:
         """语义安全检测"""
