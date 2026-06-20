@@ -31,6 +31,10 @@ class SplitterStrategy(ABC):
         """
         pass
 
+    def cleanup(self) -> None:
+        """清理资源（子类可按需重写）"""
+        pass
+
     def split_document(self, document) -> List[TextChunk]:
         """切分文档对象"""
         from ...a_loader import Document

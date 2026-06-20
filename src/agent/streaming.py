@@ -56,21 +56,28 @@ async def stream_reply(
     # 1. 用户消息先入历史（无论安全判定如何，见核心1 §2.5）
     session_mgr.append_message("user", user_content)
 
-    # 2. 安全检测（三态分流）
-    result = safety.check(user_content)
-    if result.action == Action.BLOCK:
-        # 记录拦截占位消息到会话再抛出，保持 user/assistant 成对
-        session_mgr.append_message("assistant", f"[小伊卡拦截] {result.user_message or _default_blocked_message()}")
-        session_mgr.flush()
-        raise BlockedError(
-            result.user_message or _default_blocked_message(),
-            result.category,
-        )
-    # COMFORT（自杀自伤安抚）：放行，安抚指令注入 system_prompt（红线10）
-    comfort_prompt = result.comfort_prompt if result.action == Action.COMFORT else None
+    try:
+        # 2. 安全检测（三态分流）
+        result = safety.check(user_content)
+        if result.action == Action.BLOCK:
+            # 记录拦截占位消息到会话再抛出，保持 user/assistant 成对
+            session_mgr.append_message("assistant", f"[小伊卡拦截] {result.user_message or _default_blocked_message()}")
+            session_mgr.flush()
+            raise BlockedError(
+                result.user_message or _default_blocked_message(),
+                result.category,
+            )
+        # COMFORT（自杀自伤安抚）：放行，安抚指令注入 system_prompt（红线10）
+        comfort_prompt = result.comfort_prompt if result.action == Action.COMFORT else None
 
-    # 3. 记忆合并（复用 ContextManager）
-    api_input = context_mgr.build_input(user_content)
+        # 3. 记忆合并（复用 ContextManager）
+        api_input = context_mgr.build_input(user_content)
+    except BlockedError:
+        raise  # BlockedError 已记录消息+flush，直接传播
+    except Exception:
+        # 安全检测或记忆检索异常：回滚已入历史的 user 消息
+        _rollback_last_user(session_mgr, user_content, logger)
+        raise
 
     full_text = ""
     was_cancelled = False

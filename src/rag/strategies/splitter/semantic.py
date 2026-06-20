@@ -30,6 +30,12 @@ class SemanticSplitter(SplitterStrategy):
         self.embedding_model_name = embedding_model
         self._embedding_model = None
 
+    def cleanup(self) -> None:
+        """释放 embedding 模型"""
+        if self._embedding_model is not None:
+            del self._embedding_model
+            self._embedding_model = None
+
     def _get_embedding_model(self):
         """延迟加载 embedding 模型"""
         if self._embedding_model is None:

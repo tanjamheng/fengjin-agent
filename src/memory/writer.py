@@ -28,9 +28,17 @@ class MemoryWriter:
         self.client = client
         self.model = model
         self.storage = storage
-        self._merge_prompt_template = Path(config.merge.prompt_file).read_text(
-            encoding="utf-8"
-        )
+        try:
+            self._merge_prompt_template = Path(config.merge.prompt_file).read_text(
+                encoding="utf-8"
+            )
+        except Exception as e:
+            self.log.warning("记忆合并 prompt 文件读取失败，使用内嵌默认模板: {}", e)
+            self._merge_prompt_template = (
+                "请将以下两条关于用户的信息合并为一条简洁的事实：\n"
+                "旧记忆：{old_memory}\n新事实：{new_fact}\n"
+                "如果两者描述同一件事但细节不同，请合并保留更具体的版本；如果无关，返回 NO_MERGE"
+            )
 
         self._queue: queue.Queue = queue.Queue(maxsize=300)
         self._running = True

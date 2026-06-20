@@ -3,6 +3,7 @@
 使用 embedding 模型将文本转化为向量，存储在向量数据库中。
 """
 
+import uuid
 from typing import List
 from pathlib import Path
 from .base import IndexStrategy
@@ -106,7 +107,7 @@ class DenseIndex(IndexStrategy):
 
         texts = [chunk.content for chunk in chunks]
         embeddings = self._embed(texts)
-        ids = [f"chunk_{chunk.chunk_id}_{hash(chunk.content) % 10000}" for chunk in chunks]
+        ids = [f"chunk_{chunk.chunk_id}_{uuid.uuid4().hex[:8]}" for chunk in chunks]
         metadatas = [chunk.metadata for chunk in chunks]
 
         if self.store_type == "chroma":

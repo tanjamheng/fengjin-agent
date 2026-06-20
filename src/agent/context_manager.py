@@ -36,7 +36,11 @@ class ContextManager:
         if not self.memory_retriever:
             return user_input
 
-        memory_text = self.memory_retriever.retrieve(user_input)
+        try:
+            memory_text = self.memory_retriever.retrieve(user_input)
+        except Exception as e:
+            self.log.error("记忆检索失败（不阻塞对话）: {}", e)
+            return user_input
         if not memory_text:
             return user_input
 

@@ -58,3 +58,9 @@ class TextSplitter:
             return self.split(document)
         else:
             raise ValueError(f"不支持的类型: {type(document)}")
+
+    def cleanup(self) -> None:
+        """清理切分策略资源"""
+        if self._strategy is not None:
+            self._strategy.cleanup()
+            self._strategy = None

@@ -30,7 +30,8 @@ class ToolRegistry:
         """注册 MCP 服务器的所有工具"""
         tool_defs = server.get_tool_definitions()
         for tool_def in tool_defs:
-            name = tool_def["name"]
+            # 兼容 OpenAI 嵌套格式 {"function": {"name": ...}} 和扁平格式 {"name": ...}
+            name = tool_def.get("function", {}).get("name") or tool_def.get("name", "")
             if name in self._local_tools or name in self._mcp_tools:
                 self.log.warning("MCP Tool {} 已存在，将被覆盖", name)
             self._mcp_tools[name] = (server, tool_def)

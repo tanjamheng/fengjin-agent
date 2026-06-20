@@ -197,6 +197,7 @@ class RAGService:
         if self.loader:
             self.loader = None
         if self.splitter:
+            self.splitter.cleanup()
             self.splitter = None
 
         self._initialized = False
@@ -213,16 +214,22 @@ class RAGService:
         return unique
 
     def _build_context(self, results: List[SearchResult], max_length: int) -> str:
-        """构建上下文"""
+        """构建上下文（含前缀和分隔符，总长度不超过 max_length）"""
         context_parts = []
         current_length = 0
+        separator = "\n\n---\n\n"
 
         for result in results:
-            if current_length + len(result.content) > max_length:
-                break
             category = result.metadata.get("category", "")
             source_label = f"{category}/{result.source}" if category else result.source
-            context_parts.append(f"[来源: {source_label}]\n{result.content}")
-            current_length += len(result.content)
+            header = f"[来源: {source_label}]\n"
+            entry_len = len(header) + len(result.content)
+            # 计入分隔符（非首条结果需要分隔符）
+            if context_parts:
+                entry_len += len(separator)
+            if current_length + entry_len > max_length:
+                break
+            context_parts.append(header + result.content)
+            current_length += entry_len
 
-        return "\n\n---\n\n".join(context_parts)
+        return separator.join(context_parts)

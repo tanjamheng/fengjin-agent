@@ -8,6 +8,7 @@ from openai import OpenAI
 
 from .config import MemoryConfig, MemorySettings
 from .storage import MemoryStorage
+from ..utils.logger import get_logger
 
 MAX_PARSE_RETRIES = 2
 
@@ -26,9 +27,18 @@ class MemoryExtractor:
         self.client = client
         self.model = model
         self.storage = storage
-        self._extraction_prompt = Path(config.extraction.prompt_file).read_text(
-            encoding="utf-8"
-        )
+        self.log = get_logger("memory_extractor")
+        try:
+            self._extraction_prompt = Path(config.extraction.prompt_file).read_text(
+                encoding="utf-8"
+            )
+        except Exception as e:
+            self.log.warning("记忆提取 prompt 文件读取失败，使用内嵌默认模板: {}", e)
+            self._extraction_prompt = (
+                "请从以下对话中提取关于用户（灰宝）值得记住的个人事实和偏好。\n"
+                "提取规则：只提取有价值的个人信息；跳过寒暄闲聊；跳过常识。\n"
+                "返回 JSON：{\"facts\": [{\"content\": \"...\", \"type\": \"semantic|episodic\", \"importance\": \"high|low\"}]}"
+            )
         self._blacklist = [
             re.compile(p) for p in config.filter.blacklist_patterns
         ]
