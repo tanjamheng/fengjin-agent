@@ -39,7 +39,7 @@ class MemoryManager:
         """异步提取记忆并写入（不阻塞主流程）"""
         def _worker():
             try:
-                facts = self.extractor.extract(user_input, assistant_message)
+                facts = self.extractor.extract(user_input, assistant_message, trace_id=trace_id)
                 if facts:
                     self.writer.write(facts)
             except Exception as e:

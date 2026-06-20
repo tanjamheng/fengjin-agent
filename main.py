@@ -521,9 +521,6 @@ def main():
             if not session_mgr.current_session:
                 session_mgr.create_session()
 
-            # 初始化回滚基准（msg_count_before 在 BLOCK 跳过 + 异常兜底 + ToolCalling 同步中使用）
-            msg_count_before = len(agent.messages)
-
             trace_id = generate_trace_id()
 
             # 安全护栏检查（核心1 §2.5：被拦截消息仍记录到会话，但不送入AI）
@@ -538,8 +535,9 @@ def main():
 
             # 发送消息（chat() 内部已流式输出）
             console.print("[bold green]风堇:[/bold green]")
-            # 先记录用户消息再调 Agent（Agent.chat 内部也记录一份）
+            # 记录回滚基准（用于 ToolCalling 同步 + 异常兜底；在 append 之前记录）
             msg_count_before = len(agent.messages)
+            session_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0
             session_mgr.append_message("user", user_input)
             if result.action.value == "comfort":
                 reply = agent.chat(user_input, safety_context=result.comfort_prompt, trace_id=trace_id)
@@ -560,7 +558,7 @@ def main():
         except KeyboardInterrupt:
             # 回滚本轮新增消息，避免孤儿 user 持久化
             from src.agent.message_builder import rollback_last_user
-            rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before)
+            rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before, session_count_before)
             session_mgr.flush()
             agent.cleanup()
             if memory_manager:
@@ -573,11 +571,11 @@ def main():
             break
         except Exception as e:
             from src.utils import get_logger
-            _log = get_logger(agent.trace_id)
+            _log = get_logger(trace_id)
             _log.opt(exception=True).error("对话循环异常 [input={}]: {}", user_input[:50], e)
             # 回滚本轮所有消息：复用共享回滚函数
             from src.agent.message_builder import rollback_last_user
-            rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before)
+            rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before, session_count_before)
             session_mgr.flush()
             console.print("[red]对话处理出错，请重试。详情见日志文件。[/red]")
 

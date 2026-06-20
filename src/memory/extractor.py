@@ -50,12 +50,13 @@ class MemoryExtractor:
             re.compile(p) for p in config.filter.blacklist_patterns
         ]
 
-    def extract(self, user_input: str, assistant_message: str) -> list[dict]:
+    def extract(self, user_input: str, assistant_message: str, trace_id: str = "") -> list[dict]:
         """提取记忆，返回过滤后的事实列表
 
         Returns:
             [{"content": str, "type": str, "importance": str}, ...]
         """
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         facts = self._llm_extract(user_input, assistant_message)
         if not facts:
             return []

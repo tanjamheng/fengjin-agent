@@ -230,6 +230,8 @@ class RuleEngine:
         comfort_prompt = None
         if action == Action.COMFORT and cat_id == "self_harm":
             comfort_prompt = self.config.comfort.self_harm_prompt
+            if not comfort_prompt:
+                self.log.error("COMFORT self_harm_prompt 为空！自伤疏导将无效，请检查 safety.yaml comfort.self_harm_prompt")
 
         # 用户可见的拦截话术：优先用类别配置，否则用默认
         user_msg = cat_config.user_message or self.config.default_user_message

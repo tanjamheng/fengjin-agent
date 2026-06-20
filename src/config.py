@@ -75,11 +75,9 @@ class RerankerConfig(BaseModel):
 
 
 class QueryEnhancerConfig(BaseModel):
-    """查询增强策略配置"""
-    type: str = "rewrite"
-    params: Dict[str, Any] = Field(default_factory=lambda: {
-        "llm_model": "glm-5"
-    })
+    """查询增强策略配置（默认关闭，与 rag.yaml 和架构决策一致）"""
+    type: str = "none"
+    params: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RAGConfig(BaseModel):

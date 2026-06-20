@@ -109,11 +109,12 @@ class RAGService:
                     self.loader = None
                 raise
 
-    def retrieve(self, query: str) -> str:
+    def retrieve(self, query: str, trace_id: str = "") -> str:
         """执行完整的 RAG 检索管道，返回上下文文本
 
         Args:
             query: 检索查询
+            trace_id: 请求追踪ID
 
         Returns:
             检索到的上下文文本（无结果时返回空字符串）
@@ -121,7 +122,8 @@ class RAGService:
         if not self._initialized:
             self.initialize()
 
-        self.log.info("RAG 检索: {}...", query[:50])
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
+        log.info("RAG 检索: {}...", query[:50])
 
         # 查询增强
         enhanced_query = self.query_enhancer.enhance(query)
@@ -141,7 +143,7 @@ class RAGService:
 
         # 构建上下文
         context_text = self._build_context(reranked_results, max_length=1500)
-        self.log.info("RAG 检索完成: 召回 {} 条, 精排 {} 条", len(recall_results), len(reranked_results))
+        log.info("RAG 检索完成: 召回 {} 条, 精排 {} 条", len(recall_results), len(reranked_results))
 
         return context_text
 

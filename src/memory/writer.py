@@ -1,5 +1,6 @@
 """记忆写入与冲突消解"""
 
+import os
 import queue
 import threading
 import uuid
@@ -60,10 +61,6 @@ class MemoryWriter:
     def stop(self) -> None:
         """停止写入线程，持久化剩余任务以防数据丢失"""
         self._running = False
-        try:
-            self._queue.put(None, timeout=5)
-        except queue.Full:
-            self.log.warning("写入队列已满，无法发送停止信号")
         self._thread.join(timeout=10)
         if self._thread.is_alive():
             self.log.warning("写入线程超时未退出，剩余队列任务将被持久化")
@@ -71,11 +68,12 @@ class MemoryWriter:
         self._dump_pending()
 
     def _writer_loop(self) -> None:
-        """后台写入线程，串行处理所有写入任务"""
+        """后台写入线程，用 poll 方式串行处理所有写入任务"""
         while self._running:
-            item = self._queue.get()
-            if item is None:
-                break
+            try:
+                item = self._queue.get(timeout=1)
+            except queue.Empty:
+                continue
             try:
                 self._process_fact(item)
             except Exception as e:
@@ -177,7 +175,10 @@ class MemoryWriter:
         text += "\n".join(f"- {doc}" for doc, _ in paired)
 
         Path(self.config.core_file).parent.mkdir(parents=True, exist_ok=True)
-        Path(self.config.core_file).write_text(text, encoding="utf-8")
+        # 原子写入：先写 .tmp 再 os.replace()，防止中途崩溃损坏文件（红线7）
+        tmp_path = str(self.config.core_file) + ".tmp"
+        Path(tmp_path).write_text(text, encoding="utf-8")
+        os.replace(tmp_path, self.config.core_file)
 
     def _replay_pending(self) -> None:
         """启动时回放上次异常退出遗留的 pending_facts.json"""

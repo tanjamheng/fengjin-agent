@@ -15,9 +15,9 @@ class DenseIndex(IndexStrategy):
 
     def __init__(
         self,
-        embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        embedding_model: str = "models/bge-m3",
         persist_directory: str = "data/chroma",
-        collection_name: str = "default",
+        collection_name: str = "fengjin_knowledge",
         store_type: str = "chroma",
         device: str = "cpu"
     ):
