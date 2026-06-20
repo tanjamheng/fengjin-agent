@@ -49,7 +49,11 @@ class ContextRestorer:
             return None
 
         query = " ".join(user_msgs[-3:])
-        memory_text = self.memory_retriever.retrieve(query)
+        try:
+            memory_text = self.memory_retriever.retrieve(query)
+        except Exception as e:
+            self.log.error("记忆检索失败（不阻塞会话恢复）: {}", e)
+            return None
         if memory_text:
             self.log.info("检索到相关记忆")
         return memory_text

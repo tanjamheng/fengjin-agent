@@ -31,10 +31,16 @@ class SemanticSplitter(SplitterStrategy):
         self._embedding_model = None
 
     def cleanup(self) -> None:
-        """释放 embedding 模型"""
+        """释放 embedding 模型（对齐红线12：model=None + cuda.empty_cache）"""
         if self._embedding_model is not None:
             del self._embedding_model
             self._embedding_model = None
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     def _get_embedding_model(self):
         """延迟加载 embedding 模型"""

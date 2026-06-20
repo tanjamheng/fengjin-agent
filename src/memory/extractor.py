@@ -36,7 +36,9 @@ class MemoryExtractor:
             self.log.warning("记忆提取 prompt 文件读取失败，使用内嵌默认模板: {}", e)
             self._extraction_prompt = (
                 "请从以下对话中提取关于用户（灰宝）值得记住的个人事实和偏好。\n"
+                "注意：不要提取风堇自身的事实（她是AI角色，其设定已固定），只提取用户的信息。\n"
                 "提取规则：只提取有价值的个人信息；跳过寒暄闲聊；跳过常识。\n"
+                "type说明：semantic=一般性知识/偏好，episodic=具体事件/经历。\n"
                 "返回 JSON：{\"facts\": [{\"content\": \"...\", \"type\": \"semantic|episodic\", \"importance\": \"high|low\"}]}"
             )
         self._blacklist = [

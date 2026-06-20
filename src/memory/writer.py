@@ -28,6 +28,7 @@ class MemoryWriter:
         self.client = client
         self.model = model
         self.storage = storage
+        self.log = get_logger("memory_writer")
         try:
             self._merge_prompt_template = Path(config.merge.prompt_file).read_text(
                 encoding="utf-8"
@@ -37,12 +38,15 @@ class MemoryWriter:
             self._merge_prompt_template = (
                 "请将以下两条关于用户的信息合并为一条简洁的事实：\n"
                 "旧记忆：{old_memory}\n新事实：{new_fact}\n"
-                "如果两者描述同一件事但细节不同，请合并保留更具体的版本；如果无关，返回 NO_MERGE"
+                "规则：\n"
+                "1. 两者矛盾 → 用新事实替换旧记忆（用户的情况可能改变了）\n"
+                "2. 两者互补 → 合并为一条更完整的事实\n"
+                "3. 两者描述同一事 → 保留更具体、信息量更大的版本\n"
+                "4. 两者无关 → 返回 NO_MERGE"
             )
 
         self._queue: queue.Queue = queue.Queue(maxsize=300)
         self._running = True
-        self.log = get_logger("memory_writer")
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
         self._replay_pending()
