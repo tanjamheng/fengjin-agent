@@ -29,6 +29,7 @@ class DenseIndex(IndexStrategy):
 
         self._embedding_model = None
         self._embedding_is_shared = False
+        self._cleaned = False
         self._store = None
         self._collection = None
         self.log = get_logger("dense_index")
@@ -37,6 +38,7 @@ class DenseIndex(IndexStrategy):
         """初始化（幂等：已初始化时跳过，防止非hybrid+hybrid配置下重复加载）"""
         if self._embedding_model is not None:
             return
+        self._cleaned = False  # 重置幂等守卫，支持 cleanup→reinit 序列
         # 初始化 Embedding 模型（通过注册表单例共享，避免重复加载）
         try:
             from ....utils.helpers import get_project_root, resolve_device

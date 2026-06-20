@@ -41,7 +41,7 @@ from src.memory.config import MemorySettings
 from src.memory.manager import MemoryManager
 from src.agent.context_manager import ContextManager
 from src.safety import SafetyManager
-from src.safety.rule_engine import RuleEngine
+from src.safety.rule_engine import RuleEngine, Action
 from src.session import SessionManager, ContextRestorer
 from src.utils import setup_logger, LogConfig, get_logger
 from src.utils.logger import generate_trace_id
@@ -598,7 +598,7 @@ def main():
             msg_count_before = len(agent.messages)
             session_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0
             session_mgr.append_message("user", user_input)
-            if result.action.value == "comfort":
+            if result.action == Action.COMFORT:
                 reply = agent.chat(user_input, safety_context=result.comfort_prompt, trace_id=trace_id)
             else:
                 reply = agent.chat(user_input, trace_id=trace_id)

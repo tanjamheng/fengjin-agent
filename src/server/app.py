@@ -1,6 +1,7 @@
 """FastAPI 应用工厂"""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +25,9 @@ async def lifespan(app: FastAPI):
     memory_manager = None
     rag_service = None
     try:
-        config = Config.load()
+        # 使用基于 __file__ 的绝对路径，与 CLI 路径保持一致
+        _project_root = Path(__file__).resolve().parent.parent.parent
+        config = Config.load(str(_project_root / "config" / "config.yaml"))
         app.state.config = config
         app.state.client = AsyncOpenAI(
             api_key=config.api_key,

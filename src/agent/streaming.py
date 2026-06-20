@@ -270,11 +270,13 @@ def _default_blocked_message() -> str:
 
 def _serialize_tool_calls(tool_calls_data: dict[int, dict]) -> list[dict]:
     """将流式累积的 tool_calls_data 转为 OpenAI API 格式"""
+    import uuid
     result = []
     for idx in sorted(tool_calls_data.keys()):
         data = tool_calls_data[idx]
+        tc_id = data["id"] or f"tc_{uuid.uuid4().hex[:8]}"
         result.append({
-            "id": data["id"],
+            "id": tc_id,
             "type": "function",
             "function": {
                 "name": data["name"],
