@@ -93,24 +93,25 @@ class RAGService:
                 self._initialized = True
                 self.log.info("RAG 服务初始化完成")
             except Exception:
-                # 部分初始化失败：清理已初始化的子组件，避免资源泄漏
+                # 部分初始化失败：逐组件清理（单组件失败不阻塞其余清理）
                 self.log.opt(exception=True).error("RAG 初始化失败，回滚已初始化的子组件")
-                if self.reranker:
-                    self.reranker.cleanup()
-                    self.reranker = None
-                if self.query_enhancer:
-                    self.query_enhancer.cleanup()
-                    self.query_enhancer = None
-                if self.retriever:
-                    self.retriever.cleanup()
-                    self.retriever = None
-                if self.indexer:
-                    self.indexer.cleanup()
-                    self.indexer = None
-                if self.splitter:
-                    self.splitter = None
-                if self.loader:
-                    self.loader = None
+                for name, cleanup_fn in [
+                    ("reranker", lambda: self.reranker.cleanup() if self.reranker else None),
+                    ("query_enhancer", lambda: self.query_enhancer.cleanup() if self.query_enhancer else None),
+                    ("retriever", lambda: self.retriever.cleanup() if self.retriever else None),
+                    ("indexer", lambda: self.indexer.cleanup() if self.indexer else None),
+                    ("splitter", lambda: self.splitter.cleanup() if self.splitter else None),
+                ]:
+                    try:
+                        cleanup_fn()
+                    except Exception as ex:
+                        self.log.warning("RAG {} 回滚清理异常: {}", name, ex)
+                self.reranker = None
+                self.query_enhancer = None
+                self.retriever = None
+                self.indexer = None
+                self.splitter = None
+                self.loader = None
                 raise
 
     def retrieve(self, query: str, trace_id: str = "") -> str:

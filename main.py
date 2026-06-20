@@ -493,6 +493,9 @@ def main():
                     continue
 
                 elif cmd == "/stats":
+                    if not rag_service:
+                        console.print("[yellow]知识库不可用（RAG 初始化失败）[/yellow]")
+                        continue
                     stats = rag_service.get_stats()
                     table = Table(title="知识库状态")
                     table.add_column("属性", style="cyan")

@@ -36,8 +36,9 @@ class SemanticSplitter(SplitterStrategy):
             try:
                 from ...embedding_registry import release
                 release()
-            except Exception:
-                pass
+            except Exception as e:
+                from ....utils.logger import get_logger
+                get_logger("semantic_splitter").warning("嵌入模型释放异常: {}", e)
             self._embedding_model = None
 
     def _get_embedding_model(self):
