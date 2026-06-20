@@ -33,11 +33,13 @@ def acquire(model_path: str, device: str = "cpu") -> "SentenceTransformer":
                 _refcount += 1
                 log.info("复用已加载的嵌入模型: {} (refcount={})", model_path, _refcount)
                 return _model
-            # 路径不同：降级为独立实例
+            # 路径不同：创建独立实例（不覆写全局状态，调用方自行管理生命周期）
             log.warning(
-                "嵌入模型路径不匹配（已有: {}, 请求: {}），创建独立实例",
+                "嵌入模型路径不匹配（已有: {}, 请求: {}），创建独立实例（不参与引用计数）",
                 _model_path, model_path,
             )
+            from sentence_transformers import SentenceTransformer
+            return SentenceTransformer(model_path, device=device)
 
         # 首次加载
         from sentence_transformers import SentenceTransformer

@@ -30,9 +30,9 @@ class MemoryManager:
         self._extract_threads: list[threading.Thread] = []
         self._lock = threading.Lock()
 
-    def retrieve(self, user_input: str) -> str:
+    def retrieve(self, user_input: str, trace_id: str = "") -> str:
         """检索记忆，返回格式化的记忆文本（用于注入 system prompt）"""
-        return self.retriever.retrieve(user_input)
+        return self.retriever.retrieve(user_input, trace_id=trace_id)
 
     def extract_async(self, user_input: str, assistant_message: str,
                       trace_id: str = "") -> None:

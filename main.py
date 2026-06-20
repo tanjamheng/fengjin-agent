@@ -521,9 +521,8 @@ def main():
             if not session_mgr.current_session:
                 session_mgr.create_session()
 
-            # 初始化回滚基准（异常处理器中引用，必须在任何可能抛异常的操作之前）
+            # 初始化回滚基准（msg_count_before 在 BLOCK 跳过 + 异常兜底 + ToolCalling 同步中使用）
             msg_count_before = len(agent.messages)
-            session_msg_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0
 
             trace_id = generate_trace_id()
 
@@ -540,7 +539,6 @@ def main():
             # 发送消息（chat() 内部已流式输出）
             console.print("[bold green]风堇:[/bold green]")
             # 先记录用户消息再调 Agent（Agent.chat 内部也记录一份）
-            session_msg_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0
             msg_count_before = len(agent.messages)
             session_mgr.append_message("user", user_input)
             if result.action.value == "comfort":
@@ -580,6 +578,7 @@ def main():
             # 回滚本轮所有消息：复用共享回滚函数
             from src.agent.message_builder import rollback_last_user
             rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before)
+            session_mgr.flush()
             console.print("[red]对话处理出错，请重试。详情见日志文件。[/red]")
 
 

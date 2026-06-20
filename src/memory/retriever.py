@@ -19,7 +19,7 @@ class MemoryRetriever:
         self.storage = storage
         self._core_path = Path(config.core_file)
 
-    def retrieve(self, user_input: str) -> str:
+    def retrieve(self, user_input: str, trace_id: str = "") -> str:
         """检索记忆，返回格式化的记忆文本"""
         sections = []
 

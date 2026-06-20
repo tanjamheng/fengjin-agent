@@ -8,7 +8,7 @@ from ..utils.logger import get_logger
 
 class MemoryRetriever(Protocol):
     """记忆检索接口（协议类型，用于类型检查）"""
-    def retrieve(self, user_input: str) -> str: ...
+    def retrieve(self, user_input: str, trace_id: str = "") -> str: ...
 
 
 class ContextManager:
