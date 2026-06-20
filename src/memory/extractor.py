@@ -90,6 +90,8 @@ class MemoryExtractor:
                     "content": f"返回的JSON格式有误：{error}\n请修正后重新返回，只返回合法JSON。"
                 })
 
+        if attempt >= MAX_PARSE_RETRIES:
+            self.log.warning("记忆提取 LLM 持续返回非法 JSON，已重试 {} 次后放弃", MAX_PARSE_RETRIES)
         return []
 
     def _parse_and_validate(self, text: str) -> tuple[list[dict] | None, str]:
