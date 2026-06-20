@@ -384,9 +384,14 @@ def main():
     ))
 
     # 对话循环
+    user_input = ""
     while True:
         try:
-            user_input = console.input("[bold blue]你:[/bold blue] ").strip()
+            try:
+                user_input = console.input("[bold blue]你:[/bold blue] ").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[yellow]再见！[/yellow]")
+                break
 
             # 会话管理命令
             if user_input.startswith("/"):
@@ -552,6 +557,13 @@ def main():
             console.print(f"[dim]对话轮数: {agent.history_count}[/dim]\n")
 
         except KeyboardInterrupt:
+            # 回滚本轮新增消息，避免孤儿 user 持久化
+            if agent.messages:
+                agent.messages = agent.messages[:msg_count_before]
+            if session_mgr.current_session and session_mgr.current_session.messages:
+                session_msgs = session_mgr.current_session.messages
+                while len(session_msgs) > session_msg_count_before:
+                    session_msgs.pop()
             session_mgr.flush()
             agent.cleanup()
             if memory_manager:
