@@ -26,6 +26,7 @@ from ..safety import SafetyManager, Action
 from ..config import Config
 from .context_manager import ContextManager
 from .stream_controller import StreamController
+from .message_builder import assemble_system_prompt, rollback_last_user as _rollback
 from ..utils.logger import get_logger
 
 log = get_logger("streaming")
@@ -76,7 +77,7 @@ async def stream_reply(
         raise  # BlockedError 已记录消息+flush，直接传播
     except Exception:
         # 安全检测或记忆检索异常：回滚已入历史的 user 消息
-        _rollback_last_user(session_mgr, user_content, logger)
+        _rollback(session_mgr, user_content)
         raise
 
     full_text = ""
@@ -115,12 +116,12 @@ async def stream_reply(
 
     except asyncio.CancelledError:
         # task.cancel() 强制中断：回滚已入历史的 user 消息，保持 user/assistant 成对
-        _rollback_last_user(session_mgr, user_content, logger)
+        _rollback(session_mgr, user_content)
         raise
     except Exception:
         # LLM 侧失败：回滚已入历史的 user 消息，保持 user/assistant 成对
         # （避免下一轮出现连续 user 消息破坏上下文组装）
-        _rollback_last_user(session_mgr, user_content, logger)
+        _rollback(session_mgr, user_content)
         raise
 
     # 6. 落盘（正常完成或协作式取消都会走到这里；被 task.cancel 强制中断则不走到）
@@ -129,7 +130,7 @@ async def stream_reply(
         session_mgr.flush()
     elif was_cancelled:
         # 协作式取消且无 token 产出：回滚已入历史的 user 消息，避免孤立 user
-        _rollback_last_user(session_mgr, user_content, logger)
+        _rollback(session_mgr, user_content)
     else:
         # LLM 返回空回复（罕见但可能）：写入空 assistant 保持消息成对
         session_mgr.append_message("assistant", "")
@@ -143,9 +144,7 @@ def _build_api_messages(
     comfort_prompt: Optional[str] = None,
 ) -> list[dict]:
     """组装 API messages：system_prompt(+安抚指令) + 历史消息（最后一条 user 换成记忆增强版）"""
-    system_content = config.system_prompt
-    if comfort_prompt:
-        system_content = f"{config.system_prompt}\n\n{comfort_prompt}"
+    system_content = assemble_system_prompt(config, comfort_prompt)
     messages = [{"role": "system", "content": system_content}]
     # 过滤 tool 角色消息：WS 路径不做 tool calling，tool 消息缺少 tool_call_id 会导致 API 报错
     history = [m for m in session_mgr.get_current_messages() if m.get("role") != "tool"]
@@ -155,17 +154,6 @@ def _build_api_messages(
             messages[i]["content"] = current_input
             break
     return messages
-
-
-def _rollback_last_user(session_mgr: SessionManager, user_content: str, logger) -> None:
-    """LLM 失败时回滚刚入历史的 user 消息，保持消息成对"""
-    session = session_mgr.current_session
-    if not session or not session.messages:
-        return
-    last = session.messages[-1]
-    if last.role == "user" and last.content == user_content:
-        session.messages.pop()
-        logger.warning("LLM 失败，已回滚本轮 user 消息以保持消息成对")
 
 
 def _default_blocked_message() -> str:

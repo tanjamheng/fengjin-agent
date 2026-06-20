@@ -561,12 +561,8 @@ def main():
 
         except KeyboardInterrupt:
             # 回滚本轮新增消息，避免孤儿 user 持久化
-            if agent.messages:
-                agent.messages = agent.messages[:msg_count_before]
-            if session_mgr.current_session and session_mgr.current_session.messages:
-                session_msgs = session_mgr.current_session.messages
-                while len(session_msgs) > session_msg_count_before:
-                    session_msgs.pop()
+            from src.agent.message_builder import rollback_last_user
+            rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before)
             session_mgr.flush()
             agent.cleanup()
             if memory_manager:
@@ -581,17 +577,9 @@ def main():
             from src.utils import get_logger
             _log = get_logger(agent.trace_id)
             _log.opt(exception=True).error("对话循环异常 [input={}]: {}", user_input[:50], e)
-            # 回滚本轮所有消息：agent.chat() 内部可能已加入 user、assistant(tool_calls)、
-            # tool 结果等消息，但最终 assistant 回复未完成，需要全部回滚避免状态损坏。
-            # 回滚策略：基于本轮开始前的消息数精确截断
-            if agent.messages:
-                agent.messages = agent.messages[:msg_count_before]
-            # session 回滚：同样基于本轮开始前的计数（含已写入的 user）
-            if session_mgr.current_session and session_mgr.current_session.messages:
-                session_msgs = session_mgr.current_session.messages
-                # 移除本轮新增的所有消息（user + tool + 可能的assistant片段）
-                while len(session_msgs) > session_msg_count_before:
-                    session_msgs.pop()
+            # 回滚本轮所有消息：复用共享回滚函数
+            from src.agent.message_builder import rollback_last_user
+            rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before)
             console.print("[red]对话处理出错，请重试。详情见日志文件。[/red]")
 
 

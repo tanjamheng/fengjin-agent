@@ -20,6 +20,7 @@ from .skill_registry import SkillRegistry, get_registry
 from .tool_registry import ToolRegistry
 from .mcp_manager import MCPManager
 from .context_manager import ContextManager
+from .message_builder import assemble_system_prompt
 from ..utils.logger import get_logger, generate_trace_id
 
 
@@ -126,9 +127,7 @@ class Agent:
         tool_definitions = self.tool_registry.get_all_definitions()
 
         # 5. 构建 API 参数（system prompt 置顶于 messages）
-        system_prompt = self.config.system_prompt
-        if safety_context:
-            system_prompt = f"{system_prompt}\n\n{safety_context}"
+        system_prompt = assemble_system_prompt(self.config, safety_context)
 
         api_messages = [{"role": "system", "content": system_prompt}]
         api_messages.extend(self._build_api_messages(api_input))
