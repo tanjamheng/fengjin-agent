@@ -127,12 +127,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         pass
                     except Exception as e:
                         log.opt(exception=True).error("取消旧流异常: {}", e)
-                partial = current_controller.partial_text if current_controller else ""
-                await websocket.send_json({
-                    "type": "end",
-                    "full_text": partial,
-                    "action": "idle",
-                })
+                # _handle_user_msg 已完成并发送了对应的 end/blocked/error 报文，不重复发送
 
             # ── list_sessions ──
             elif msg_type == "list_sessions":
@@ -259,13 +254,8 @@ async def _handle_user_msg(
 
     except Exception as e:
         logger.opt(exception=True).error("流式生成异常: {}", e)
-        # 保存部分已产生的文本到会话，避免已显示内容丢失
-        if controller.partial_text:
-            try:
-                session_mgr.append_message("assistant", controller.partial_text)
-                session_mgr.flush()
-            except Exception as flush_err:
-                logger.warning("异常时落盘 partial_text 失败: {}", flush_err)
+        # streaming 层已在 raise 前回滚 user 消息，此处不补存 partial_text
+        # 以避免 user 被回滚后 assistant 孤立破坏消息配对完整性
         try:
             await websocket.send_json({
                 "type": "error",
