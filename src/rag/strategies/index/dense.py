@@ -28,6 +28,7 @@ class DenseIndex(IndexStrategy):
         self.device = device
 
         self._embedding_model = None
+        self._embedding_is_shared = False
         self._store = None
         self._collection = None
         self.log = get_logger("dense_index")
@@ -39,12 +40,18 @@ class DenseIndex(IndexStrategy):
         # 初始化 Embedding 模型（通过注册表单例共享，避免重复加载）
         try:
             from ....utils.helpers import get_project_root, resolve_device
-            from ...embedding_registry import acquire
+            from ... import embedding_registry as _reg
             model_path = self.embedding_model_name
             if not Path(model_path).is_absolute():
                 model_path = str(get_project_root() / model_path)
             effective_device = resolve_device(self.device)
-            self._embedding_model = acquire(model_path, effective_device)
+            self._embedding_model = _reg.acquire(model_path, effective_device)
+            # 判断是否为共享实例（通过模块属性动态读取，避免按值捕获）
+            self._embedding_is_shared = (
+                _reg._model is not None
+                and _reg._model_path is not None
+                and str(model_path) == str(_reg._model_path)
+            )
         except ImportError:
             raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")
 
@@ -184,9 +191,20 @@ class DenseIndex(IndexStrategy):
     def cleanup(self) -> None:
         """清理资源（不删除数据）"""
         if self._embedding_model is not None:
-            from ...embedding_registry import release
-            release()
+            if self._embedding_is_shared:
+                from ...embedding_registry import release
+                release()
+            else:
+                # 独立实例：直接删除 + 清理 GPU 缓存
+                del self._embedding_model
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
             self._embedding_model = None
+            self._embedding_is_shared = False
         # 释放 ChromaDB 客户端连接（不删除 collection 数据）
         self._collection = None
         if self._store is not None:
@@ -195,3 +213,10 @@ class DenseIndex(IndexStrategy):
             except Exception as e:
                 self.log.warning("ChromaDB 客户端关闭异常: {}", e)
             self._store = None
+        # 安全线：确保 GPU 缓存清理（与其他 GPU 持有类对齐）
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass

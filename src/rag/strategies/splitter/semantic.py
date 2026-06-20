@@ -56,16 +56,16 @@ class SemanticSplitter(SplitterStrategy):
             try:
                 from pathlib import Path
                 from ....utils.helpers import get_project_root, resolve_device
-                from ...embedding_registry import acquire, _model_path as _global_path, _model as _global_model
+                from ... import embedding_registry as _reg
                 model_path = self.embedding_model_name
                 if not Path(model_path).is_absolute():
                     model_path = str(get_project_root() / model_path)
-                self._embedding_model = acquire(model_path, resolve_device("cpu"))
-                # 判断是否为共享实例：全局模型存在且路径匹配
+                self._embedding_model = _reg.acquire(model_path, resolve_device("cpu"))
+                # 判断是否为共享实例：通过模块属性动态读取（避免按值捕获）
                 self._embedding_is_shared = (
-                    _global_model is not None
-                    and _global_path is not None
-                    and str(model_path) == str(_global_path)
+                    _reg._model is not None
+                    and _reg._model_path is not None
+                    and str(model_path) == str(_reg._model_path)
                 )
             except ImportError:
                 raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")

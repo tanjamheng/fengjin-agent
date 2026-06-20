@@ -422,6 +422,6 @@ class Agent:
         self.tool_registry.clear()
         try:
             self.client.close()
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.warning("OpenAI client 关闭异常: {}", e)
         self.log.info("Agent 资源已清理")

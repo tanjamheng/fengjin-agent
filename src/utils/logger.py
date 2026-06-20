@@ -77,15 +77,8 @@ def setup_logger(config: Optional[LogConfig] = None) -> None:
         filter=lambda record: "trace_id" not in record["extra"]
     )
 
-    # 文件输出（详细格式，带轮转）
-    log_format = (
-        "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
-        "{level: <8} | "
-        "{extra[trace_id]} | "
-        "{name}:{function}:{line} | "
-        "{message}"
-    )
-
+    # 文件输出（详细格式，带轮转；分两个 handler 避免无 trace_id 时格式串 KeyError）
+    # Handler 1：有 trace_id 的正常日志
     logger.add(
         f"{config.log_dir}/agent_{config.log_level.lower()}.log",
         level=config.log_level,
@@ -93,7 +86,23 @@ def setup_logger(config: Optional[LogConfig] = None) -> None:
         rotation=config.rotation_size,
         retention=config.retention_days,
         encoding="utf-8",
-        enqueue=True  # 异步写入
+        enqueue=True,  # 异步写入
+        filter=lambda record: "trace_id" in record["extra"]
+    )
+    # Handler 2：无 trace_id 的 WARNING+ 日志（初始化阶段的关键告警）
+    logger.add(
+        f"{config.log_dir}/agent_{config.log_level.lower()}.log",
+        level="WARNING",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | "
+               "{level: <8} | "
+               "- | "
+               "{name}:{function}:{line} | "
+               "{message}",
+        rotation=config.rotation_size,
+        retention=config.retention_days,
+        encoding="utf-8",
+        enqueue=True,
+        filter=lambda record: "trace_id" not in record["extra"]
     )
 
     # JSON 格式日志（用于分析）
