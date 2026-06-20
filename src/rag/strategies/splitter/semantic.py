@@ -29,29 +29,44 @@ class SemanticSplitter(SplitterStrategy):
         self.max_chunk_size = max_chunk_size
         self.embedding_model_name = embedding_model
         self._embedding_model = None
+        self._embedding_is_shared = False  # 是否通过 registry 共享
 
     def cleanup(self) -> None:
-        """释放 embedding 模型（通过注册表 release，对齐红线12）"""
+        """释放 embedding 模型（共享模型走 registry release，独立实例自主清理）"""
         if self._embedding_model is not None:
             try:
-                from ...embedding_registry import release
-                release()
+                if self._embedding_is_shared:
+                    from ...embedding_registry import release
+                    release()
+                else:
+                    # 独立实例：直接删除 + 清理 GPU 缓存
+                    del self._embedding_model
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
             except Exception as e:
                 from ....utils.logger import get_logger
                 get_logger("semantic_splitter").warning("嵌入模型释放异常: {}", e)
             self._embedding_model = None
+            self._embedding_is_shared = False
 
     def _get_embedding_model(self):
-        """延迟加载 embedding 模型（通过注册表共享，避免重复加载）"""
+        """延迟加载 embedding 模型（优先共享注册表，路径不匹配时创建独立实例）"""
         if self._embedding_model is None:
             try:
                 from pathlib import Path
                 from ....utils.helpers import get_project_root, resolve_device
-                from ...embedding_registry import acquire
+                from ...embedding_registry import acquire, _model_path as _global_path, _model as _global_model
                 model_path = self.embedding_model_name
                 if not Path(model_path).is_absolute():
                     model_path = str(get_project_root() / model_path)
                 self._embedding_model = acquire(model_path, resolve_device("cpu"))
+                # 判断是否为共享实例：全局模型存在且路径匹配
+                self._embedding_is_shared = (
+                    _global_model is not None
+                    and _global_path is not None
+                    and str(model_path) == str(_global_path)
+                )
             except ImportError:
                 raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")
         return self._embedding_model

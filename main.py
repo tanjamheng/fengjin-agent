@@ -41,6 +41,7 @@ from src.memory.config import MemorySettings
 from src.memory.manager import MemoryManager
 from src.agent.context_manager import ContextManager
 from src.safety import SafetyManager
+from src.safety.rule_engine import RuleEngine
 from src.session import SessionManager, ContextRestorer
 from src.utils import setup_logger, LogConfig, get_logger
 from src.utils.logger import generate_trace_id
@@ -576,15 +577,14 @@ def main():
             if not session_mgr.current_session:
                 session_mgr.create_session()
 
-            # 标记进入聊天路径（异常处理器仅在此路径下才执行回滚，命令路径不触发回滚）
-            in_chat = True
             trace_id = generate_trace_id()
 
             # 安全护栏检查（核心1 §2.5：被拦截消息仍记录到会话，但不送入AI）
             result = safety_engine.check(user_input, trace_id=trace_id)
             if result.blocked:
                 session_mgr.append_message("user", user_input)
-                msg = result.user_message or "小伊卡发现了一些不太对劲的内容呢~请换个话题吧！"
+                from src.agent.message_builder import DEFAULT_BLOCKED_MESSAGE
+                msg = result.user_message or DEFAULT_BLOCKED_MESSAGE
                 console.print(f"[yellow]小伊卡：{msg}[/yellow]")
                 session_mgr.append_message("assistant", f"[小伊卡拦截] {msg}")
                 session_mgr.flush()
@@ -592,6 +592,8 @@ def main():
 
             # 发送消息（chat() 内部已流式输出）
             console.print("[bold green]风堇:[/bold green]")
+            # 标记进入聊天路径（异常处理器仅在此路径下才执行回滚，命令/Block路径不触发回滚）
+            in_chat = True
             # 记录回滚基准（用于 ToolCalling 同步 + 异常兜底；在 append 之前记录）
             msg_count_before = len(agent.messages)
             session_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0

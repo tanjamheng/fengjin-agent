@@ -3,6 +3,7 @@
 提供：
 - assemble_system_prompt(): 组装 system prompt（含 comfort 安抚指令注入）
 - rollback_last_user(): 回滚最后一条 user 消息，保持 user/assistant 配对
+- DEFAULT_BLOCKED_MESSAGE: BLOCK 拦截无 user_message 时的统一兜底话术
 """
 
 from typing import Optional
@@ -12,6 +13,9 @@ from ..session import SessionManager
 from ..utils.logger import get_logger
 
 log = get_logger("message_builder")
+
+# BLOCK 拦截时若 category 未定义 user_message 的统一兜底话术
+DEFAULT_BLOCKED_MESSAGE = "小伊卡发现了一些不太对劲的内容呢~请换个话题和风堇姐姐聊天吧！"
 
 
 def assemble_system_prompt(config: Config, comfort_prompt: Optional[str] = None) -> str:

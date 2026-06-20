@@ -34,14 +34,22 @@ class MemoryRetriever:
         return "\n\n".join(sections)
 
     def _load_core(self) -> str:
-        """读取 core_memory.md 内容（不含标题行）"""
+        """读取 core_memory.md 内容（不含标题行和占位符）"""
         if not self._core_path.exists():
             return ""
         lines = self._core_path.read_text(encoding="utf-8").strip().splitlines()
-        return "\n".join(
+        content = "\n".join(
             line for line in lines
             if line.strip() and not line.startswith("#")
+        ).strip()
+        # 过滤占位符文本：MemoryWriter 尚未写入真实高重要性事实时的初始内容
+        _PLACEHOLDER_PREFIXES = (
+            "（风堇会在对话中逐渐了解你",
+            "(风堇会在对话中逐渐了解你",
         )
+        if content.startswith(_PLACEHOLDER_PREFIXES):
+            return ""
+        return content
 
     def _search_db(self, user_input: str) -> str:
         """从 ChromaDB 检索相关记忆"""

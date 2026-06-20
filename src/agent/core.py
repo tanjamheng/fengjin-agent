@@ -420,4 +420,8 @@ class Agent:
         self.registry.cleanup_all()
         self.mcp_manager.cleanup_all()
         self.tool_registry.clear()
+        try:
+            self.client.close()
+        except Exception:
+            pass
         self.log.info("Agent 资源已清理")

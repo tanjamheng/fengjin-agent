@@ -98,7 +98,12 @@ class GuardModel:
 
         try:
             self._ensure_loaded()
+        except Exception as e:
+            log.warning("Llama Guard 懒加载失败，P1 语义检测已禁用: {}", e)
+            self.enabled = False
+            return SafetyResult()
 
+        try:
             # content 必须是 [{"type":"text","text":"..."}] 格式，
             # 否则 Jinja 模板的 selectattr('type', 'equalto', 'text') 匹配不到，对话区域为空
             messages = [{"role": "user", "content": [{"type": "text", "text": text}]}]

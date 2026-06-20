@@ -55,7 +55,8 @@ def setup_logger(config: Optional[LogConfig] = None) -> None:
     # 移除默认 handler
     logger.remove()
 
-    # 控制台输出（简洁格式）
+    # 控制台输出（简洁格式，分两个 handler 避免 trace_id 缺失时格式串 KeyError）
+    # Handler 1：有 trace_id 的正常日志（INFO+）
     logger.add(
         sys.stderr,
         level=config.log_level,
@@ -64,6 +65,16 @@ def setup_logger(config: Optional[LogConfig] = None) -> None:
                "<cyan>{extra[trace_id]}</cyan> | "
                "<level>{message}</level>",
         filter=lambda record: "trace_id" in record["extra"]
+    )
+    # Handler 2：无 trace_id 的 WARNING+ 日志（初始化错误等），确保关键告警可见
+    logger.add(
+        sys.stderr,
+        level="WARNING",
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+               "<level>{level: <8}</level> | "
+               "<cyan>-</cyan> | "
+               "<level>{message}</level>",
+        filter=lambda record: "trace_id" not in record["extra"]
     )
 
     # 文件输出（详细格式，带轮转）

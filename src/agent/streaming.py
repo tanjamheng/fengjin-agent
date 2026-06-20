@@ -264,7 +264,8 @@ def _build_api_messages(
 
 def _default_blocked_message() -> str:
     """BLOCK 拦截无 user_message 时的兜底话术（COMFORT 不走此路径）"""
-    return "小伊卡提醒：风堇不想聊这个话题哦～换个话题吧？"
+    from .message_builder import DEFAULT_BLOCKED_MESSAGE
+    return DEFAULT_BLOCKED_MESSAGE
 
 
 def _serialize_tool_calls(tool_calls_data: dict[int, dict]) -> list[dict]:

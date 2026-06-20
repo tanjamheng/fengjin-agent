@@ -98,6 +98,10 @@ class SafetyConfig(BaseModel):
             words_dir=safety_data.get("words_dir", "safety_words"),
             match=MatchConfig(**safety_data.get("match", {})),
             comfort=ComfortConfig(**safety_data.get("comfort", {})),
+            default_user_message=safety_data.get(
+                "default_user_message",
+                "该内容已被安全系统拦截。"
+            ),
         )
 
 
