@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
 
-from ..config import Config, ContextSettings
+from ..config import Config, ContextSettings, RAGSettings
 from ..safety import SafetyManager
 from ..utils.logger import get_logger
 
@@ -35,13 +35,19 @@ async def lifespan(app: FastAPI):
             timeout=120.0,
             max_retries=3,
         )
-        app.state.context_config = ContextSettings.load().context
-        app.state.safety = SafetyManager()   # Llama Guard 在此加载（仅一次）
+        app.state.context_config = ContextSettings.load(
+            str(_project_root / "config" / "context.yaml")
+        ).context
+        app.state.safety = SafetyManager(
+            config_path=str(_project_root / "config" / "safety.yaml")
+        )   # Llama Guard 在此加载（仅一次）
 
         # 记忆系统（可选：环境变量缺失时优雅降级，不阻塞服务启动）
         try:
             from ..memory import MemorySettings
-            memory_config = MemorySettings.load().memory
+            memory_config = MemorySettings.load(
+                str(_project_root / "config" / "memory.yaml")
+            ).memory
             from ..memory.manager import MemoryManager
             memory_manager = MemoryManager(memory_config)
             log.info("记忆系统已加载")
@@ -58,6 +64,7 @@ async def lifespan(app: FastAPI):
             from ..mcp_servers.rag_server import RAGMCPServer
 
             rag_service = RAGService(
+                config=RAGSettings.load(str(_project_root / "config" / "rag.yaml")),
                 llm_client=None,  # WS 路径不传同步 client，RAG 仅用检索能力
             )
 
