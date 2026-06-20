@@ -472,7 +472,10 @@ def main():
                     console.print("[green]对话历史已清空，新会话已创建[/green]")
                     continue
 
-                elif cmd == "/ingest_dir" and args:
+                elif cmd == "/ingest_dir":
+                    if not args:
+                        console.print("[yellow]用法: /ingest_dir <目录路径> — 批量导入目录中的文档[/yellow]")
+                        continue
                     if rag_service is None:
                         console.print("[red]RAG 知识库未初始化，无法导入[/red]")
                         continue
@@ -486,7 +489,10 @@ def main():
                         console.print(f"[red]导入失败: {e}[/red]")
                     continue
 
-                elif cmd == "/ingest" and args:
+                elif cmd == "/ingest":
+                    if not args:
+                        console.print("[yellow]用法: /ingest <文件路径> — 导入单个文档到知识库[/yellow]")
+                        continue
                     if rag_service is None:
                         console.print("[red]RAG 知识库未初始化，无法导入[/red]")
                         continue
