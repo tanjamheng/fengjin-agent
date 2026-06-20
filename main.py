@@ -147,7 +147,8 @@ def _handle_command(cmd: str, args: str, console: Console,
     if cmd == "/quit":
         session_mgr.flush()
         agent.cleanup()
-        memory_manager.cleanup()
+        if memory_manager:
+            memory_manager.cleanup()
         rag_service.cleanup()
         safety_engine.cleanup()
         from loguru import logger
@@ -309,10 +310,14 @@ def main():
     context_config_path = PROJECT_ROOT / "config" / "context.yaml"
     context_settings = ContextSettings.load(str(context_config_path))
 
-    # 初始化记忆系统
+    # 初始化记忆系统（可选：环境变量缺失时优雅降级，不阻塞启动）
     memory_config_path = PROJECT_ROOT / "config" / "memory.yaml"
     memory_settings = MemorySettings.load(str(memory_config_path))
-    memory_manager = MemoryManager(memory_settings.memory)
+    try:
+        memory_manager = MemoryManager(memory_settings.memory)
+    except Exception as e:
+        get_logger("main").warning("记忆系统加载失败（环境变量未设？），记忆功能将不可用: {}", e)
+        memory_manager = None
 
     # 创建上下文管理器（依赖记忆检索器）
     context_manager = ContextManager(
@@ -549,7 +554,8 @@ def main():
         except KeyboardInterrupt:
             session_mgr.flush()
             agent.cleanup()
-            memory_manager.cleanup()
+            if memory_manager:
+                memory_manager.cleanup()
             rag_service.cleanup()
             safety_engine.cleanup()
             from loguru import logger

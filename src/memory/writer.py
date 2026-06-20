@@ -42,7 +42,8 @@ class MemoryWriter:
                 "1. 两者矛盾 → 用新事实替换旧记忆（用户的情况可能改变了）\n"
                 "2. 两者互补 → 合并为一条更完整的事实\n"
                 "3. 两者描述同一事 → 保留更具体、信息量更大的版本\n"
-                "4. 两者无关 → 返回 NO_MERGE"
+                "4. 两者是独立不相关的事实 → 返回 NO_MERGE\n"
+                "5. 两者无关 → 返回 NO_MERGE"
             )
 
         self._queue: queue.Queue = queue.Queue(maxsize=300)

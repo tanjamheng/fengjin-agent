@@ -33,7 +33,9 @@ class DenseIndex(IndexStrategy):
         self.log = get_logger("dense_index")
 
     def initialize(self) -> None:
-        """初始化"""
+        """初始化（幂等：已初始化时跳过，防止非hybrid+hybrid配置下重复加载）"""
+        if self._embedding_model is not None:
+            return
         # 初始化 Embedding 模型
         try:
             import torch
