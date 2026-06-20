@@ -130,6 +130,10 @@ async def stream_reply(
     elif was_cancelled:
         # 协作式取消且无 token 产出：回滚已入历史的 user 消息，避免孤立 user
         _rollback_last_user(session_mgr, user_content, logger)
+    else:
+        # LLM 返回空回复（罕见但可能）：写入空 assistant 保持消息成对
+        session_mgr.append_message("assistant", "")
+        session_mgr.flush()
 
 
 def _build_api_messages(

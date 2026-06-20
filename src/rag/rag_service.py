@@ -4,6 +4,7 @@
 封装完整的 RAG 管道：加载 → 切分 → 索引 → 检索 → 重排序。
 """
 
+import threading
 from typing import Optional, List
 from .a_loader import DocumentLoader
 from .b_splitter import TextSplitter
@@ -33,54 +34,80 @@ class RAGService:
 
         self.log = get_logger()
         self._initialized = False
+        self._init_lock = threading.Lock()
 
     def initialize(self) -> None:
-        """初始化 RAG 管道组件"""
+        """初始化 RAG 管道组件（线程安全，部分失败时回滚已初始化的组件）"""
         if self._initialized:
             return
 
-        self.log.info("初始化 RAG 服务...")
+        with self._init_lock:
+            if self._initialized:
+                return
 
-        self.loader = DocumentLoader(
-            supported_formats=self.rag_config.loader.supported_formats,
-            max_file_size_mb=self.rag_config.loader.max_file_size_mb
-        )
+            self.log.info("初始化 RAG 服务...")
 
-        self.splitter = TextSplitter(
-            strategy_type=self.rag_config.splitter.type,
-            strategy_params=self.rag_config.splitter.params
-        )
+            try:
+                self.loader = DocumentLoader(
+                    supported_formats=self.rag_config.loader.supported_formats,
+                    max_file_size_mb=self.rag_config.loader.max_file_size_mb
+                )
 
-        self.indexer = Indexer(
-            strategy_type=self.rag_config.index.type,
-            strategy_params=self.rag_config.index.params
-        )
-        self.indexer.initialize()
+                self.splitter = TextSplitter(
+                    strategy_type=self.rag_config.splitter.type,
+                    strategy_params=self.rag_config.splitter.params
+                )
 
-        self.retriever = Retriever(
-            index=self.indexer._get_strategy(),
-            strategy_type=self.rag_config.retriever.type,
-            strategy_params=self.rag_config.retriever.params
-        )
-        if not (self.rag_config.index.type == "hybrid"
-                and self.rag_config.retriever.type == "hybrid"):
-            self.retriever.initialize()
+                self.indexer = Indexer(
+                    strategy_type=self.rag_config.index.type,
+                    strategy_params=self.rag_config.index.params
+                )
+                self.indexer.initialize()
 
-        self.query_enhancer = QueryEnhancer(
-            strategy_type=self.rag_config.query_enhancer.type,
-            strategy_params=self.rag_config.query_enhancer.params,
-            llm_client=self.llm_client
-        )
+                self.retriever = Retriever(
+                    index=self.indexer._get_strategy(),
+                    strategy_type=self.rag_config.retriever.type,
+                    strategy_params=self.rag_config.retriever.params
+                )
+                if not (self.rag_config.index.type == "hybrid"
+                        and self.rag_config.retriever.type == "hybrid"):
+                    self.retriever.initialize()
 
-        self.reranker = Reranker(
-            strategy_type=self.rag_config.reranker.type,
-            strategy_params=self.rag_config.reranker.params,
-            llm_client=self.llm_client
-        )
-        self.reranker.initialize()
+                self.query_enhancer = QueryEnhancer(
+                    strategy_type=self.rag_config.query_enhancer.type,
+                    strategy_params=self.rag_config.query_enhancer.params,
+                    llm_client=self.llm_client
+                )
 
-        self._initialized = True
-        self.log.info("RAG 服务初始化完成")
+                self.reranker = Reranker(
+                    strategy_type=self.rag_config.reranker.type,
+                    strategy_params=self.rag_config.reranker.params,
+                    llm_client=self.llm_client
+                )
+                self.reranker.initialize()
+
+                self._initialized = True
+                self.log.info("RAG 服务初始化完成")
+            except Exception:
+                # 部分初始化失败：清理已初始化的子组件，避免资源泄漏
+                self.log.opt(exception=True).error("RAG 初始化失败，回滚已初始化的子组件")
+                if self.reranker:
+                    self.reranker.cleanup()
+                    self.reranker = None
+                if self.query_enhancer:
+                    self.query_enhancer.cleanup()
+                    self.query_enhancer = None
+                if self.retriever:
+                    self.retriever.cleanup()
+                    self.retriever = None
+                if self.indexer:
+                    self.indexer.cleanup()
+                    self.indexer = None
+                if self.splitter:
+                    self.splitter = None
+                if self.loader:
+                    self.loader = None
+                raise
 
     def retrieve(self, query: str) -> str:
         """执行完整的 RAG 检索管道，返回上下文文本
