@@ -22,12 +22,13 @@ class SessionStore:
         self.log = get_logger("session_store")
         self._cleanup_temp_files()
 
-    def save_session(self, session: Session) -> None:
+    def save_session(self, session: Session, trace_id: str = "") -> None:
         """原子写入单个会话文件
 
         用临时文件 + os.replace 保证写入原子性，
         进程崩溃不会导致文件损坏。
         """
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         path = self._session_path(session.session_id)
         tmp_path = str(path) + ".tmp"
 
@@ -35,7 +36,7 @@ class SessionStore:
             json.dump(session.model_dump(), f, ensure_ascii=False, indent=2, default=str)
 
         os.replace(tmp_path, path)
-        self.log.debug("会话已保存: {}", session.session_id)
+        log.debug("会话已保存: {}", session.session_id)
 
     def load_session(self, session_id: str) -> Optional[Session]:
         """读取单个会话文件"""

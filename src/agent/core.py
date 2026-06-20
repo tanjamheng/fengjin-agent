@@ -85,13 +85,14 @@ class Agent:
     # ── 对话 ───────────────────────────────────────────────
 
     def chat(self, user_input: str, skills: Optional[List[str]] = None,
-             safety_context: Optional[str] = None) -> str:
+             safety_context: Optional[str] = None, trace_id: str = "") -> str:
         """发送消息并获取回复
 
         Args:
             user_input: 用户输入
             skills: 要激活的Skill列表（可选）
             safety_context: 安全疏导指令（comfort 模式时注入）
+            trace_id: 请求追踪ID（不传则自动生成）
 
         Returns:
             Agent回复
@@ -100,7 +101,7 @@ class Agent:
         if not user_input or not user_input.strip():
             return ""
 
-        self.trace_id = generate_trace_id()
+        self.trace_id = trace_id or generate_trace_id()
         self.log = get_logger(self.trace_id)
 
         self.log.info("用户输入: {}...", user_input[:50])
@@ -113,7 +114,7 @@ class Agent:
         # 2. 上下文管理：记忆合并到当前输入
         api_input = message_content
         if self.context_manager:
-            api_input = self.context_manager.build_input(message_content)
+            api_input = self.context_manager.build_input(message_content, trace_id=self.trace_id)
 
         # 3. 存入历史的是原始输入（不含记忆注入）
         self.messages.append({
@@ -178,7 +179,7 @@ class Agent:
 
         # 10. 滑动窗口裁剪
         if self.context_manager:
-            self.context_manager.trim_messages(self.messages)
+            self.context_manager.trim_messages(self.messages, trace_id=self.trace_id)
 
         # 11. 异步提取记忆
         if self.memory_manager:

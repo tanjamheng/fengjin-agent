@@ -90,8 +90,9 @@ class GuardModel:
                 self.log.error("Llama Guard 模型加载失败，P1 语义检测已禁用: {}", e)
                 self.enabled = False
 
-    def check(self, text: str) -> SafetyResult:
+    def check(self, text: str, trace_id: str = "") -> SafetyResult:
         """语义安全检测"""
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         if not self.enabled:
             return SafetyResult()
 
@@ -125,7 +126,7 @@ class GuardModel:
             return self._parse_output(output_text)
 
         except Exception as e:
-            self.log.error("P1 检测失败: {}", e)
+            log.error("P1 检测失败: {}", e)
             if self.config.fallback == "pass":
                 return SafetyResult()
             return SafetyResult(

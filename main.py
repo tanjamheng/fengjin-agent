@@ -43,6 +43,7 @@ from src.agent.context_manager import ContextManager
 from src.safety import SafetyManager
 from src.session import SessionManager, ContextRestorer
 from src.utils import setup_logger, LogConfig
+from src.utils.logger import generate_trace_id
 
 # ── 模型目录 ──
 PROJECT_ROOT = Path(__file__).parent
@@ -524,8 +525,10 @@ def main():
             msg_count_before = len(agent.messages)
             session_msg_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0
 
+            trace_id = generate_trace_id()
+
             # 安全护栏检查（核心1 §2.5：被拦截消息仍记录到会话，但不送入AI）
-            result = safety_engine.check(user_input)
+            result = safety_engine.check(user_input, trace_id=trace_id)
             if result.blocked:
                 session_mgr.append_message("user", user_input)
                 msg = result.user_message or "小伊卡发现了一些不太对劲的内容呢~请换个话题吧！"
@@ -541,9 +544,9 @@ def main():
             msg_count_before = len(agent.messages)
             session_mgr.append_message("user", user_input)
             if result.action.value == "comfort":
-                reply = agent.chat(user_input, safety_context=result.comfort_prompt)
+                reply = agent.chat(user_input, safety_context=result.comfort_prompt, trace_id=trace_id)
             else:
-                reply = agent.chat(user_input)
+                reply = agent.chat(user_input, trace_id=trace_id)
 
             # 同步 Tool calling 中间消息到会话（保证会话恢复时上下文完整）
             for msg in agent.messages[msg_count_before:]:

@@ -132,12 +132,13 @@ class RuleEngine:
             sum(1 for c in self.config.categories.values() if c.enabled)
         )
 
-    def check(self, text: str) -> SafetyResult:
+    def check(self, text: str, trace_id: str = "") -> SafetyResult:
         """检查文本安全性
 
         匹配顺序：不可见字符 → 关键词 → 正则
         首次命中即返回（fail_fast）
         """
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         if not self.config.enabled:
             return SafetyResult()
 

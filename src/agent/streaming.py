@@ -58,7 +58,7 @@ async def stream_reply(
 
     try:
         # 2. 安全检测（三态分流）
-        result = safety.check(user_content)
+        result = safety.check(user_content, trace_id=trace_id)
         if result.action == Action.BLOCK:
             # 记录拦截占位消息到会话再抛出，保持 user/assistant 成对
             session_mgr.append_message("assistant", f"[小伊卡拦截] {result.user_message or _default_blocked_message()}")
@@ -71,7 +71,7 @@ async def stream_reply(
         comfort_prompt = result.comfort_prompt if result.action == Action.COMFORT else None
 
         # 3. 记忆合并（复用 ContextManager）
-        api_input = context_mgr.build_input(user_content)
+        api_input = context_mgr.build_input(user_content, trace_id=trace_id)
     except BlockedError:
         raise  # BlockedError 已记录消息+flush，直接传播
     except Exception:
@@ -84,7 +84,7 @@ async def stream_reply(
     try:
         # 4. 组装上下文 + 滑动窗口
         api_messages = _build_api_messages(config, session_mgr, api_input, comfort_prompt)
-        api_messages = context_mgr.trim_messages(api_messages)
+        api_messages = context_mgr.trim_messages(api_messages, trace_id=trace_id)
 
         # 5. 流式调用 LLM
         stream = await client.chat.completions.create(

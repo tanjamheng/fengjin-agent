@@ -24,12 +24,13 @@ class ContextManager:
         self.memory_retriever = memory_retriever
         self.log = get_logger("context")
 
-    def build_input(self, user_input: str) -> str:
+    def build_input(self, user_input: str, trace_id: str = "") -> str:
         """组装当前轮的 user message
 
         流程：检索记忆 → 合并模板 → 返回增强后的输入。
         记忆系统未启用或检索结果为空时，返回原始输入。
         """
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         if not self.config.memory.enabled:
             return user_input
 
@@ -37,9 +38,9 @@ class ContextManager:
             return user_input
 
         try:
-            memory_text = self.memory_retriever.retrieve(user_input)
+            memory_text = self.memory_retriever.retrieve(user_input, trace_id=trace_id)
         except Exception as e:
-            self.log.error("记忆检索失败（不阻塞对话）: {}", e)
+            log.error("记忆检索失败（不阻塞对话）: {}", e)
             return user_input
         if not memory_text:
             return user_input
@@ -50,13 +51,14 @@ class ContextManager:
             input=user_input
         )
 
-    def trim_messages(self, messages: List[Dict]) -> List[Dict]:
+    def trim_messages(self, messages: List[Dict], trace_id: str = "") -> List[Dict]:
         """滑动窗口：从头部淘汰旧消息
 
         双重保护：
         1. 轮数上限：消息条数超过 max_turns * 2 时淘汰
         2. token 上限：估算 token 超过 max_tokens 时淘汰
         """
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         max_messages = self.config.sliding_window.max_turns * 2
 
         # 按轮数淘汰

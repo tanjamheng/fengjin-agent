@@ -11,16 +11,16 @@ class SafetyManager:
         self.rule_engine = RuleEngine(config_path)
         self.guard_model = GuardModel(config_path)
 
-    def check(self, text: str) -> SafetyResult:
+    def check(self, text: str, trace_id: str = "") -> SafetyResult:
         """统一安全检查：P0 规则引擎 → P1 语义检测"""
         # P0: 规则引擎（毫秒级）
-        result = self.rule_engine.check(text)
+        result = self.rule_engine.check(text, trace_id=trace_id)
         if result.action != Action.PASS:
             return result
 
         # P1: Llama Guard（语义级）
         if self.guard_model.enabled:
-            result = self.guard_model.check(text)
+            result = self.guard_model.check(text, trace_id=trace_id)
             if result.action != Action.PASS:
                 return result
 
