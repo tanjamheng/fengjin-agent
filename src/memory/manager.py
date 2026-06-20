@@ -22,10 +22,22 @@ class MemoryManager:
         small_client = MemorySettings.create_memo_model_client()
         model_name = MemorySettings.get_memo_model_name()
 
-        self.storage = MemoryStorage(config)
-        self.extractor = MemoryExtractor(config, small_client, model_name, self.storage)
-        self.writer = MemoryWriter(config, small_client, model_name, self.storage)
-        self.retriever = MemoryRetriever(config, self.storage)
+        self.storage = None
+        self.extractor = None
+        self.writer = None
+        self.retriever = None
+        try:
+            self.storage = MemoryStorage(config)
+            self.extractor = MemoryExtractor(config, small_client, model_name, self.storage)
+            self.writer = MemoryWriter(config, small_client, model_name, self.storage)
+            self.retriever = MemoryRetriever(config, self.storage)
+        except Exception:
+            # 部分初始化失败：清理已初始化的组件
+            if self.writer:
+                self.writer.stop()
+            if self.storage:
+                self.storage.cleanup()
+            raise
         self.log = get_logger("memory_manager")
         self._extract_threads: list[threading.Thread] = []
         self._lock = threading.Lock()

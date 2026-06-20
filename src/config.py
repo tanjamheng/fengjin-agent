@@ -99,7 +99,7 @@ class SlidingWindowConfig(BaseModel):
 class MemoryMergeConfig(BaseModel):
     """记忆合并配置"""
     enabled: bool = True
-    template: str = "[关于灰宝的信息]\n{memory}\n\n{input}"
+    template: str = "{memory}\n\n{input}"
 
 
 class ContextConfig(BaseModel):

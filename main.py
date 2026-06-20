@@ -376,13 +376,14 @@ def main():
             config_path=str(PROJECT_ROOT / "config" / "safety.yaml")
         )
     except Exception as e:
-        console.print(f"[yellow]⚠ 安全护栏 P1 模型加载失败，仅规则引擎可用: {e}[/yellow]")
-        get_logger("main").warning("SafetyManager 初始化失败: {}", e)
-        # 降级：仅启用 P0 规则引擎
-        from src.safety.rule_engine import RuleEngine
-        safety_engine = SafetyManager.__new__(SafetyManager)
-        safety_engine.rule_engine = RuleEngine(str(PROJECT_ROOT / "config" / "safety.yaml"))
-        safety_engine.guard_model = None
+        console.print(f"[yellow]安全护栏 P1 模型加载失败，仅规则引擎可用: {e}[/yellow]")
+        # 降级：创建仅含 P0 规则引擎的 SafetyManager（不依赖 __new__）
+        safety_engine = type('_FallbackSafety', (), {
+            'rule_engine': RuleEngine(str(PROJECT_ROOT / "config" / "safety.yaml")),
+            'guard_model': None,
+            'check': lambda self, text, trace_id='': self.rule_engine.check(text, trace_id=trace_id),
+            'cleanup': lambda self: setattr(self, 'rule_engine', None),
+        })()
 
     # 初始化会话管理
     session_mgr = SessionManager(str(SESSIONS_DIR))
