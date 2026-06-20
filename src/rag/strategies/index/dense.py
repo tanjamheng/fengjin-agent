@@ -47,11 +47,8 @@ class DenseIndex(IndexStrategy):
                 model_path = str(get_project_root() / model_path)
 
             # 自动检测 GPU 可用性
-            effective_device = self.device
-            if self.device in ("cuda", "auto") and not torch.cuda.is_available():
-                effective_device = "cpu"
-            elif self.device == "auto" and torch.cuda.is_available():
-                effective_device = "cuda"
+            from ....utils.helpers import resolve_device
+            effective_device = resolve_device(self.device)
 
             self._embedding_model = SentenceTransformer(
                 model_path,
@@ -200,7 +197,12 @@ class DenseIndex(IndexStrategy):
             self._embedding_model = None
         # 释放 ChromaDB 客户端连接（不删除 collection 数据）
         self._collection = None
-        self._store = None
+        if self._store is not None:
+            try:
+                self._store._system.stop()
+            except Exception:
+                pass
+            self._store = None
         # 释放 GPU 缓存
         try:
             import torch

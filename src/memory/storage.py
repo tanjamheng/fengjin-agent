@@ -32,13 +32,8 @@ class MemoryStorage:
             embedding_model = str(get_project_root() / embedding_model)
 
         # 自动检测 GPU 可用性
-        effective_device = config.chroma.device
-        if effective_device in ("cuda", "auto"):
-            import torch
-            if not torch.cuda.is_available():
-                effective_device = "cpu"
-            elif effective_device == "auto" and torch.cuda.is_available():
-                effective_device = "cuda"
+        from ..utils.helpers import resolve_device
+        effective_device = resolve_device(config.chroma.device)
 
         self._embedding_fn = SentenceTransformerEmbeddingFunction(
             model_name=embedding_model,
@@ -120,7 +115,12 @@ class MemoryStorage:
             except Exception as e:
                 self.log.warning("Embedding模型释放异常: {}", e)
         self.collection = None
-        self.client = None
+        if self.client is not None:
+            try:
+                self.client._system.stop()
+            except Exception:
+                pass
+            self.client = None
         try:
             import torch
             if torch.cuda.is_available():

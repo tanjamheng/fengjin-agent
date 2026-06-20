@@ -52,8 +52,10 @@ class GuardModel:
         self.log = get_logger("guard_model")
         config_dir = Path(config_path).parent
 
-        # 加载配置
-        raw = self._load_guard_config(config_path)
+        # 一次性读取 safety.yaml，避免重复 I/O 和 YAML 解析
+        _safety = self._load_safety_data(config_path)
+
+        raw = _safety.get("guard_model", {})
         self.config = GuardModelConfig(**raw)
         self.enabled = self.config.enabled
 
@@ -61,10 +63,18 @@ class GuardModel:
             self.log.info("P1 Llama Guard 已禁用")
             return
 
-        # 加载各类别的 user_message 和 comfort 提示词
-        self._category_messages = self._load_category_messages(config_path)
-        self._default_message = self._load_default_message(config_path)
-        self._comfort_prompt = self._load_comfort_prompt(config_path)
+        # 从已缓存的 _safety dict 提取各配置段
+        categories = _safety.get("categories", {})
+        self._category_messages = {
+            cat_id: cat.get("user_message", "")
+            for cat_id, cat in categories.items()
+            if cat.get("user_message")
+        }
+        self._default_message = _safety.get(
+            "default_user_message", "该内容已被安全系统拦截。"
+        )
+        comfort = _safety.get("comfort", {})
+        self._comfort_prompt = comfort.get("self_harm_prompt", "")
 
         # 延迟加载
         self._model = None
@@ -275,8 +285,8 @@ class GuardModel:
         return model_id
 
     @staticmethod
-    def _load_guard_config(config_path: str) -> dict:
-        """从 safety.yaml 读取 guard_model 配置段"""
+    def _load_safety_data(config_path: str) -> dict:
+        """一次性读取 safety.yaml，返回完整的 safety 配置段（避免重复 I/O）"""
         path = Path(config_path)
         if not path.exists():
             return {}
@@ -284,19 +294,15 @@ class GuardModel:
             data = yaml.safe_load(f)
         if data is None:
             return {}
-        return data.get("safety", {}).get("guard_model", {})
+        return data.get("safety", {})
+
+    @staticmethod
+    def _load_guard_config(config_path: str) -> dict:
+        return GuardModel._load_safety_data(config_path).get("guard_model", {})
 
     @staticmethod
     def _load_category_messages(config_path: str) -> dict[str, str]:
-        """从 safety.yaml 读取各类别的 user_message"""
-        path = Path(config_path)
-        if not path.exists():
-            return {}
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        if data is None:
-            return {}
-        categories = data.get("safety", {}).get("categories", {})
+        categories = GuardModel._load_safety_data(config_path).get("categories", {})
         return {
             cat_id: cat.get("user_message", "")
             for cat_id, cat in categories.items()
@@ -305,27 +311,11 @@ class GuardModel:
 
     @staticmethod
     def _load_default_message(config_path: str) -> str:
-        """从 safety.yaml 读取默认拦截话术"""
-        path = Path(config_path)
-        if not path.exists():
-            return "该内容已被安全系统拦截。"
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        if data is None:
-            return "该内容已被安全系统拦截。"
-        return data.get("safety", {}).get(
+        return GuardModel._load_safety_data(config_path).get(
             "default_user_message", "该内容已被安全系统拦截。"
         )
 
     @staticmethod
     def _load_comfort_prompt(config_path: str) -> str:
-        """从 safety.yaml 读取 self_harm 的 comfort 提示词"""
-        path = Path(config_path)
-        if not path.exists():
-            return ""
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        if data is None:
-            return ""
-        comfort = data.get("safety", {}).get("comfort", {})
+        comfort = GuardModel._load_safety_data(config_path).get("comfort", {})
         return comfort.get("self_harm_prompt", "")

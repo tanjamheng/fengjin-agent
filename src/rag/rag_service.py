@@ -65,7 +65,7 @@ class RAGService:
                 self.indexer.initialize()
 
                 self.retriever = Retriever(
-                    index=self.indexer._get_strategy(),
+                    index=self.indexer.strategy,
                     strategy_type=self.rag_config.retriever.type,
                     strategy_params=self.rag_config.retriever.params
                 )

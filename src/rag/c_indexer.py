@@ -41,6 +41,11 @@ class Indexer:
             self._strategy = get_index(self.strategy_type, self.strategy_params)
         return self._strategy
 
+    @property
+    def strategy(self) -> IndexStrategy:
+        """公开访问策略实例（供外部组装，如 Retriever 引用 IndexStrategy）"""
+        return self._get_strategy()
+
     def initialize(self) -> None:
         """初始化索引"""
         self.log.info("初始化索引，策略: {}", self.strategy_type)

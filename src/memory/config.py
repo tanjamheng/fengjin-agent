@@ -6,7 +6,7 @@ from typing import List
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 import yaml
 
 load_dotenv()
@@ -32,6 +32,15 @@ class MergeConfig(BaseModel):
 class ThresholdConfig(BaseModel):
     dedup_distance: float = 0.1
     conflict_distance: float = 0.15
+
+    @model_validator(mode="after")
+    def _check_threshold_order(self):
+        if self.dedup_distance >= self.conflict_distance:
+            raise ValueError(
+                f"dedup_distance ({self.dedup_distance}) 必须小于 "
+                f"conflict_distance ({self.conflict_distance})"
+            )
+        return self
 
 
 class RetrievalConfig(BaseModel):
