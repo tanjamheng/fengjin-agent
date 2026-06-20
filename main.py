@@ -318,6 +318,7 @@ def main():
         memory_manager = MemoryManager(memory_settings.memory)
     except Exception as e:
         get_logger("main").warning("记忆系统加载失败（环境变量未设？），记忆功能将不可用: {}", e)
+        console.print("[yellow]⚠ 记忆系统暂不可用（环境变量缺失或配置错误），对话将无长期记忆[/yellow]")
         memory_manager = None
 
     # 创建上下文管理器（依赖记忆检索器）

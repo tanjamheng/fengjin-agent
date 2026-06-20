@@ -22,7 +22,7 @@ rich==13.9.3
 # RAG
 chromadb==1.0.15
 sentence-transformers==5.0.0
-langchain-text-splitters==0.3.8
+langchain-text-splitters==0.3.8  # 可选依赖：移除后自动降级为纯Python递归切分实现
 
 # Document Loading
 pypdf==6.5.0

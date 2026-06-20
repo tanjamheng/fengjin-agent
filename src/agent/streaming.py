@@ -17,7 +17,8 @@
 """
 
 import asyncio
-from typing import AsyncGenerator, Optional
+import json
+from typing import AsyncGenerator, Callable, Optional
 
 from openai import AsyncOpenAI
 
@@ -43,15 +44,22 @@ class BlockedError(Exception):
 
 async def stream_reply(
     user_content: str,
-    session_mgr: SessionManager,
-    safety: SafetyManager,
-    controller: StreamController,
-    client: AsyncOpenAI,
-    config: Config,
-    context_mgr: ContextManager,
+    session_mgr: "SessionManager",
+    safety: "SafetyManager",
+    controller: "StreamController",
+    client: "AsyncOpenAI",
+    config: "Config",
+    context_mgr: "ContextManager",
     trace_id: str = "",
+    tool_definitions: Optional[list] = None,
+    execute_tool_async: Optional[Callable] = None,
 ) -> AsyncGenerator[str, None]:
-    """流式对话主链路，yield 每个 token"""
+    """流式对话主链路，yield 每个 token
+
+    Args:
+        tool_definitions: OpenAI 格式的 tool 定义列表（None=不启用 Tool Calling）
+        execute_tool_async: async callable(name, arguments) -> str（tool_definitions 非空时必填）
+    """
     logger = log.bind(trace_id=trace_id) if trace_id else log
 
     # 1. 用户消息先入历史（无论安全判定如何，见核心1 §2.5）
@@ -82,37 +90,120 @@ async def stream_reply(
 
     full_text = ""
     was_cancelled = False
+    # Tool calling 中间消息（仅用于 API 调用，不入 session）
+    tool_loop_messages: list[dict] = []
+    tool_rounds = 0
+    max_tool_rounds = config.agent.max_tool_rounds if tool_definitions else 0
+
     try:
-        # 4. 组装上下文 + 滑动窗口
-        api_messages = _build_api_messages(config, session_mgr, api_input, comfort_prompt)
-        api_messages = context_mgr.trim_messages(api_messages, trace_id=trace_id)
+        while True:
+            # 4. 组装上下文 + 滑动窗口
+            system_content = assemble_system_prompt(config, comfort_prompt)
+            api_messages = _build_api_messages(
+                config, session_mgr, api_input, system_content, tool_loop_messages,
+            )
+            api_messages = context_mgr.trim_messages(api_messages, trace_id=trace_id)
 
-        # 5. 流式调用 LLM
-        stream = await client.chat.completions.create(
-            model=config.model,
-            messages=api_messages,
-            temperature=config.agent.temperature,
-            max_tokens=config.agent.max_tokens,
-            stream=True,
-        )
+            # 5. 流式调用 LLM（含 tool_definitions）
+            api_params = {
+                "model": config.model,
+                "messages": api_messages,
+                "temperature": config.agent.temperature,
+                "max_tokens": config.agent.max_tokens,
+                "stream": True,
+            }
+            if tool_definitions:
+                api_params["tools"] = tool_definitions
 
-        try:
-            async for chunk in stream:
-                if controller.cancel_requested:
-                    was_cancelled = True
-                    break  # 协作式取消：break 后 finally 自动 response.aclose()
+            stream = await client.chat.completions.create(**api_params)
 
-                delta = chunk.choices[0].delta if chunk.choices else None
-                if delta and delta.content:
-                    controller.add_token(delta.content)
-                    full_text += delta.content
-                    yield delta.content
-        finally:
-            # 确保 stream 被关闭（正常结束 / 协作取消 / 异常都触发）
+            # 流式处理：累积文本 + tool_calls delta
+            tool_calls_data: dict[int, dict] = {}  # index -> {id, name, arguments}
+
             try:
-                await stream.close()
-            except Exception as e:
-                logger.error("stream 关闭异常: {}", e)
+                async for chunk in stream:
+                    if controller.cancel_requested:
+                        was_cancelled = True
+                        break  # 协作式取消
+
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if not delta:
+                        continue
+
+                    # 文本 token → yield
+                    if delta.content:
+                        controller.add_token(delta.content)
+                        full_text += delta.content
+                        yield delta.content
+
+                    # tool_calls 增量累积
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_calls_data:
+                                tool_calls_data[idx] = {
+                                    "id": tc_delta.id or "",
+                                    "name": "",
+                                    "arguments": "",
+                                }
+                            if tc_delta.id:
+                                tool_calls_data[idx]["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tool_calls_data[idx]["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
+            finally:
+                try:
+                    await stream.close()
+                except Exception as e:
+                    logger.error("stream 关闭异常: {}", e)
+
+            if was_cancelled:
+                break
+
+            # 6. Tool calling：有 tool_calls 时执行工具并循环
+            if not tool_calls_data or tool_rounds >= max_tool_rounds:
+                break
+
+            tool_rounds += 1
+            logger.info("WS Tool calling 第 {} 轮，{} 个工具调用", tool_rounds, len(tool_calls_data))
+
+            # 构建 assistant 消息（含 tool_calls）并加入循环消息
+            tool_calls_serialized = _serialize_tool_calls(tool_calls_data)
+            tool_loop_messages.append({
+                "role": "assistant",
+                "content": full_text or "",
+                "tool_calls": tool_calls_serialized,
+            })
+
+            # 执行工具（同步 → asyncio.to_thread）
+            for idx in sorted(tool_calls_data.keys()):
+                tc = tool_calls_data[idx]
+                tool_use_id = tc["id"]
+                tool_name = tc["name"]
+                try:
+                    tool_input = json.loads(tc["arguments"])
+                except json.JSONDecodeError:
+                    tool_input = {}
+
+                try:
+                    if execute_tool_async is None:
+                        raise RuntimeError("execute_tool_async 未提供")
+                    result_text = await execute_tool_async(tool_name, tool_input)
+                    logger.info("WS Tool {} 执行成功", tool_name)
+                except Exception as e:
+                    logger.error("WS Tool {} 执行失败: {}", tool_name, e)
+                    result_text = f"工具调用失败: {e}"
+
+                tool_loop_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_use_id,
+                    "content": result_text,
+                })
+
+            # 重置文本（可能后续轮次产生新文本）
+            full_text = ""
 
     except asyncio.CancelledError:
         # task.cancel() 强制中断：回滚已入历史的 user 消息，保持 user/assistant 成对
@@ -124,7 +215,7 @@ async def stream_reply(
         _rollback(session_mgr, user_content)
         raise
 
-    # 6. 落盘（正常完成或协作式取消都会走到这里；被 task.cancel 强制中断则不走到）
+    # 7. 落盘（正常完成或协作式取消都会走到这里；被 task.cancel 强制中断则不走到）
     if full_text:
         session_mgr.append_message("assistant", full_text)
         session_mgr.flush()
@@ -138,24 +229,49 @@ async def stream_reply(
 
 
 def _build_api_messages(
-    config: Config,
-    session_mgr: SessionManager,
+    config: "Config",
+    session_mgr: "SessionManager",
     current_input: str,
-    comfort_prompt: Optional[str] = None,
+    system_content: str,
+    tool_loop_messages: Optional[list[dict]] = None,
 ) -> list[dict]:
-    """组装 API messages：system_prompt(+安抚指令) + 历史消息（最后一条 user 换成记忆增强版）"""
-    system_content = assemble_system_prompt(config, comfort_prompt)
+    """组装 API messages：system + 历史消息 + tool calling 中间消息
+
+    - system 在最前
+    - 历史消息中过滤 tool 角色（WS 不恢复 tool 消息上下文）
+    - 最后一条 user 消息换成记忆增强版
+    - tool_loop_messages 追加在末尾（当前轮 tool calling 中间产物）
+    """
     messages = [{"role": "system", "content": system_content}]
-    # 过滤 tool 角色消息：WS 路径不做 tool calling，tool 消息缺少 tool_call_id 会导致 API 报错
     history = [m for m in session_mgr.get_current_messages() if m.get("role") != "tool"]
     messages.extend(history)
+    # 替换最后一条 user 消息为记忆增强版
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user":
-            messages[i]["content"] = current_input
+            messages[i] = {"role": "user", "content": current_input}
             break
+    # 追加 tool calling 中间消息
+    if tool_loop_messages:
+        messages.extend(tool_loop_messages)
     return messages
 
 
 def _default_blocked_message() -> str:
     """BLOCK 拦截无 user_message 时的兜底话术（COMFORT 不走此路径）"""
     return "小伊卡提醒：风堇不想聊这个话题哦～换个话题吧？"
+
+
+def _serialize_tool_calls(tool_calls_data: dict[int, dict]) -> list[dict]:
+    """将流式累积的 tool_calls_data 转为 OpenAI API 格式"""
+    result = []
+    for idx in sorted(tool_calls_data.keys()):
+        data = tool_calls_data[idx]
+        result.append({
+            "id": data["id"],
+            "type": "function",
+            "function": {
+                "name": data["name"],
+                "arguments": data["arguments"],
+            },
+        })
+    return result

@@ -27,8 +27,9 @@ class SafetyManager:
         return SafetyResult()
 
     def cleanup(self) -> None:
-        """释放安全模块资源（P1 模型显存等）"""
+        """释放安全模块资源（P1 模型显存 + P0 规则引擎引用）"""
         self.guard_model.cleanup()
+        self.rule_engine = None  # RuleEngine 无 GPU 资源，仅清理引用保持对称
 
 
 __all__ = ["RuleEngine", "SafetyManager", "SafetyResult", "Action"]

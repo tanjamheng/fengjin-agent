@@ -20,8 +20,9 @@ async def lifespan(app: FastAPI):
     SafetyManager 内含 Llama Guard GPU 模型，加载约 13 秒，
     提升为应用级单例后只加载一次（而非每个连接重载），符合资源红线。
     """
-    log.info("正在加载应用级单例（配置 / OpenAI / 安全模型 / 记忆）...")
+    log.info("正在加载应用级单例（配置 / OpenAI / 安全模型 / 记忆 / RAG / 工具）...")
     memory_manager = None
+    rag_service = None
     try:
         config = Config.load()
         app.state.config = config
@@ -45,6 +46,40 @@ async def lifespan(app: FastAPI):
             log.warning("记忆系统加载失败（环境变量未设？），WS 路径无记忆增强: {}", e)
 
         app.state.memory_manager = memory_manager
+
+        # RAG 知识库 + 工具注册表（可选：知识库为空时仍可正常对话）
+        try:
+            from ..config import RAGSettings
+            from ..rag.rag_service import RAGService
+            from ..agent.tool_registry import ToolRegistry
+            from ..agent.mcp_manager import MCPManager
+            from ..mcp_servers.rag_server import RAGMCPServer
+
+            rag_config = RAGSettings.load().rag
+            rag_service = RAGService(
+                rag_config=rag_config,
+                llm_client=None,  # WS 路径不传同步 client，RAG 仅用检索能力
+            )
+            rag_service.initialize()
+
+            tool_registry = ToolRegistry()
+            mcp_manager = MCPManager()
+            rag_mcp = RAGMCPServer(rag_service)
+            mcp_manager.register(rag_mcp)
+            tool_registry.register_mcp_server(rag_mcp)
+
+            app.state.tool_definitions = tool_registry.get_all_definitions()
+            app.state.tool_registry = tool_registry
+            app.state.mcp_manager = mcp_manager
+            app.state.rag_service = rag_service
+            log.info("RAG 知识库 + Tool 注册表已加载（{} 个工具）", len(app.state.tool_definitions))
+        except Exception as e:
+            log.warning("RAG 知识库加载失败，WS 路径无知识检索: {}", e)
+            app.state.tool_definitions = None
+            app.state.tool_registry = None
+            app.state.mcp_manager = None
+            app.state.rag_service = None
+
         log.info("应用级单例加载完成")
     except Exception as e:
         log.opt(exception=True).error("应用级单例加载失败，服务无法启动: {}", e)
@@ -52,11 +87,16 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # 关闭：释放资源（对称释放，client 也需 close）
+    # 关闭：释放资源（对称释放）
     try:
         await app.state.client.close()
     except Exception as e:
         log.warning("OpenAI client 关闭异常: {}", e)
+    if rag_service:
+        try:
+            rag_service.cleanup()
+        except Exception as e:
+            log.warning("RAGService 清理异常: {}", e)
     if memory_manager:
         try:
             memory_manager.cleanup()

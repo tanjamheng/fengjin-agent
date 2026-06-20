@@ -31,23 +31,26 @@ class SemanticSplitter(SplitterStrategy):
         self._embedding_model = None
 
     def cleanup(self) -> None:
-        """释放 embedding 模型（对齐红线12：model=None + cuda.empty_cache）"""
+        """释放 embedding 模型（通过注册表 release，对齐红线12）"""
         if self._embedding_model is not None:
-            del self._embedding_model
+            try:
+                from ...embedding_registry import release
+                release()
+            except Exception:
+                pass
             self._embedding_model = None
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
 
     def _get_embedding_model(self):
-        """延迟加载 embedding 模型"""
+        """延迟加载 embedding 模型（通过注册表共享，避免重复加载）"""
         if self._embedding_model is None:
             try:
-                from sentence_transformers import SentenceTransformer
-                self._embedding_model = SentenceTransformer(self.embedding_model_name)
+                from pathlib import Path
+                from ....utils.helpers import get_project_root, resolve_device
+                from ...embedding_registry import acquire
+                model_path = self.embedding_model_name
+                if not Path(model_path).is_absolute():
+                    model_path = str(get_project_root() / model_path)
+                self._embedding_model = acquire(model_path, resolve_device("cpu"))
             except ImportError:
                 raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")
         return self._embedding_model

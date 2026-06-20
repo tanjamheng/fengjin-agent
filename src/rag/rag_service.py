@@ -64,10 +64,13 @@ class RAGService:
                 )
                 self.indexer.initialize()
 
+                # 将 llm_client 注入 retriever 参数（HyDE 策略需要）
+                retriever_params = dict(self.rag_config.retriever.params)
+                retriever_params.setdefault("llm_client", self.llm_client)
                 self.retriever = Retriever(
                     index=self.indexer.strategy,
                     strategy_type=self.rag_config.retriever.type,
-                    strategy_params=self.rag_config.retriever.params
+                    strategy_params=retriever_params
                 )
                 if not (self.rag_config.index.type == "hybrid"
                         and self.rag_config.retriever.type == "hybrid"):

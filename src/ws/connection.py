@@ -36,6 +36,15 @@ async def websocket_endpoint(websocket: WebSocket):
     client = websocket.app.state.client
     safety = websocket.app.state.safety
 
+    # Tool Calling 能力（可选：RAG 知识库未加载时降级为纯对话）
+    tool_definitions = getattr(websocket.app.state, "tool_definitions", None)
+    tool_registry = getattr(websocket.app.state, "tool_registry", None)
+
+    # execute_tool_async 闭包：同步 ToolRegistry.execute_tool 转为 async
+    async def _execute_tool(name: str, args: dict) -> str:
+        # 使用线程池执行同步 tool，避免阻塞事件循环
+        return await asyncio.to_thread(tool_registry.execute_tool, name, args) if tool_registry else "工具系统未加载"
+
     # 每连接独立：会话管理器（per-user 状态）+ 上下文管理器
     session_mgr = SessionManager()
     memory_mgr = getattr(websocket.app.state, "memory_manager", None)
@@ -111,6 +120,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     _handle_user_msg(
                         websocket, data, session_mgr, safety,
                         current_controller, client, config, context_mgr, memory_mgr,
+                        tool_definitions, _execute_tool,
                     )
                 )
 
@@ -204,6 +214,8 @@ async def _handle_user_msg(
     config: Config,
     context_mgr: ContextManager,
     memory_mgr=None,
+    tool_definitions: list | None = None,
+    execute_tool_async=None,
 ):
     """消费 stream_reply() 的 token，映射为 WS 报文"""
     user_content = data.get("content", "")
@@ -226,6 +238,8 @@ async def _handle_user_msg(
         async for token in stream_reply(
             user_content, session_mgr, safety, controller, client, config, context_mgr,
             trace_id=trace_id,
+            tool_definitions=tool_definitions,
+            execute_tool_async=execute_tool_async,
         ):
             full_text += token
             await websocket.send_json({"type": "stream", "text": token})
