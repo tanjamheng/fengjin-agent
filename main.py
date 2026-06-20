@@ -103,8 +103,18 @@ def _validate_ingest_path(path_str: str) -> bool:
     except ValueError:
         return False
 
-    # 拒绝系统敏感目录
+    # 拒绝敏感文件（API Key、系统人设、会话数据等）
+    forbidden_names = {".env", "system_prompt.md", "safety.yaml", "config.yaml",
+                       "rag.yaml", "context.yaml", "memory.yaml"}
+    if target.name.lower() in forbidden_names:
+        return False
+    # 拒绝系统及项目敏感目录
     forbidden_prefixes = [
+        str(PROJECT_ROOT / "config"),
+        str(PROJECT_ROOT / "data"),
+        str(PROJECT_ROOT / "models"),
+        str(PROJECT_ROOT / "logs"),
+    ] + [
         Path("/etc"), Path("/sys"), Path("/proc"), Path("/dev"),
         Path("C:\\Windows"), Path("C:\\System"),
     ]

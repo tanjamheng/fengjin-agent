@@ -97,12 +97,16 @@ async def stream_reply(
 
     try:
         while True:
-            # 4. 组装上下文 + 滑动窗口
+            # 4. 组装上下文 + 滑动窗口（system 不在裁剪范围内，剥离后单独管理）
             system_content = assemble_system_prompt(config, comfort_prompt)
             api_messages = _build_api_messages(
                 config, session_mgr, api_input, system_content, tool_loop_messages,
             )
-            api_messages = context_mgr.trim_messages(api_messages, trace_id=trace_id)
+            # 剥离 system 再裁剪（_pop_turn 遇 system 直接 return 导致死循环）
+            system_msg = api_messages[0] if api_messages and api_messages[0].get("role") == "system" else None
+            trim_target = api_messages[1:] if system_msg else api_messages
+            trim_target = context_mgr.trim_messages(trim_target, trace_id=trace_id)
+            api_messages = [system_msg] + trim_target if system_msg else trim_target
 
             # 5. 流式调用 LLM（含 tool_definitions）
             api_params = {

@@ -60,11 +60,11 @@ async def lifespan(app: FastAPI):
                 rag_config=rag_config,
                 llm_client=None,  # WS 路径不传同步 client，RAG 仅用检索能力
             )
-            rag_service.initialize()
 
             tool_registry = ToolRegistry()
             mcp_manager = MCPManager()
             rag_mcp = RAGMCPServer(rag_service)
+            # register() 触发 rag_mcp.initialize() → rag_service.initialize()，避免重复 init
             mcp_manager.register(rag_mcp)
             tool_registry.register_mcp_server(rag_mcp)
 
