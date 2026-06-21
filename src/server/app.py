@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 
         # 记忆系统（可选：环境变量缺失时优雅降级，不阻塞服务启动）
         try:
-            from ..memory import MemorySettings
+            from ..memory.config import MemorySettings
             memory_config = MemorySettings.load(
                 str(_project_root / "config" / "memory.yaml")
             ).memory

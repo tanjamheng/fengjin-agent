@@ -86,6 +86,8 @@ class SharedEmbeddingFunction:
 
     替换 MemoryStorage 中的 SentenceTransformerEmbeddingFunction，
     复用 EmbeddingRegistry 中的共享模型实例。
+
+    实现 ChromaDB ≥1.0 EmbeddingFunction 协议要求的 name() 方法。
     """
 
     def __init__(self, model_path: str, device: str = "cpu"):
@@ -94,13 +96,20 @@ class SharedEmbeddingFunction:
         # acquire() 在 __init__ 中调用，对应 release() 在 cleanup 中调用
         self._model = acquire(model_path, device)
 
-    def __call__(self, input_texts: list[str]) -> list[list[float]]:
-        """ChromaDB 调用入口：将文本列表转为嵌入向量列表"""
+    @staticmethod
+    def name() -> str:
+        """ChromaDB 1.x 要求：返回嵌入函数的唯一标识名"""
+        return "shared_bge_m3"
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        """ChromaDB 调用入口：将文本列表转为嵌入向量列表
+        （参数名必须为 input，ChromaDB 1.x check_types 会校验签名）
+        """
         if self._model is None:
             raise RuntimeError("嵌入模型已释放")
         import torch
         with torch.no_grad():
-            embeddings = self._model.encode(input_texts, convert_to_numpy=True)
+            embeddings = self._model.encode(input, convert_to_numpy=True)
         return embeddings.tolist()
 
     def cleanup(self) -> None:

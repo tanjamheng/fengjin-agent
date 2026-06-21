@@ -39,11 +39,36 @@ class MemoryStorage:
             model_path=embedding_model,
             device=effective_device,
         )
-        self.collection = self.client.get_or_create_collection(
-            name=config.chroma.collection_name,
-            embedding_function=self._embedding_fn,
-            metadata={"hnsw:space": "cosine"}
+        self.collection = self._get_or_create_collection(
+            config.chroma.collection_name,
+            self._embedding_fn,
         )
+
+    def _get_or_create_collection(self, name: str, ef):
+        """创建或获取集合，自动处理 embedding function 冲突（如模型升级导致的签名变化）"""
+        try:
+            return self.client.get_or_create_collection(
+                name=name,
+                embedding_function=ef,
+                metadata={"hnsw:space": "cosine"}
+            )
+        except ValueError as e:
+            if "embedding function conflict" in str(e).lower():
+                self.log.warning(
+                    "检测到 embedding function 冲突，自动重建集合（旧模型签名不兼容）: {}",
+                    str(e).split("conflict:")[-1].strip() if "conflict:" in str(e) else str(e),
+                )
+                try:
+                    self.client.delete_collection(name)
+                except Exception:
+                    pass
+                return self.client.get_or_create_collection(
+                    name=name,
+                    embedding_function=ef,
+                    metadata={"hnsw:space": "cosine"}
+                )
+            else:
+                raise
 
     def add(self, memory_id: str, content: str, is_core: bool,
             memory_type: str) -> None:
