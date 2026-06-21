@@ -36,7 +36,7 @@
       <!-- 消息列表 + 滚动提示 -->
       <div class="chat-messages" aria-live="polite">
         <div class="chat-thinking" style="display:none;">思考中...</div>
-        <div class="scroll-hint">↓ 有新消息</div>
+        <div class="scroll-hint" tabindex="0" role="button" aria-label="滚动到底部">↓ 有新消息</div>
       </div>
 
       <!-- 快捷回复 -->
@@ -44,6 +44,7 @@
 
       <!-- 输入区 -->
       <div class="chat-input-area">
+        <label for="chat-input" class="sr-only">输入消息</label>
         <textarea
           class="chat-input"
           id="chat-input"

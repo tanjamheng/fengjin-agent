@@ -71,6 +71,9 @@ html, body {
 .chat-message--ai,
 .chat-message--user,
 .chat-message--assistant,
+.chat-message--system,
+.chat-message--system--blocked,
+.chat-message--system--warning,
 .chat-input {
   user-select: text;
 }
@@ -181,7 +184,7 @@ html, body {
 .character-loading {
   position: absolute;
   font-size: 14px;
-  color: #C0A0B0;
+  color: var(--color-text-muted);
   z-index: 2;
 }
 
@@ -227,7 +230,8 @@ html, body {
   justify-content: flex-end;
 }
 
-.chat-message-wrapper--ai {
+.chat-message-wrapper--ai,
+.chat-message-wrapper--assistant {
   justify-content: flex-start;
   align-items: flex-end;
 }
@@ -535,7 +539,7 @@ html, body {
   height: 56px;
   padding: 10px 12px;
   cursor: pointer;
-  border-bottom: 1px solid #EEEEEE;
+  border-bottom: 1px solid var(--color-divider);
   transition: background 200ms ease;
 }
 
@@ -550,7 +554,7 @@ html, body {
 
 .sidebar__item-title {
   font-size: 13px;
-  color: #333;
+  color: var(--color-text-ai);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -633,6 +637,19 @@ html, body {
 }
 
 /* ===== Accessibility ===== */
+/* Screen-reader-only utility */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* V1: 星光粒子仅在不偏好减少动效时播放（delay/duration由JS内联样式随机化） */
 @media (prefers-reduced-motion: no-preference) {
   .character-particle {

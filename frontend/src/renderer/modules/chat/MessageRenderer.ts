@@ -77,8 +77,10 @@ export class MessageRenderer {
     el.className = "chat-message--system";
     if (type === "blocked") {
       el.classList.add("chat-message--system--blocked");
+      el.setAttribute("role", "alert");
     } else if (type === "warning") {
       el.classList.add("chat-message--system--warning");
+      el.setAttribute("role", "alert");
     }
     el.textContent = text;
     this._container.appendChild(el);

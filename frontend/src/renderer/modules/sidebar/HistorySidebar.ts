@@ -130,9 +130,17 @@ export class HistorySidebar {
       item.classList.add("sidebar__item--active");
     }
 
-    // 点击切换
+    // 键盘/点击切换
+    item.setAttribute("tabindex", "0");
+    item.setAttribute("role", "button");
     item.addEventListener("click", () => {
       if (!this._disabled) this.onSelectSession?.(session.id);
+    });
+    item.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        if (!this._disabled) this.onSelectSession?.(session.id);
+      }
     });
 
     // 标题
