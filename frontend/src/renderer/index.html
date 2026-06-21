@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:8765; img-src 'self' data:"
+  />
+  <title>风堇</title>
+  <link rel="stylesheet" href="./styles/main.css" />
+</head>
+<body>
+
+  <!-- ===== 标题栏 ===== -->
+  <header class="titlebar">
+    <span class="titlebar__title">✦ 风堇</span>
+    <nav class="titlebar__controls">
+      <button class="titlebar__btn" id="btn-pin" aria-label="窗口置顶" title="窗口置顶">📌</button>
+      <button class="titlebar__btn" id="btn-minimize" aria-label="最小化">_</button>
+      <button class="titlebar__btn" id="btn-maximize" aria-label="最大化">□</button>
+      <button class="titlebar__btn titlebar__btn--close" id="btn-close" aria-label="关闭">×</button>
+    </nav>
+  </header>
+
+  <!-- ===== 主内容区 ===== -->
+  <main class="main-layout">
+
+    <!-- 左侧：角色展示区 (38%) -->
+    <section class="character-area" id="character-area">
+      <div id="character-container"></div>
+    </section>
+
+    <!-- 中间：对话区 (42%) -->
+    <section class="chat-area" id="chat-area">
+      <!-- 消息列表 + 滚动提示 -->
+      <div class="chat-messages" aria-live="polite">
+        <div class="chat-thinking" style="display:none;">思考中...</div>
+        <div class="scroll-hint">↓ 有新消息</div>
+      </div>
+
+      <!-- 快捷回复 -->
+      <div class="chat-quick-replies" style="display:none;"></div>
+
+      <!-- 输入区 -->
+      <div class="chat-input-area">
+        <textarea
+          class="chat-input"
+          id="chat-input"
+          placeholder="在此输入消息..."
+          rows="1"
+          maxlength="10000"
+        ></textarea>
+        <button class="chat-send-btn chat-send-btn--disabled" id="chat-send-btn" disabled>发送</button>
+      </div>
+    </section>
+
+    <!-- 右侧：历史侧边栏 (20%) -->
+    <aside class="sidebar-area" id="sidebar-area">
+      <div id="sidebar-container"></div>
+    </aside>
+
+  </main>
+
+  <!-- ===== 状态栏（全宽） ===== -->
+  <footer class="status-bar">
+    <span class="status-indicator status-indicator--offline">●</span>
+    <span class="status-text">未连接 — 请启动后端</span>
+    <button class="status-reconnect-btn">重连</button>
+  </footer>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

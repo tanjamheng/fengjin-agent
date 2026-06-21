@@ -19,9 +19,29 @@
 核心文档\核心1_需求梳理.md
 核心文档\核心2_技术架构.md
 核心文档\核心3_开发规范.md
-这三个文档将是开发的最高宗旨，不容违反。一切开发将以其为锚点。
+核心文档\核心4_WS通信协议.md
+这四个文档将是开发的最高宗旨，不容违反。一切开发将以其为锚点。
 其中的核心内容已写入CLAUDE.md中，如有必要，可以进行复习这些文档中的内容。
 每当开发新功能时，也会将新功能相关的需求，技术架构等写入这些核心文档中。
+
+## CLAUDE.md 维护规则
+
+本文档是核心1/2/3/4 的**衍生速查**——红线、文件结构、技术约束均从核心文档提取。**核心文档是权威源，本文档是工作副本。**
+
+以下变化必须同步更新本文档：
+- 核心3 红线速查新增/修改/删除条目 → 同步本文档「红线速查」
+- 核心4 WS 协议消息类型新增/修改/删除 → 同步本文档「WS 协议要点」表格
+- 核心2 文件结构树新增/删除/重命名文件 → 同步本文档「文件结构速查」
+- 清理链/初始化顺序变更 → 同步本文档「清理链」
+- 核心文档新增关键约束或技术决策 → 同步本文档「技术约束」
+
+**每次开发对话结束时**，如果本次修改了核心文档 → AI 必须主动检查本文档是否需要同步。最危险的情况：核心3 加了新红线但本文档没加 → AI 在后续工作中不会遵守那条规则——因为 AI 只看 CLAUDE.md。
+
+## 陷阱速查（本项目踩过的坑）
+
+| # | 陷阱 | 说明 |
+|---|------|------|
+| 1 | **PowerShell 中不要用 `git commit -m @'...'@`** | here-string 的 `@'` 会被当作文本的一部分混入提交消息，导致消息以 `@ ` 开头。正确做法：先 `$msg = @'...'@` 赋值变量，再 `git commit -m $msg` |
 
 ---
 
@@ -45,7 +65,114 @@
 
 ## 前端（V1 计划中，尚未开发）
 
-Electron 桌面客户端，三栏布局（角色展示 38% + 对话区 42% + 历史侧边栏 20%），WebSocket 通信，流式打字效果。
+> **前端开发时，本节是唯一需要看的核心文档内容。** 详细规格查 `前端开发核心文档/`（1=功能边界 2=UI像素 3=架构类接口），WS 协议查 `核心文档/核心4_WS通信协议.md`。
+
+### 交付形态
+
+Windows 桌面客户端，Electron ≥ 28.x + TypeScript + 原生 HTML/CSS，WebSocket 通信。构建工具 electron-vite，打包 electron-builder（Portable 免安装）。
+
+### 核心约束（违反即错）
+
+- **不引入 React / Vue / Svelte** — 单页应用，原生 DOM 足够
+- **不引入 CSS 框架**（Tailwind 等）— 手写 CSS，CSS 变量统一管理配色
+- **不引入状态管理库** — 全局状态极少，用中心状态对象 + 回调
+- **TypeScript 禁止滥用 `any`** — 所有后端通信数据必须有 Interface 定义
+- **前后端通信只走 WebSocket** — `ws://127.0.0.1:8765/ws`，不引入 REST API
+- **布局比例固定** — 左 38%（角色展示）+ 中 42%（对话区）+ 右 20%（历史侧边栏），V2 不变
+- **窗口** — 默认 960×680，最小 800×520，自定义粉蓝渐变标题栏（`#FFD1DC → #A7C7F5`）
+- **单实例锁** — `app.requestSingleInstanceLock()`，防止多窗口 WebSocket 冲突
+
+### 安全策略（Electron 固定值，不可改）
+
+`contextIsolation: true, nodeIntegration: false, sandbox: true`
+
+### 核心交互主链路
+
+```
+用户输入 → 前端锁定输入（禁止二次发送）
+  → WS 发送 user_msg → 后端处理（安全→上下文→LLM）
+  → 被拦截？→ 显示小伊卡提示，解锁
+  → 正常？→ 流式打字效果逐字呈现
+  → 用户点停止？→ 发送 cancel 信号，保留已显示文字，解锁
+  → 完成？→ 固化完整文本，解锁
+  → 超时 >60s？→ 显示"回复超时"，解锁
+```
+
+### 五大模块
+
+| 模块 | 文件 | 职责 |
+|------|------|------|
+| 角色展示 | `modules/character/CharacterDisplay.ts` | V1 静态 JPG + 渐变背景 + CSS 星光粒子 |
+| WS 通信 | `modules/ws/WSClient.ts` + `MessageParser.ts` | 连接管理 + 心跳 30s + 10s 超时 + 消息收发 |
+| 聊天 UI | `modules/chat/ChatUI.ts` + `MessageRenderer.ts` + `InputController.ts` | DOM 渲染 + 流式拼接 + 滚动 + 发送/停止 |
+| 历史侧边栏 | `modules/sidebar/HistorySidebar.ts` | 会话列表/切换/删除，通过 WSClient 调后端 SessionManager |
+| 状态管理 | `state.ts` | `wsStatus / isReplying / isModelLoaded / isScrolledToBottom / currentSessionId / sessions` |
+
+### 状态联动
+
+- `isReplying === true` → 发送按钮变为红色"停止"，侧边栏其他会话灰不可点
+- `wsStatus !== "connected"` → 发送 disabled，状态栏离线
+- `isScrolledToBottom === false` → 显示"↓ 有新消息"浮动提示
+
+### IPC 通信
+
+Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲染进程通过原生浏览器 API（WebSocket、DOM）工作。
+
+### 配色（CSS 变量速查）
+
+`--color-bg-chat: #F8F8F8` / `--color-bubble-ai: #FFE6F2` / `--color-bubble-user: #F9F2EB` / `--color-input-bg: #D0E4FE` / `--color-input-border: #BACCFE` / `--color-titlebar-start: #FFD1DC` / `--color-titlebar-end: #A7C7F5` / `--color-star: #F5C842` / `--color-blocked: #E8A050` / `--color-status-online: #50C878` / `--color-status-offline: #E05555`
+
+### 字体
+
+全局字体栈：`"PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif`，对话 14px，辅助 12px，行高 1.6。
+
+### WS 协议要点
+
+| 前端→后端 | 后端→前端 |
+|-----------|----------|
+| `user_msg` (session_id, content) | `connected` (session_id) |
+| `ping` (每 30s) | `pong` |
+| `cancel` | `thinking` |
+| `list_sessions` | `stream` (text 分片) |
+| `load_session` (session_id) | `end` (full_text, action) |
+| `delete_session` (session_id) | `blocked` (message, category) |
+| | `session_list` / `session_loaded` / `session_deleted` |
+| | `quick_replies` (可选，最多3条) / `error` |
+
+> 完整字段定义 + 时序图 → `核心文档/核心4_WS通信协议.md`
+> TypeScript 类型定义 → `frontend/src/types/protocol.ts`
+
+### 文档导航
+
+| 需要什么 | 去这里 |
+|---------|--------|
+| 功能边界 + 边界情况 | `前端开发核心文档/1.功能需求说明书.md` |
+| UI 像素级规范 | `前端开发核心文档/2.UI与页面规范文档.md` |
+| 架构 + 类接口 + 打包 | `前端开发核心文档/3.系统架构与技术选型文档.md` |
+| WS 协议完整字段 | `核心文档/核心4_WS通信协议.md` |
+| 前端编码约束 + 红线 | `核心文档/核心3_开发规范.md` 第三/四章 |
+
+# 术语表
+
+| 术语 | 含义 |
+|------|------|
+| 风堇 | 《崩坏：星穹铁道》角色，AI NPC 扮演对象 |
+| 小伊卡 | 安全护栏的角色内人格——以角色口吻拦截不当输入 |
+| Comfort 模式 | 自杀/自伤内容不直接拦截，改为注入安抚指令到 system_prompt |
+| 翁法罗斯 | 游戏世界观名称，知识库内容限定范围 |
+| Skill | 系统注入能力——LLM 不可见，由系统代码决定时机 |
+| Tool | LLM 可调用的函数——通过 function calling 暴露，返回 str |
+| MCP | 标准化工具协议——MCPServerBase 子类，注册时立即初始化 |
+| trace_id | 每次对话生成的唯一追踪 ID——贯穿日志、会话、记忆全链路 |
+| RAG | 检索增强生成——6 步管道（加载→切分→索引→查询增强→检索→重排序） |
+| bge-m3 | 嵌入模型 ~1.1GB——将文本转为向量，供 DenseIndex 和 MemoryStorage 使用 |
+| bge-reranker-v2-m3 | Cross-Encoder 重排序模型 ~1.1GB——对检索结果精排 |
+| Llama Guard 3 1B | Meta 安全语义检测模型 ~2GB——P1 防线，13 类语义分类 |
+| ChromaDB | 向量数据库——RAG 和 Memory 各一个 PersistentClient |
+| Tool Calling | LLM 自主决定调用工具的能力——本项目上限 5 轮 |
+| StreamController | 流式取消机制——协作式 cancel flag + task.cancel() 兜底 |
+| Core Memory | 核心记忆——从对话中提取的用户长期信息，存储在 core_memory.md + ChromaDB |
+| BlockedError | WS 层拦截异常——安全检测非 PASS 时抛出，由 connection.py 捕获并发送 blocked 报文 |
 
 ---
 
@@ -58,6 +185,7 @@ AI风堇_治愈晨昏/
 │
 ├── config/
 │   ├── config.yaml                  # 主配置（Agent 参数）
+│   ├── config.example.yaml          # 示例配置（含默认值，供参考）
 │   ├── rag.yaml                     # RAG 策略参数
 │   ├── context.yaml                 # 上下文窗口 + 记忆模板
 │   ├── memory.yaml                  # 记忆存储/提取/合并
@@ -82,6 +210,7 @@ AI风堇_治愈晨昏/
 │   │   ├── streaming.py             # stream_reply() — 流式对话 service 层（安全→上下文→LLM→取消），WS/CLI 共用
 │   │   ├── stream_controller.py     # StreamController — 流式取消标志 + 部分文本追踪
 │   │   ├── context_manager.py       # ContextManager — 记忆注入 + 滑动窗口裁剪
+│   │   ├── message_builder.py       # 共享消息组装（system_prompt + 回滚），CLI/WS 共用
 │   │   ├── skill_registry.py        # SkillRegistry — 全局单例
 │   │   ├── tool_registry.py         # ToolRegistry — 本地 + MCP 统一名称空间
 │   │   ├── mcp_manager.py           # MCPManager — MCP 服务器生命周期
@@ -95,6 +224,7 @@ AI风堇_治愈晨昏/
 │   ├── rag/                         # RAG 引擎（6 步管道）
 │   │   ├── rag_service.py           # RAGService — 门面：retrieve() / ingest_document() / ingest_directory()
 │   │   ├── a_loader.py ~ f_reranker.py    # Loader→Splitter→Indexer→Retriever→QueryEnhancer→Reranker
+│   │   ├── embedding_registry.py    # 嵌入模型进程级单例（引用计数），RAG+Memory 共享 bge-m3
 │   │   └── strategies/              # 策略仓库（splitter / index / retriever / query / reranker）
 │   │
 │   ├── memory/                      # 记忆系统
@@ -134,8 +264,42 @@ AI风堇_治愈晨昏/
 │       ├── logger.py                # loguru 配置
 │       └── helpers.py               # 通用工具
 │
-├── 核心文档/                        # 需求梳理 / 技术架构 / 开发规范
-└── 前端开发核心文档/                 # 前端 5 文档
+├── frontend/                        # 前端代码（Electron + TypeScript，尚未开发）
+│   ├── src/
+│   │   ├── main.ts                  # Electron 主进程入口
+│   │   ├── preload.ts               # preload 脚本（IPC 桥接，暴露窗口控制 API）
+│   │   └── renderer/
+│   │       ├── index.html           # 入口 HTML
+│   │       ├── main.ts              # 渲染进程入口，串联五大模块
+│   │       ├── state.ts             # 中心状态管理（AppState）
+│   │       ├── styles/
+│   │       │   └── main.css         # 全局样式 + CSS 变量
+│   │       ├── modules/
+│   │       │   ├── character/
+│   │       │   │   └── CharacterDisplay.ts  # 角色展示（图片加载 + 渐变背景 + 星光粒子）
+│   │       │   ├── chat/
+│   │       │   │   ├── ChatUI.ts            # 对话区 DOM 管理 + 滚动行为
+│   │       │   │   ├── MessageRenderer.ts   # 消息气泡渲染（用户/AI/系统）
+│   │       │   │   └── InputController.ts   # 输入框 + 发送/停止按钮逻辑
+│   │       │   ├── sidebar/
+│   │       │   │   └── HistorySidebar.ts    # 历史侧边栏（会话列表/切换/删除）
+│   │       │   └── ws/
+│   │       │       ├── WSClient.ts          # WebSocket 连接管理 + 心跳 + 超时
+│   │       │       └── MessageParser.ts     # 消息解析 + 类型判断
+│   │       └── types/
+│   │           └── protocol.ts      # WS 协议 TypeScript 类型定义
+│   ├── assets/
+│   │   └── fengjin.jpg              # 风堇角色展示图
+│   ├── electron-builder.yml         # 打包配置
+│   ├── tsconfig.json
+│   └── package.json
+│
+├── 学习_多轮cr经验.md               # 30 轮 CR 经验总结与开发规范启示
+├── requirements.txt                 # Python 依赖
+│
+├── 核心文档/                        # 核心1(需求) 核心2(架构) 核心3(规范) 核心4(协议) + CR流程
+├── 重要文档/                        # 通用 CR 流程 / 可复用开发规范
+└── 前端开发核心文档/                 # 前端详细方案文档 1-3（实现后归档）
 ```
 
 ---
@@ -157,15 +321,23 @@ AI风堇_治愈晨昏/
 6. **日志中禁止打印 API Key、Token 的实际值**。
 7. **会话文件必须原子写入**——先写 `.json.tmp` 再 `os.replace()`。任何持久化写入都需考虑中途崩溃。
 8. **静默失败零容忍**——空 `except` 或 `except Exception` 吞异常时必须记录 `logger.error()`。关键操作失败（会话保存、记忆写入、RAG 索引）必须产生用户可见提示或至少 ERROR 级别日志。
-9. **宁可漏拦不误拦**——安全规则的精确定义优先于覆盖范围。正常对话被误拦比漏拦更影响体验。
-10. **Self-harm 用 Comfort 而非 Block**——自杀/自伤内容不直接拦截，改为注入安抚指令。
+9. **loguru 日志禁止 f-string 预插值**——loguru 会把第一个字符串参数当格式串再次解析。异常对象 `e`、用户输入、JSON 字符串中的 `{...}` 会被当成占位符，触发 `KeyError` 导致日志调用自身崩溃、掩盖真实错误。必须用 `logger.error("描述: {}", e)`（loguru 原生格式化，变量值不二次解析），禁止 `logger.error(f"描述: {e}")`。
+10. **宁可漏拦不误拦**——安全规则的精确定义优先于覆盖范围。正常对话被误拦比漏拦更影响体验。
+11. **Self-harm 用 Comfort 而非 Block**——自杀/自伤内容不直接拦截，改为注入安抚指令。
 
 ## 资源红线
 
-11. **加载到 GPU 的模型必须有 cleanup()**——需同时做 `self._model = None` + `torch.cuda.empty_cache()`。
-12. **不能同时驻留超过显存容量的模型**——当前预算：bge-m3 ~1.1GB + bge-reranker-v2-m3 ~1.1GB + Llama-Guard-3-1B ~2GB = ~4.2GB。
-13. **ChromaDB PersistentClient 在 cleanup 中必须关闭或置 None**。
-14. **daemon 线程必须有停止信号和 join 超时**。
+12. **加载到 GPU 的模型必须有 cleanup()**——需同时做 `self._model = None` + `torch.cuda.empty_cache()`。
+13. **不能同时驻留超过显存容量的模型**——当前预算：bge-m3 ~1.1GB + bge-reranker-v2-m3 ~1.1GB + Llama-Guard-3-1B ~2GB = ~4.2GB。
+14. **ChromaDB PersistentClient 在 cleanup 中必须关闭或置 None**。
+15. **daemon 线程必须有停止信号和 join 超时**。
+16. **`cleanup()` 必须是幂等的**——加 `self._cleaned` 标志位，支持 cleanup→reinit→cleanup 序列。`initialize()` 中必须将 `_cleaned` 重置为 `False`。
+17. **持有资源的 `__init__`/`initialize()` 必须支持部分初始化回滚**——中途失败时清理已初始化的子组件，防止 GPU 模型/ChromaDB/线程永久泄漏。
+
+## Python 陷阱红线
+
+18. **禁止 `from module import 可变变量`**——Python 的 `from X import Y` 将 Y 的当前值绑定到本地名称空间，Y 被重新赋值后本地绑定不会更新。必须用 `from ... import module as alias` 然后 `alias.variable` 动态访问。
+19. **所有文件路径必须以 `Path(__file__).resolve()` 为基准计算绝对路径**——禁止依赖工作目录的相对路径。路径计算统一模式：`_root = Path(__file__).resolve().parent.parent.parent`（`src/` → 项目根）。
 
 ---
 
@@ -205,7 +377,7 @@ AI风堇_治愈晨昏/
 
 启动：Memory → Context → Agent → RAG → MCP → Safety → Session
 
-退出：Session.flush() → Agent.cleanup()（含 Skill+MCP+Tool）→ Memory.cleanup()（含 writer.stop()+storage）→ RAG.cleanup()（Reranker→Retriever→Indexer）→ Safety.cleanup() → logger.complete()
+退出：Session.flush() → Agent.cleanup()（含 Skill+MCP+Tool）→ Memory.cleanup()（含 writer.stop()+storage）→ RAG.cleanup()（reranker→query_enhancer→retriever→indexer→splitter→loader）→ Safety.cleanup() → logger.complete()
 
 ---
 

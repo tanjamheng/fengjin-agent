@@ -1,0 +1,19 @@
+appId: com.tanjamheng.ai-fengjin
+productName: "风堇"
+directories:
+  output: dist
+  buildResources: resources
+
+win:
+  target: portable
+  icon: null
+
+portable:
+  artifactName: "${productName}-Portable-${version}.${ext}"
+
+files:
+  - "out/**/*"
+  - "!node_modules"
+
+asar: true
+compression: normal
