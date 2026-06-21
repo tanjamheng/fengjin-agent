@@ -236,6 +236,10 @@ html, body {
   align-items: flex-end;
 }
 
+.chat-message-wrapper--system {
+  justify-content: center;
+}
+
 /* AI 消息气泡 */
 .chat-message--ai,
 .chat-message--assistant {
@@ -540,6 +544,7 @@ html, body {
   padding: 10px 12px;
   cursor: pointer;
   border-bottom: 1px solid var(--color-divider);
+  border-left: 3px solid transparent; /* 为活跃指示器预留空间，防抖动 */
   transition: background 200ms ease;
 }
 

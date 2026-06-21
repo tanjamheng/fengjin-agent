@@ -195,6 +195,7 @@ sidebar.onSelectSession = (sessionId: string) => {
     chat.endReplyMode(); // 解锁 InputController
     chat.appendSystemMessage("加载会话超时，请重试", "warning");
     ws.resetSessionId(); // 加载失败时重置，防止消息发错会话
+    appState.currentSessionId = ""; // 同步重置 AppState
     _loadingSession = false; // 最后降低守卫
   }, 15000);
 

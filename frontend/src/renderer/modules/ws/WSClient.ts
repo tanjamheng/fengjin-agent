@@ -86,6 +86,8 @@ export class WSClient {
   disconnect(): void {
     this._stopHeartbeat();
     this._clearReplyTimer();
+    this._cancelled = false;
+    this._replyActive = false;
     if (this._ws) {
       this._ws.onopen = null;
       this._ws.onmessage = null;

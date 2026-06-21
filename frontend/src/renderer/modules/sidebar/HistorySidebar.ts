@@ -201,6 +201,7 @@ export class HistorySidebar {
 
     const tooltip = document.createElement("div");
     tooltip.className = "sidebar__tooltip";
+    tooltip.setAttribute("role", "tooltip");
     tooltip.textContent = text;
 
     const rect = anchor.getBoundingClientRect();

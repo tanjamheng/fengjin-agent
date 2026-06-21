@@ -3,7 +3,7 @@ import { join } from "path";
 
 // DPI 缩放适配（在 app.whenReady() 之前）
 app.commandLine.appendSwitch("high-dpi-support", "1");
-app.commandLine.appendSwitch("force-device-scale-factor", "1");
+// V1 移除 device-scale-factor 强设为 1，使用系统默认缩放（HiDPI 适配）
 
 let win: BrowserWindow | null = null;
 
