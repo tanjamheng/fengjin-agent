@@ -93,13 +93,14 @@ export class InputController {
   }
 
   private _handleSubmit(): void {
-    if (this._locked) return;
-
+    // _sending 必须先于 _locked 检查——AI 回复中 _locked=true 且 _sending=true，
+    // 若先检查 _locked 则停止按钮永远不可达（P0 死锁）
     if (this._sending) {
-      // 当前是停止按钮
       this.onStop?.();
       return;
     }
+
+    if (this._locked) return;
 
     const text = this._textarea.value.trim();
     if (!text) return;

@@ -110,6 +110,11 @@ export class WSClient {
     this._sessionId = "";
   }
 
+  /** 外部设置会话 ID（session_loaded / connected 回调中调用，防废弃消息污染） */
+  setSessionId(id: string): void {
+    this._sessionId = id;
+  }
+
   // ===== 发送 =====
 
   sendUserMessage(content: string): void {
@@ -235,7 +240,7 @@ export class WSClient {
         break;
 
       case "session_loaded":
-        this._sessionId = msg.session_id;
+        // _sessionId 由回调方通过 setSessionId() 更新，防止废弃 session_loaded 污染
         this.onSessionLoaded?.(msg.session_id, msg.title, msg.messages ?? []);
         break;
 

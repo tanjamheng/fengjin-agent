@@ -77,6 +77,7 @@ ws.onSessionLoaded = (sessionId: string, title: string, messages: ChatMessage[])
   if (!_loadingSession) return; // 非加载中状态，忽略废弃/延迟的 session_loaded
   if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
   _loadingSession = false;
+  ws.setSessionId(sessionId); // 由回调决定更新时机，防止废弃消息污染 _sessionId
   appState.currentSessionId = sessionId;
   appState.isReplying = false;
   sidebar.setActive(sessionId);
