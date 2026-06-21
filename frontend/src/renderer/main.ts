@@ -12,10 +12,15 @@ import { ChatUI } from "./modules/chat/ChatUI";
 import { HistorySidebar } from "./modules/sidebar/HistorySidebar";
 import type { SessionMeta, ChatMessage } from "./types/protocol";
 
+// ===== 会话加载保护 =====
+let _loadingSession = false;
+let _loadTimer: ReturnType<typeof setTimeout> | null = null;
+
 // ===== 初始化 =====
 
 // 1. CharacterDisplay（左侧角色展示）
-const charContainer = document.getElementById("character-container")!;
+const charContainer = document.getElementById("character-container");
+if (!charContainer) throw new Error("Missing #character-container");
 const character = new CharacterDisplay(charContainer);
 character.onLoadComplete = () => {
   appState.isModelLoaded = true;
@@ -32,11 +37,13 @@ const ws = new WSClient();
 // WS 回调 → ChatUI
 ws.onStreamChunk = (text) => chat.appendAIStreamChunk(text);
 ws.onStreamEnd = (fullText, _action) => {
+  if (_loadingSession) return; // 会话加载中，忽略废弃回复的 end 包
   chat.finalizeAIMessage(fullText);
   appState.isReplying = false;
   sidebar.setDisabled(false);
 };
 ws.onBlocked = (message) => {
+  if (_loadingSession) return; // 会话加载中，忽略废弃回复的 blocked 包
   chat.endReplyMode(); // 丢弃未固化的流式气泡 + 解锁输入
   chat.appendSystemMessage(message, "blocked");
   appState.isReplying = false;
@@ -44,6 +51,7 @@ ws.onBlocked = (message) => {
 };
 ws.onThinking = () => chat.showThinking();
 ws.onError = (message) => {
+  if (_loadingSession) return; // 会话加载中，忽略废弃回复的 error 包
   chat.endReplyMode(); // 丢弃未固化的流式气泡 + 解锁输入
   chat.appendSystemMessage(message, "warning");
   appState.isReplying = false;
@@ -56,6 +64,8 @@ ws.onSessionList = (sessions: SessionMeta[]) => {
   sidebar.renderList(sessions);
 };
 ws.onSessionLoaded = (sessionId: string, title: string, messages: ChatMessage[]) => {
+  if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
+  _loadingSession = false;
   appState.currentSessionId = sessionId;
   appState.isReplying = false;
   sidebar.setActive(sessionId);
@@ -70,9 +80,11 @@ ws.onSessionDeleted = (sessionId: string) => {
   sidebar.renderList(appState.sessions);
   if (appState.currentSessionId === sessionId) {
     appState.currentSessionId = "";
+    appState.isReplying = false; // 防止 isReplying 残留锁定 UI
     ws.resetSessionId(); // 当前会话被删，重置 WS 客户端 session_id
     chat.clearMessages();
     sidebar.setActive("");
+    sidebar.setDisabled(false); // 恢复侧边栏交互
   }
 };
 
@@ -99,7 +111,8 @@ ws.onStatusChange = (status) => {
 };
 
 // 3. ChatUI（中间对话区）
-const chatArea = document.getElementById("chat-area")!;
+const chatArea = document.getElementById("chat-area");
+if (!chatArea) throw new Error("Missing #chat-area");
 const chat = new ChatUI(chatArea);
 chat.onSend = (text) => {
   if (appState.isReplying || appState.wsStatus !== "connected") return;
@@ -117,7 +130,8 @@ chat.onStop = () => {
 };
 
 // 4. HistorySidebar（右侧侧边栏）
-const sidebarContainer = document.getElementById("sidebar-container")!;
+const sidebarContainer = document.getElementById("sidebar-container");
+if (!sidebarContainer) throw new Error("Missing #sidebar-container");
 const sidebar = new HistorySidebar(sidebarContainer);
 sidebar.onNewChat = () => {
   appState.currentSessionId = "";
@@ -126,9 +140,21 @@ sidebar.onNewChat = () => {
   chat.clearMessages();
 };
 sidebar.onSelectSession = (sessionId: string) => {
+  _loadingSession = true; // 防止废弃回复的事件重置状态
   appState.isReplying = true; // 加载期间禁止发送
   chat.clearMessages();
   sidebar.setDisabled(true);
+
+  // 加载超时保护（15s 无响应则恢复 UI）
+  if (_loadTimer !== null) clearTimeout(_loadTimer);
+  _loadTimer = setTimeout(() => {
+    _loadingSession = false;
+    _loadTimer = null;
+    appState.isReplying = false;
+    sidebar.setDisabled(false);
+    chat.appendSystemMessage("加载会话超时，请重试", "warning");
+  }, 15000);
+
   ws.loadSession(sessionId);
 };
 sidebar.onDeleteSession = (sessionId: string) => {

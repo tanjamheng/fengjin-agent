@@ -264,6 +264,11 @@ export class WSClient {
     this._stopHeartbeat();
     this._pingTimer = setInterval(() => {
       this._send({ type: "ping" });
+      // 先清除上次的 pong 超时定时器，防止 pongTimeout > pingInterval 时残留
+      if (this._pongTimer !== null) {
+        clearTimeout(this._pongTimer);
+        this._pongTimer = null;
+      }
       this._pongTimer = setTimeout(() => {
         // 10s 未收到 pong，判定断线
         this.disconnect();
@@ -294,6 +299,7 @@ export class WSClient {
   private _startReplyTimer(): void {
     this._clearReplyTimer();
     this._replyTimer = setTimeout(() => {
+      this.sendCancel(); // 通知后端停止处理，避免残留 stream/end 幽灵消息
       this.onError?.("回复超时，请重试");
       this._replyTimer = null;
     }, this._replyTimeout);

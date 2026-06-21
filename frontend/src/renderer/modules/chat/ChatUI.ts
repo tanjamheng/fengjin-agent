@@ -48,16 +48,21 @@ export class ChatUI {
     this._input.onSend = (text) => this.onSend?.(text);
     this._input.onStop = () => this.onStop?.();
 
-    // 子元素引用
-    this._thinkingEl =
-      container.querySelector<HTMLElement>(".chat-thinking")!;
-    this._quickRepliesEl = container.querySelector<HTMLElement>(
-      ".chat-quick-replies"
-    )!;
-    this._statusBarEl =
-      document.querySelector<HTMLElement>(".status-bar")!;
-    this._scrollHintEl =
-      container.querySelector<HTMLElement>(".scroll-hint")!;
+    // 子元素引用（container 范围内元素用 throw，跨模块引用用 graceful）
+    const thinkingEl = container.querySelector<HTMLElement>(".chat-thinking");
+    if (!thinkingEl) throw new Error("ChatUI: .chat-thinking not found");
+    this._thinkingEl = thinkingEl;
+
+    const quickRepliesEl = container.querySelector<HTMLElement>(".chat-quick-replies");
+    if (!quickRepliesEl) throw new Error("ChatUI: .chat-quick-replies not found");
+    this._quickRepliesEl = quickRepliesEl;
+
+    // 跨模块引用（F2 已知决策），未找到时静默降级
+    this._statusBarEl = document.querySelector<HTMLElement>(".status-bar") ?? document.createElement("div");
+
+    const scrollHintEl = container.querySelector<HTMLElement>(".scroll-hint");
+    if (!scrollHintEl) throw new Error("ChatUI: .scroll-hint not found");
+    this._scrollHintEl = scrollHintEl;
 
     // 滚动提示点击
     this._scrollHintEl.addEventListener("click", () => {

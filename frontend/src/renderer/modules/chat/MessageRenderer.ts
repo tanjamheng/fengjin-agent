@@ -76,7 +76,9 @@ export class MessageRenderer {
     const el = document.createElement("div");
     el.className = "chat-message--system";
     if (type === "blocked") {
-      el.style.color = "var(--color-blocked)";
+      el.classList.add("chat-message--system--blocked");
+    } else if (type === "warning") {
+      el.classList.add("chat-message--system--warning");
     }
     el.textContent = text;
     this._container.appendChild(el);
