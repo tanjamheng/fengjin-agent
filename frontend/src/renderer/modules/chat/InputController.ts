@@ -8,6 +8,8 @@
  * - 发送/停止按钮互斥切换
  */
 
+import { CONFIG } from "../../config";
+
 export class InputController {
   private _textarea: HTMLTextAreaElement;
   private _button: HTMLButtonElement;
@@ -107,7 +109,7 @@ export class InputController {
     // 防抖：防止停止按钮后立即触发发送（双击停止→发送）
     if (this._submitting) return;
     this._submitting = true;
-    setTimeout(() => { this._submitting = false; }, 200);
+    setTimeout(() => { this._submitting = false; }, CONFIG.input.submitDebounceMs);
 
     const text = this._textarea.value.trim();
     if (!text) { this._submitting = false; return; }
@@ -141,7 +143,7 @@ export class InputController {
 
   private _autoResize(): void {
     this._textarea.style.height = "auto";
-    const newHeight = Math.min(this._textarea.scrollHeight, 120);
-    this._textarea.style.height = `${Math.max(newHeight, 40)}px`;
+    const newHeight = Math.min(this._textarea.scrollHeight, CONFIG.input.maxHeight);
+    this._textarea.style.height = `${Math.max(newHeight, CONFIG.input.minHeight)}px`;
   }
 }

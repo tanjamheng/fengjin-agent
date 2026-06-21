@@ -1,3 +1,4 @@
+import { CONFIG } from "../../config";
 import { MessageParser } from "./MessageParser";
 import type {
   ClientMessage,
@@ -23,12 +24,12 @@ export class WSClient {
   // 心跳
   private _pingTimer: ReturnType<typeof setInterval> | null = null;
   private _pongTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly _pingInterval = 30000; // 30s
-  private readonly _pongTimeout = 10000; // 10s
+  private readonly _pingInterval = CONFIG.timeouts.pingInterval;
+  private readonly _pongTimeout = CONFIG.timeouts.pongTimeout;
 
   // 回复超时
   private _replyTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly _replyTimeout = 60000; // 60s
+  private readonly _replyTimeout = CONFIG.timeouts.replyTimeout;
 
   // ---- 回调（由上层注册） ----
 

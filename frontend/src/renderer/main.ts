@@ -5,6 +5,7 @@
  * 通过回调将模块连接，模块间不直接互相引用。
  */
 
+import { CONFIG } from "./config";
 import { appState } from "./state";
 import { CharacterDisplay } from "./modules/character/CharacterDisplay";
 import { WSClient } from "./modules/ws/WSClient";
@@ -30,7 +31,7 @@ character.onLoadError = () => {
   // 渐变背景兜底，不影响聊天
   appState.isModelLoaded = true;
 };
-character.loadImage("./assets/fengjin.jpg");
+character.loadImage(CONFIG.character.imagePath);
 
 // 2. WSClient
 const ws = new WSClient();
@@ -197,7 +198,7 @@ sidebar.onSelectSession = (sessionId: string) => {
     ws.resetSessionId(); // 加载失败时重置，防止消息发错会话
     appState.currentSessionId = ""; // 同步重置 AppState
     _loadingSession = false; // 最后降低守卫
-  }, 15000);
+  }, CONFIG.timeouts.sessionLoadTimeout);
 
   ws.loadSession(sessionId);
 };
@@ -212,7 +213,7 @@ sidebar.onClearAll = () => {
 };
 
 // ===== 连接 =====
-ws.connect("ws://127.0.0.1:8765/ws");
+ws.connect(CONFIG.ws.url);
 
 // ===== 标题栏按钮（IPC） =====
 document.getElementById("btn-minimize")?.addEventListener("click", () => {
@@ -233,5 +234,5 @@ document.getElementById("btn-pin")?.addEventListener("click", () => {
 // ===== 重连按钮 =====
 document.querySelector(".status-reconnect-btn")?.addEventListener("click", () => {
   ws.disconnect();
-  ws.connect("ws://127.0.0.1:8765/ws");
+  ws.connect(CONFIG.ws.url);
 });

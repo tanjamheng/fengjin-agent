@@ -1,3 +1,4 @@
+import { CONFIG } from "../../config";
 import { MessageRenderer } from "./MessageRenderer";
 import { InputController } from "./InputController";
 import type { ChatMessage, ConnectionStatus } from "../../types/protocol";
@@ -35,7 +36,7 @@ export class ChatUI {
     messagesEl.addEventListener("scroll", () => {
       const el = messagesEl;
       const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      this._autoScroll = distFromBottom <= 30;
+      this._autoScroll = distFromBottom <= CONFIG.chat.autoScrollThreshold;
       this._toggleScrollHint(!this._autoScroll);
     });
 
