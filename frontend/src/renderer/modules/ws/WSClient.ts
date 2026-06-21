@@ -99,12 +99,13 @@ export class WSClient {
       }
       this._ws = null;
     }
+    this._connectedBefore = false;
     this._setStatus("disconnected");
   }
 
   // ===== 公开方法 =====
 
-  /** 重置会话 ID（新对话时调用） */
+  /** 重置会话 ID（新对话/删除当前会话时调用） */
   resetSessionId(): void {
     this._sessionId = "";
   }
@@ -112,8 +113,9 @@ export class WSClient {
   // ===== 发送 =====
 
   sendUserMessage(content: string): void {
-    this._send({ type: "user_msg", session_id: this._sessionId, content });
-    this._startReplyTimer();
+    if (this._send({ type: "user_msg", session_id: this._sessionId, content })) {
+      this._startReplyTimer();
+    }
   }
 
   sendCancel(): void {
@@ -135,14 +137,16 @@ export class WSClient {
 
   // ===== 内部方法 =====
 
-  private _send(msg: ClientMessage): void {
+  /** @returns true 如果消息已发送 */
+  private _send(msg: ClientMessage): boolean {
     if (this._ws?.readyState !== WebSocket.OPEN) {
       // 连接已断开时立即反馈，不让用户等 60s 超时
       this._clearReplyTimer();
       this.onError?.("WebSocket 连接已断开，请重连");
-      return;
+      return false;
     }
     this._ws.send(JSON.stringify(msg));
+    return true;
   }
 
   private _setStatus(status: ConnectionStatus): void {
@@ -183,7 +187,6 @@ export class WSClient {
     if (wasConnected) {
       this.onError?.("WebSocket 连接已断开，请检查后端服务");
     }
-    // 初始连接失败不弹 error（由 _onError 触发后自然离线，状态栏已显示离线提示）
   }
 
   private _onError(_event: Event): void {
@@ -206,31 +209,34 @@ export class WSClient {
         break;
 
       case "thinking":
-        this._clearReplyTimer();
+        // 服务端在响应，刷新回复超时计时器而非清除
+        this._startReplyTimer();
         this.onThinking?.();
         break;
 
       case "blocked":
         this._clearReplyTimer();
-        this.onBlocked?.(msg.message, msg.category);
+        this.onBlocked?.(msg.message ?? "小伊卡提醒：暂无法处理该消息", msg.category);
         break;
 
       case "stream":
-        this.onStreamChunk?.(msg.text);
+        // 服务端在流式输出，刷新超时计时器
+        this._startReplyTimer();
+        this.onStreamChunk?.(msg.text ?? "");
         break;
 
       case "end":
         this._clearReplyTimer();
-        this.onStreamEnd?.(msg.full_text, msg.action);
+        this.onStreamEnd?.(msg.full_text ?? "", msg.action);
         break;
 
       case "session_list":
-        this.onSessionList?.(msg.sessions);
+        this.onSessionList?.(msg.sessions ?? []);
         break;
 
       case "session_loaded":
         this._sessionId = msg.session_id;
-        this.onSessionLoaded?.(msg.session_id, msg.title, msg.messages);
+        this.onSessionLoaded?.(msg.session_id, msg.title, msg.messages ?? []);
         break;
 
       case "session_deleted":
@@ -238,12 +244,12 @@ export class WSClient {
         break;
 
       case "quick_replies":
-        this.onQuickReplies?.(msg.replies);
+        this.onQuickReplies?.(msg.replies ?? []);
         break;
 
       case "error":
         this._clearReplyTimer();
-        this.onError?.(msg.message);
+        this.onError?.(msg.message ?? "AI 服务异常，请稍后重试");
         break;
 
       default:

@@ -54,6 +54,13 @@ export class MessageRenderer {
     if (this._aiBubble) {
       // fullText 为空时回退到已拼接的流式内容
       const text = fullText || this._aiBubble.textContent || "";
+      if (!text) {
+        // 没有任何文本内容，移除幽灵气泡
+        const wrapper = this._aiBubble.parentElement;
+        if (wrapper) wrapper.remove();
+        this._aiBubble = null;
+        return;
+      }
       this._aiBubble.textContent = text;
       this._aiBubble = null;
     }
@@ -78,6 +85,7 @@ export class MessageRenderer {
   /** 加载历史消息（批量渲染） */
   loadMessages(messages: ChatMessage[]): void {
     this.clear();
+    if (!Array.isArray(messages)) return;
     for (const msg of messages) {
       const wrapper = this._createWrapper(msg.role);
       if (msg.role === "assistant") {

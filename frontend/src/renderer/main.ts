@@ -57,7 +57,10 @@ ws.onSessionList = (sessions: SessionMeta[]) => {
 };
 ws.onSessionLoaded = (sessionId: string, title: string, messages: ChatMessage[]) => {
   appState.currentSessionId = sessionId;
+  appState.isReplying = false;
   sidebar.setActive(sessionId);
+  sidebar.setDisabled(false);
+  chat.hideQuickReplies();
   chat.clearMessages();
   chat.loadMessages(messages);
 };
@@ -67,6 +70,7 @@ ws.onSessionDeleted = (sessionId: string) => {
   sidebar.renderList(appState.sessions);
   if (appState.currentSessionId === sessionId) {
     appState.currentSessionId = "";
+    ws.resetSessionId(); // 当前会话被删，重置 WS 客户端 session_id
     chat.clearMessages();
     sidebar.setActive("");
   }
@@ -76,12 +80,22 @@ ws.onQuickReplies = (replies: string[]) => chat.showQuickReplies(replies);
 
 ws.onConnected = (sessionId: string) => {
   appState.currentSessionId = sessionId;
+  appState.isReplying = false;
+  chat.clearMessages();
+  chat.endReplyMode();
+  sidebar.setDisabled(false);
   ws.listSessions();
 };
 
 ws.onStatusChange = (status) => {
   appState.wsStatus = status;
   chat.updateConnectionStatus(status);
+  if (status === "disconnected") {
+    // 断线时恢复 UI 状态，防止 isReplying 死锁
+    appState.isReplying = false;
+    chat.endReplyMode();
+    sidebar.setDisabled(false);
+  }
 };
 
 // 3. ChatUI（中间对话区）
@@ -112,6 +126,9 @@ sidebar.onNewChat = () => {
   chat.clearMessages();
 };
 sidebar.onSelectSession = (sessionId: string) => {
+  appState.isReplying = true; // 加载期间禁止发送
+  chat.clearMessages();
+  sidebar.setDisabled(true);
   ws.loadSession(sessionId);
 };
 sidebar.onDeleteSession = (sessionId: string) => {

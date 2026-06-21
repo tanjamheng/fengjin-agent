@@ -67,6 +67,14 @@ html, body {
   user-select: none;
 }
 
+/* 允许复制对话文本 */
+.chat-message--ai,
+.chat-message--user,
+.chat-message--assistant,
+.chat-input {
+  user-select: text;
+}
+
 /* ===== 标题栏 ===== */
 .titlebar {
   display: flex;
@@ -192,7 +200,7 @@ html, body {
   position: absolute;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.7);
-  animation: particle-twinkle 2s ease-in-out infinite alternate;
+  /* animation 属性由 @media (prefers-reduced-motion: no-preference) 启用 */
 }
 
 @keyframes particle-twinkle {
@@ -220,11 +228,6 @@ html, body {
 }
 
 .chat-message-wrapper--ai {
-  justify-content: flex-start;
-  align-items: flex-end;
-}
-
-.chat-message-wrapper--assistant {
   justify-content: flex-start;
   align-items: flex-end;
 }
@@ -276,7 +279,7 @@ html, body {
 .chat-message__time {
   text-align: center;
   font-size: 11px;
-  color: #A0A0B0;
+  color: var(--color-text-muted);
   padding: 4px 0;
 }
 
@@ -572,7 +575,7 @@ html, body {
 .sidebar__empty {
   text-align: center;
   padding: 32px 16px;
-  color: #A0A0B0;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
@@ -612,6 +615,16 @@ html, body {
 }
 
 /* ===== Accessibility ===== */
+/* V1: 星光粒子仅在不偏好减少动效时播放（delay/duration由JS内联样式随机化） */
+@media (prefers-reduced-motion: no-preference) {
+  .character-particle {
+    animation-name: particle-twinkle;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .character-particle {
     animation: none;
