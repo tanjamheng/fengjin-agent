@@ -67,6 +67,7 @@ export class WSClient {
     }
 
     this._url = url;
+    this._retryCount = 0;
     this._setStatus("connecting");
     this._parser.resetErrors();
 
@@ -89,6 +90,11 @@ export class WSClient {
     this._clearReplyTimer();
     this._cancelled = false;
     this._replyActive = false;
+    this._retryCount = this._maxRetries; // 停止重试
+    if (this._retryTimer !== null) {
+      clearTimeout(this._retryTimer);
+      this._retryTimer = null;
+    }
     if (this._ws) {
       this._ws.onopen = null;
       this._ws.onmessage = null;
@@ -198,11 +204,29 @@ export class WSClient {
   private _cancelled = false; // 停止后忽略残留 stream/end，防止幽灵气泡
   private _replyActive = false; // 回复进行中（sendUserMessage→end/blocked/error/cancel）
 
+  // 自动重连（后端冷启动模型加载约 15s，前端可能先就绪）
+  private _retryCount = 0;
+  private _retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly _maxRetries = 10;
+  private readonly _retryDelay = 2000; // 2s 间隔，10 次共 20s 覆盖后端启动窗口
+
   private _onClose(_event: CloseEvent): void {
     this._stopHeartbeat();
     this._clearReplyTimer();
     const wasConnected = this._connectedBefore;
     this._connectedBefore = false;
+
+    if (!wasConnected && this._retryCount < this._maxRetries) {
+      // 初始连接失败，自动重试（后端可能还在加载模型）
+      this._retryCount++;
+      if (this._retryTimer !== null) clearTimeout(this._retryTimer);
+      this._retryTimer = setTimeout(() => {
+        this._retryTimer = null;
+        if (this._url) this.connect(this._url);
+      }, this._retryDelay);
+      return;
+    }
+
     this._setStatus("disconnected");
     if (wasConnected) {
       this.onError?.("WebSocket 连接已断开，请检查后端服务");

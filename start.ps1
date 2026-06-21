@@ -69,8 +69,8 @@ Start-Process powershell -ArgumentList @(
     "`$Host.UI.RawUI.WindowTitle = 'Fengjin AI - Backend'; cd '$Root'; & '$Python' -m src.server.server"
 )
 
-Write-Host "  -> Waiting for backend (5s)..."
-Start-Sleep -Seconds 5
+Write-Host "  -> Waiting for backend (10s)..."
+Start-Sleep -Seconds 10
 
 Write-Host "  -> Starting frontend..."
 Start-Process powershell -ArgumentList @(
