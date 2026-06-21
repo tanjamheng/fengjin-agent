@@ -231,8 +231,3 @@ document.getElementById("btn-pin")?.addEventListener("click", () => {
   if (btn) btn.classList.toggle("titlebar__btn--active");
 });
 
-// ===== 重连按钮 =====
-document.querySelector(".status-reconnect-btn")?.addEventListener("click", () => {
-  ws.disconnect();
-  ws.connect(CONFIG.ws.url);
-});

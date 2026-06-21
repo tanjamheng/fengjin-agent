@@ -193,26 +193,20 @@ export class ChatUI {
     const text = this._statusBarEl.querySelector<HTMLElement>(
       ".status-text"
     );
-    const reconnectBtn = this._statusBarEl.querySelector<HTMLElement>(
-      ".status-reconnect-btn"
-    );
     if (!indicator || !text) return;
 
     if (status === "connected") {
       indicator.className = "status-indicator status-indicator--online";
       indicator.setAttribute("aria-label", "已连接");
       text.textContent = "已连接";
-      if (reconnectBtn) reconnectBtn.style.display = "none";
     } else if (status === "connecting") {
       indicator.className = "status-indicator status-indicator--offline";
       indicator.setAttribute("aria-label", "连接中");
       text.textContent = "连接中...";
-      if (reconnectBtn) reconnectBtn.style.display = "none";
     } else {
       indicator.className = "status-indicator status-indicator--offline";
       indicator.setAttribute("aria-label", "未连接");
       text.textContent = "未连接 — 请启动后端";
-      if (reconnectBtn) reconnectBtn.style.display = "inline-block";
     }
   }
 

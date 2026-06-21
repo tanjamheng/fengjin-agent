@@ -466,24 +466,6 @@ html, body {
   color: var(--color-text-secondary);
 }
 
-.status-reconnect-btn {
-  display: none;
-  font-size: 12px;
-  line-height: 1.0;
-  background: var(--color-input-bg);
-  color: var(--color-text-ai);
-  border: none;
-  border-radius: var(--radius-xs);
-  padding: 2px 10px;
-  cursor: pointer;
-  font-family: var(--font-stack);
-  transition: background 200ms ease;
-}
-
-.status-reconnect-btn:hover {
-  background: var(--color-input-border);
-}
-
 /* ===== 历史侧边栏 ===== */
 .sidebar {
   display: flex;
@@ -703,9 +685,6 @@ html, body {
   .sidebar__item,
   .sidebar__item-delete,
   .sidebar__tooltip,
-  .status-reconnect-btn {
-    transition: none;
-  }
 }
 
 *:focus-visible {
