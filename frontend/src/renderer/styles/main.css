@@ -109,6 +109,7 @@ html, body {
   background: transparent;
   color: #4A3A5A;
   font-size: 14px;
+  line-height: 26px;
   cursor: pointer;
   border-radius: var(--radius-xs);
   display: flex;
