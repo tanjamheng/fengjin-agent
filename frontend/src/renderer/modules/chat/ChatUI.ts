@@ -64,11 +64,19 @@ export class ChatUI {
     if (!scrollHintEl) throw new Error("ChatUI: .scroll-hint not found");
     this._scrollHintEl = scrollHintEl;
 
-    // 滚动提示点击
+    // 滚动提示点击 + 键盘
     this._scrollHintEl.addEventListener("click", () => {
       this.scrollToBottom();
       this._autoScroll = true;
       this._toggleScrollHint(false);
+    });
+    this._scrollHintEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        this.scrollToBottom();
+        this._autoScroll = true;
+        this._toggleScrollHint(false);
+      }
     });
   }
 

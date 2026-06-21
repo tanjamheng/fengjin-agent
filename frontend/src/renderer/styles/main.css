@@ -26,8 +26,8 @@
   --color-blocked: #E8A050;
   --color-status-online: #50C878;
   --color-status-offline: #E05555;
-  --color-text-muted: #7A7A8A;
-  --color-text-secondary: #888888;
+  --color-text-muted: #6E6E7E;
+  --color-text-secondary: #6E6E7E;
   --color-hover-bg: #EEEEEE;
   --color-sidebar-active: #F0F6FF;
   --color-sidebar-active-bar: #A7C7F5;
@@ -93,7 +93,7 @@ html, body {
   font-size: 13px;
   font-weight: 500;
   line-height: 1.0;
-  color: #FFFFFF;
+  color: #4A3A5A;
 }
 
 .titlebar__controls {
@@ -107,7 +107,7 @@ html, body {
   height: 26px;
   border: none;
   background: transparent;
-  color: #FFFFFF;
+  color: #4A3A5A;
   font-size: 14px;
   cursor: pointer;
   border-radius: var(--radius-xs);
@@ -288,10 +288,10 @@ html, body {
   font-style: normal;
 }
 
-/* 系统消息 — 警告（保留 muted 风格，加边框区分） */
+/* 系统消息 — 警告（加背景色区分，深色文字满足 WCAG AA 对比度） */
 .chat-message--system--warning {
-  color: var(--color-text-muted);
-  background: #FFF5F5;
+  color: #5A4A4A;
+  background: #FFF0F0;
   border-radius: var(--radius-sm);
   padding: 8px 16px;
   font-style: normal;
@@ -575,7 +575,7 @@ html, body {
   height: 24px;
   border: none;
   background: transparent;
-  color: #CCC;
+  color: #888;
   font-size: 16px;
   cursor: pointer;
   border-radius: 50%;
@@ -634,6 +634,25 @@ html, body {
   pointer-events: none;
   z-index: 100;
   white-space: nowrap;
+}
+
+/* ===== Scrollbar ===== */
+.chat-messages::-webkit-scrollbar,
+.sidebar__list::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-messages::-webkit-scrollbar-track,
+.sidebar__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-messages::-webkit-scrollbar-thumb,
+.sidebar__list::-webkit-scrollbar-thumb {
+  background: #CCC;
+  border-radius: 3px;
+}
+.chat-messages::-webkit-scrollbar-thumb:hover,
+.sidebar__list::-webkit-scrollbar-thumb:hover {
+  background: #AAA;
 }
 
 /* ===== Accessibility ===== */

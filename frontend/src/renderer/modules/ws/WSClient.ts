@@ -118,12 +118,14 @@ export class WSClient {
   // ===== 发送 =====
 
   sendUserMessage(content: string): void {
+    this._cancelled = false; // 新消息，清除取消标志
     if (this._send({ type: "user_msg", session_id: this._sessionId, content })) {
       this._startReplyTimer();
     }
   }
 
   sendCancel(): void {
+    this._cancelled = true; // 忽略后续到达的 stream/end 幽灵气泡
     this._send({ type: "cancel" });
     this._clearReplyTimer();
   }
@@ -182,6 +184,7 @@ export class WSClient {
   }
 
   private _connectedBefore = false;
+  private _cancelled = false; // 停止后忽略残留 stream/end，防止幽灵气泡
 
   private _onClose(_event: CloseEvent): void {
     this._stopHeartbeat();
@@ -203,6 +206,8 @@ export class WSClient {
   private _dispatch(msg: ServerMessage): void {
     switch (msg.type) {
       case "connected":
+        // 重复 connected 消息去重（防止重新连接时重复清理 UI）
+        if (this._status === "connected" && this._sessionId === msg.session_id) break;
         this._sessionId = msg.session_id;
         this._connectedBefore = true;
         this._setStatus("connected");
@@ -225,18 +230,20 @@ export class WSClient {
         break;
 
       case "stream":
+        if (this._cancelled) break; // 已取消，忽略残留分片
         // 服务端在流式输出，刷新超时计时器
         this._startReplyTimer();
         this.onStreamChunk?.(msg.text ?? "");
         break;
 
       case "end":
+        if (this._cancelled) { this._cancelled = false; break; } // 已取消，忽略
         this._clearReplyTimer();
         this.onStreamEnd?.(msg.full_text ?? "", msg.action);
         break;
 
       case "session_list":
-        this.onSessionList?.(msg.sessions ?? []);
+        this.onSessionList?.(Array.isArray(msg.sessions) ? msg.sessions : []);
         break;
 
       case "session_loaded":

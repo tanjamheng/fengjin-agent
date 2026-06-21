@@ -92,6 +92,8 @@ export class InputController {
     });
   }
 
+  private _submitting = false;
+
   private _handleSubmit(): void {
     // _sending 必须先于 _locked 检查——AI 回复中 _locked=true 且 _sending=true，
     // 若先检查 _locked 则停止按钮永远不可达（P0 死锁）
@@ -102,8 +104,13 @@ export class InputController {
 
     if (this._locked) return;
 
+    // 防抖：防止停止按钮后立即触发发送（双击停止→发送）
+    if (this._submitting) return;
+    this._submitting = true;
+    setTimeout(() => { this._submitting = false; }, 200);
+
     const text = this._textarea.value.trim();
-    if (!text) return;
+    if (!text) { this._submitting = false; return; }
 
     this.onSend?.(text);
     this.clear(); // 发送后清空输入框

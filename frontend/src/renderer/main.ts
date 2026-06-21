@@ -14,6 +14,7 @@ import type { SessionMeta, ChatMessage } from "./types/protocol";
 
 // ===== 会话加载保护 =====
 let _loadingSession = false;
+let _loadingSessionId: string | null = null; // 跟踪正在加载的会话ID，防止快速切换覆盖
 let _loadTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ===== 初始化 =====
@@ -61,6 +62,8 @@ ws.onError = (message) => {
     // 会话加载中收到错误：清除保护状态，显示真实错误而非超时提示
     if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
     _loadingSession = false;
+    _loadingSessionId = null;
+    ws.resetSessionId(); // 加载失败重置 _sessionId
   }
   chat.endReplyMode(); // 丢弃未固化的流式气泡 + 解锁输入
   chat.appendSystemMessage(message, "warning");
@@ -74,9 +77,10 @@ ws.onSessionList = (sessions: SessionMeta[]) => {
   sidebar.renderList(sessions);
 };
 ws.onSessionLoaded = (sessionId: string, title: string, messages: ChatMessage[]) => {
-  if (!_loadingSession) return; // 非加载中状态，忽略废弃/延迟的 session_loaded
+  if (!_loadingSession || sessionId !== _loadingSessionId) return; // 非加载中或ID不匹配，忽略
   if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
   _loadingSession = false;
+  _loadingSessionId = null;
   ws.setSessionId(sessionId); // 由回调决定更新时机，防止废弃消息污染 _sessionId
   appState.currentSessionId = sessionId;
   appState.isReplying = false;
@@ -94,6 +98,8 @@ ws.onSessionDeleted = (sessionId: string) => {
     appState.currentSessionId = "";
     appState.isReplying = false; // 防止 isReplying 残留锁定 UI
     ws.resetSessionId(); // 当前会话被删，重置 WS 客户端 session_id
+    ws.sendCancel(); // 取消进行中的回复
+    chat.endReplyMode(); // 清理 InputController 状态
     chat.clearMessages();
     sidebar.setActive("");
     sidebar.setDisabled(false); // 恢复侧边栏交互
@@ -106,6 +112,7 @@ ws.onConnected = (sessionId: string) => {
   // 清除会话加载保护状态（防止跨连接残留）
   if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
   _loadingSession = false;
+  _loadingSessionId = null;
   appState.currentSessionId = sessionId;
   appState.isReplying = false;
   chat.clearMessages();
@@ -122,6 +129,7 @@ ws.onStatusChange = (status) => {
     // 同时清除会话加载保护状态，防止跨连接残留
     if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
     _loadingSession = false;
+    _loadingSessionId = null;
     appState.isReplying = false;
     chat.endReplyMode();
     sidebar.setDisabled(false);
@@ -152,16 +160,22 @@ const sidebarContainer = document.getElementById("sidebar-container");
 if (!sidebarContainer) throw new Error("Missing #sidebar-container");
 const sidebar = new HistorySidebar(sidebarContainer);
 sidebar.onNewChat = () => {
-  // 清除会话加载保护状态，防止后台 load 覆盖新对话
+  // 清除会话加载保护状态 + 取消进行中的回复
   if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
   _loadingSession = false;
+  _loadingSessionId = null;
+  ws.sendCancel(); // 取消进行中的回复（如有）
+  chat.endReplyMode();
+  appState.isReplying = false;
   appState.currentSessionId = "";
   ws.resetSessionId(); // 重置 WS 客户端 session_id，下条消息发空字符串
   sidebar.setActive("");
   chat.clearMessages();
 };
 sidebar.onSelectSession = (sessionId: string) => {
+  if (_loadingSession) return; // 防止快速点击发送多个 loadSession 请求
   _loadingSession = true; // 防止废弃回复的事件重置状态
+  _loadingSessionId = sessionId; // 跟踪正在加载的会话ID
   appState.isReplying = true; // 加载期间禁止发送
   chat.clearMessages();
   sidebar.setDisabled(true);
@@ -170,10 +184,12 @@ sidebar.onSelectSession = (sessionId: string) => {
   if (_loadTimer !== null) clearTimeout(_loadTimer);
   _loadTimer = setTimeout(() => {
     _loadTimer = null;
+    _loadingSessionId = null;
     appState.isReplying = false;
     sidebar.setDisabled(false);
     chat.appendSystemMessage("加载会话超时，请重试", "warning");
-    _loadingSession = false; // 最后降低守卫，防止回调期间收到幽灵消息
+    ws.resetSessionId(); // 加载失败时重置，防止消息发错会话
+    _loadingSession = false; // 最后降低守卫
   }, 15000);
 
   ws.loadSession(sessionId);
