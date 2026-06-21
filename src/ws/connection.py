@@ -22,7 +22,7 @@ from ..utils.logger import get_logger, generate_trace_id
 router = APIRouter()
 log = get_logger("ws")
 
-HEARTBEAT_TIMEOUT = 10       # 秒，前端 10s 未收到 pong 判定断线
+HEARTBEAT_TIMEOUT = 45       # 秒，必须大于前端 ping 间隔(30s) + pong 超时(10s)
 MAX_INPUT_LENGTH = 10000     # 超长输入拒绝（对齐 CLI / CLAUDE.md 技术约束）
 
 
@@ -70,12 +70,14 @@ async def websocket_endpoint(websocket: WebSocket):
     last_pong = asyncio.get_event_loop().time()
 
     async def _heartbeat_checker():
-        """后台心跳超时检测，超时则关闭连接"""
+        """后台心跳超时检测：每 15s 检查一次，超过 HEARTBEAT_TIMEOUT 无 pong 则断开
+        注意：前端 ping 间隔 30s，后端超时阈值必须 > 30s 避免竞态断连
+        """
         while True:
-            await asyncio.sleep(HEARTBEAT_TIMEOUT + 5)
+            await asyncio.sleep(15)
             elapsed = asyncio.get_event_loop().time() - last_pong
-            if elapsed > HEARTBEAT_TIMEOUT + 5:
-                log.warning("心跳超时，关闭连接")
+            if elapsed > HEARTBEAT_TIMEOUT:
+                log.warning("心跳超时（%.0fs），关闭连接", elapsed)
                 try:
                     await websocket.close()
                 except Exception as e:
