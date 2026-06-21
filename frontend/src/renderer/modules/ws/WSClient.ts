@@ -48,6 +48,8 @@ export class WSClient {
 
   // 连接确认回调
   onConnected?: (sessionId: string) => void;
+  // 会话ID变更回调（首次消息创建会话、加载历史等场景）
+  onSessionChanged?: (sessionId: string) => void;
 
   // ---- 公开属性 ----
 
@@ -239,10 +241,11 @@ export class WSClient {
 
   // ---- 消息分发 ----
 
-  /** 首次发消息时后端会创建会话并通过 thinking/end 报文传回 session_id */
+  /** 首次发消息时后端会创建会话并通过 thinking/end/blocked/error 报文传回 session_id */
   private _captureSessionId(msg: { session_id?: string }): void {
     if (msg.session_id && msg.session_id !== this._sessionId) {
       this._sessionId = msg.session_id;
+      this.onSessionChanged?.(msg.session_id);
     }
   }
 

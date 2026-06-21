@@ -43,21 +43,12 @@ ws.onStreamChunk = (text) => {
 };
 ws.onStreamEnd = (fullText, _action) => {
   if (_loadingSession) return; // 会话加载中，忽略废弃回复的 end 包
-  // 首次发消息时后端创建会话，同步 session_id 到 AppState
-  if (!appState.currentSessionId && ws.sessionId) {
-    appState.currentSessionId = ws.sessionId;
-    ws.listSessions(); // 刷新侧边栏，显示新会话
-  }
   chat.finalizeAIMessage(fullText);
   appState.isReplying = false;
   sidebar.setDisabled(false);
 };
 ws.onBlocked = (message) => {
   if (_loadingSession) return; // 会话加载中，忽略废弃回复的 blocked 包
-  if (!appState.currentSessionId && ws.sessionId) {
-    appState.currentSessionId = ws.sessionId;
-    ws.listSessions();
-  }
   chat.endReplyMode(); // 丢弃未固化的流式气泡 + 解锁输入
   chat.appendSystemMessage(message, "blocked");
   appState.isReplying = false;
@@ -74,10 +65,6 @@ ws.onError = (message) => {
     _loadingSession = false;
     _loadingSessionId = null;
     ws.resetSessionId(); // 加载失败重置 _sessionId
-  }
-  if (!appState.currentSessionId && ws.sessionId) {
-    appState.currentSessionId = ws.sessionId;
-    ws.listSessions();
   }
   chat.endReplyMode(); // 丢弃未固化的流式气泡 + 解锁输入
   chat.appendSystemMessage(message, "warning");
@@ -123,6 +110,14 @@ ws.onSessionDeleted = (sessionId: string) => {
 };
 
 ws.onQuickReplies = (replies: string[]) => chat.showQuickReplies(replies);
+
+// 会话ID变更：首次发消息后端创建会话 / blocked / error / cancel 等场景统一处理
+ws.onSessionChanged = (sessionId: string) => {
+  if (!sessionId) return;
+  appState.currentSessionId = sessionId;
+  sidebar.setActive(sessionId);
+  ws.listSessions(); // 刷新侧边栏，显示新会话条目
+};
 
 ws.onConnected = (sessionId: string) => {
   // 清除会话加载保护状态（防止跨连接残留）
