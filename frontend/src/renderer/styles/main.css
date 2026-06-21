@@ -27,7 +27,7 @@
   --color-status-online: #50C878;
   --color-status-offline: #E05555;
   --color-text-muted: #6E6E7E;
-  --color-text-secondary: #6E6E7E;
+  --color-text-secondary: #5E5E6E;
   --color-hover-bg: #EEEEEE;
   --color-sidebar-active: #F0F6FF;
   --color-sidebar-active-bar: #A7C7F5;
@@ -591,7 +591,12 @@ html, body {
 }
 
 .sidebar__item-delete:hover {
-  color: var(--color-status-offline);
+  color: #C04040;
+}
+
+/* 键盘 Tab 到会话项时显示删除按钮 */
+.sidebar__item:focus-within .sidebar__item-delete {
+  opacity: 1;
 }
 
 .sidebar__empty {
@@ -610,8 +615,8 @@ html, body {
   width: 100%;
   border: none;
   background: transparent;
-  color: var(--color-status-offline);
-  font-size: 11px;
+  color: #C04040;
+  font-size: 12px;
   font-family: var(--font-stack);
   cursor: pointer;
   padding: 4px 0;

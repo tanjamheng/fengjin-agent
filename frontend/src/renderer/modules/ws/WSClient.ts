@@ -119,6 +119,7 @@ export class WSClient {
 
   sendUserMessage(content: string): void {
     this._cancelled = false; // 新消息，清除取消标志
+    this._replyActive = true; // 新回复开始
     if (this._send({ type: "user_msg", session_id: this._sessionId, content })) {
       this._startReplyTimer();
     }
@@ -126,6 +127,7 @@ export class WSClient {
 
   sendCancel(): void {
     this._cancelled = true; // 忽略后续到达的 stream/end 幽灵气泡
+    this._replyActive = false;
     this._send({ type: "cancel" });
     this._clearReplyTimer();
   }
@@ -152,7 +154,13 @@ export class WSClient {
       this.onError?.("WebSocket 连接已断开，请重连");
       return false;
     }
-    this._ws.send(JSON.stringify(msg));
+    try {
+      this._ws.send(JSON.stringify(msg));
+    } catch {
+      this._clearReplyTimer();
+      this.onError?.("消息发送失败，请重试");
+      return false;
+    }
     return true;
   }
 
@@ -166,7 +174,7 @@ export class WSClient {
   // ---- 事件处理 ----
 
   private _onOpen(): void {
-    // connected 消息由后端主动发送，不在此处设置状态
+    if (!this._ws) return; // 防止 disconnect() 后的异步 onopen 竞态
     this._startHeartbeat();
   }
 
@@ -185,6 +193,7 @@ export class WSClient {
 
   private _connectedBefore = false;
   private _cancelled = false; // 停止后忽略残留 stream/end，防止幽灵气泡
+  private _replyActive = false; // 回复进行中（sendUserMessage→end/blocked/error/cancel）
 
   private _onClose(_event: CloseEvent): void {
     this._stopHeartbeat();
@@ -225,12 +234,14 @@ export class WSClient {
         break;
 
       case "blocked":
+        this._cancelled = true; // 防止后续幽灵 stream/end
+        this._replyActive = false;
         this._clearReplyTimer();
         this.onBlocked?.(msg.message ?? "小伊卡提醒：暂无法处理该消息", msg.category);
         break;
 
       case "stream":
-        if (this._cancelled) break; // 已取消，忽略残留分片
+        if (this._cancelled || !this._replyActive) break; // 已取消或回复未激活，忽略
         // 服务端在流式输出，刷新超时计时器
         this._startReplyTimer();
         this.onStreamChunk?.(msg.text ?? "");
@@ -238,6 +249,8 @@ export class WSClient {
 
       case "end":
         if (this._cancelled) { this._cancelled = false; break; } // 已取消，忽略
+        if (!this._replyActive) break; // 回复未激活，忽略（防止幽灵 end 创建气泡）
+        this._replyActive = false;
         this._clearReplyTimer();
         this.onStreamEnd?.(msg.full_text ?? "", msg.action);
         break;
@@ -260,6 +273,7 @@ export class WSClient {
         break;
 
       case "error":
+        this._replyActive = false;
         this._clearReplyTimer();
         this.onError?.(msg.message ?? "AI 服务异常，请稍后重试");
         break;

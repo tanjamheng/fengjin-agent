@@ -89,6 +89,7 @@ ws.onSessionLoaded = (sessionId: string, title: string, messages: ChatMessage[])
   chat.hideQuickReplies();
   chat.clearMessages();
   chat.loadMessages(messages);
+  chat.endReplyMode(); // 解锁 InputController（可能从回复中切换而来）
 };
 
 ws.onSessionDeleted = (sessionId: string) => {
@@ -101,6 +102,7 @@ ws.onSessionDeleted = (sessionId: string) => {
     ws.sendCancel(); // 取消进行中的回复
     chat.endReplyMode(); // 清理 InputController 状态
     chat.clearMessages();
+    chat.hideQuickReplies(); // 清除残留快捷回复
     sidebar.setActive("");
     sidebar.setDisabled(false); // 恢复侧边栏交互
   }
@@ -117,6 +119,7 @@ ws.onConnected = (sessionId: string) => {
   appState.isReplying = false;
   chat.clearMessages();
   chat.endReplyMode();
+  chat.hideQuickReplies();
   sidebar.setDisabled(false);
   ws.listSessions();
 };
@@ -166,6 +169,7 @@ sidebar.onNewChat = () => {
   _loadingSessionId = null;
   ws.sendCancel(); // 取消进行中的回复（如有）
   chat.endReplyMode();
+  chat.hideQuickReplies(); // 清除残留快捷回复
   appState.isReplying = false;
   appState.currentSessionId = "";
   ws.resetSessionId(); // 重置 WS 客户端 session_id，下条消息发空字符串
@@ -174,6 +178,7 @@ sidebar.onNewChat = () => {
 };
 sidebar.onSelectSession = (sessionId: string) => {
   if (_loadingSession) return; // 防止快速点击发送多个 loadSession 请求
+  ws.sendCancel(); // 取消进行中的回复，防止幽灵消息渲染到新会话
   _loadingSession = true; // 防止废弃回复的事件重置状态
   _loadingSessionId = sessionId; // 跟踪正在加载的会话ID
   appState.isReplying = true; // 加载期间禁止发送
@@ -187,6 +192,7 @@ sidebar.onSelectSession = (sessionId: string) => {
     _loadingSessionId = null;
     appState.isReplying = false;
     sidebar.setDisabled(false);
+    chat.endReplyMode(); // 解锁 InputController
     chat.appendSystemMessage("加载会话超时，请重试", "warning");
     ws.resetSessionId(); // 加载失败时重置，防止消息发错会话
     _loadingSession = false; // 最后降低守卫
