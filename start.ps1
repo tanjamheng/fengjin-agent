@@ -69,8 +69,25 @@ Start-Process powershell -ArgumentList @(
     "`$Host.UI.RawUI.WindowTitle = 'Fengjin AI - Backend'; cd '$Root'; & '$Python' -m src.server.server"
 )
 
-Write-Host "  -> Waiting for backend (10s)..."
-Start-Sleep -Seconds 10
+Write-Host "  -> Waiting for backend to be fully ready..."
+$ready = $false
+$maxWait = 120
+for ($i = 0; $i -lt $maxWait; $i++) {
+    try {
+        $resp = Invoke-WebRequest -Uri "http://127.0.0.1:8765/health" -TimeoutSec 2 -UseBasicParsing 2>$null
+        if ($resp.StatusCode -eq 200) {
+            $ready = $true
+            break
+        }
+    } catch {}
+    Start-Sleep -Seconds 1
+}
+if (-not $ready) {
+    Write-Host "  [ERROR] Backend failed to start within ${maxWait}s" -ForegroundColor Red
+    Read-Host "Press any key to exit"
+    exit 1
+}
+Write-Host "  Backend ready! (all models loaded)" -ForegroundColor Green
 
 Write-Host "  -> Starting frontend..."
 Start-Process powershell -ArgumentList @(

@@ -132,6 +132,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.get("/health")
+    async def health():
+        """健康检查 — lifespan 完成后才可达，表示所有模型已加载完毕"""
+        return {"status": "ready"}
+
     from ..ws.connection import router
     app.include_router(router)
 
