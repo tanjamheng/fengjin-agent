@@ -71,12 +71,14 @@ export interface ServerPong {
 
 export interface ServerThinking {
   type: "thinking";
+  session_id?: string;
 }
 
 export interface ServerBlocked {
   type: "blocked";
   message: string;
   category?: string;
+  session_id?: string;
 }
 
 export interface ServerStream {
@@ -88,6 +90,7 @@ export interface ServerEnd {
   type: "end";
   full_text: string;
   action?: string;
+  session_id?: string;
 }
 
 export interface ServerSessionList {
@@ -115,6 +118,7 @@ export interface ServerQuickReplies {
 export interface ServerError {
   type: "error";
   message: string;
+  session_id?: string;
 }
 
 export type ServerMessage =

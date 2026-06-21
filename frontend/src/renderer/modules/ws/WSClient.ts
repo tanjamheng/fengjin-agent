@@ -239,6 +239,13 @@ export class WSClient {
 
   // ---- 消息分发 ----
 
+  /** 首次发消息时后端会创建会话并通过 thinking/end 报文传回 session_id */
+  private _captureSessionId(msg: { session_id?: string }): void {
+    if (msg.session_id && msg.session_id !== this._sessionId) {
+      this._sessionId = msg.session_id;
+    }
+  }
+
   private _dispatch(msg: ServerMessage): void {
     switch (msg.type) {
       case "connected":
@@ -255,12 +262,14 @@ export class WSClient {
         break;
 
       case "thinking":
+        this._captureSessionId(msg);
         // 服务端在响应，刷新回复超时计时器而非清除
         this._startReplyTimer();
         this.onThinking?.();
         break;
 
       case "blocked":
+        this._captureSessionId(msg);
         this._cancelled = true; // 防止后续幽灵 stream/end
         this._replyActive = false;
         this._clearReplyTimer();
@@ -275,6 +284,7 @@ export class WSClient {
         break;
 
       case "end":
+        this._captureSessionId(msg);
         if (this._cancelled) { this._cancelled = false; break; } // 已取消，忽略
         if (!this._replyActive) break; // 回复未激活，忽略（防止幽灵 end 创建气泡）
         this._replyActive = false;
@@ -300,6 +310,7 @@ export class WSClient {
         break;
 
       case "error":
+        this._captureSessionId(msg);
         this._replyActive = false;
         this._clearReplyTimer();
         this.onError?.(msg.message ?? "AI 服务异常，请稍后重试");

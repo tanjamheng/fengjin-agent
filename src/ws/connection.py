@@ -55,11 +55,10 @@ async def websocket_endpoint(websocket: WebSocket):
         memory_retriever=memory_mgr.retriever if memory_mgr else None,
     )
 
-    # 创建新会话
-    session = session_mgr.create_session()
+    # 不预先创建会话——等用户发送第一条消息时才创建（对齐主流 LLM 产品行为）
     await websocket.send_json({
         "type": "connected",
-        "session_id": session.session_id,
+        "session_id": "",
     })
 
     # 流任务状态
@@ -236,8 +235,11 @@ async def _handle_user_msg(
     logger = log.bind(trace_id=trace_id)
     logger.info("处理 user_msg: {}", user_content[:50])
 
+    # 首次发送消息时会在 _ensure_session 中创建会话，此处获取 session_id 传回前端
+    current_sid = session_mgr.get_current_session_id() or ""
+
     try:
-        await websocket.send_json({"type": "thinking"})
+        await websocket.send_json({"type": "thinking", "session_id": current_sid})
         full_text = ""
         async for token in stream_reply(
             user_content, session_mgr, safety, controller, client, config, context_mgr,
@@ -256,6 +258,7 @@ async def _handle_user_msg(
             "type": "end",
             "full_text": full_text,
             "action": "idle",
+            "session_id": current_sid,
         })
 
     except BlockedError as e:
@@ -263,6 +266,7 @@ async def _handle_user_msg(
             "type": "blocked",
             "message": e.message,
             "category": e.category,
+            "session_id": current_sid,
         })
 
     except asyncio.CancelledError:
@@ -278,6 +282,7 @@ async def _handle_user_msg(
             await websocket.send_json({
                 "type": "error",
                 "message": "AI 服务暂时不可用，请稍后重试",
+                "session_id": current_sid,
             })
         except Exception as send_err:
             logger.warning("发送 error 报文失败（连接可能已断）: {}", send_err)
