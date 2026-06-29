@@ -78,12 +78,12 @@ html, body {
   user-select: text;
 }
 
-/* ===== 标题栏 ===== */
+/* ===== 标题栏（Windows 11 标准：32px 高） ===== */
 .titlebar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 36px;
+  height: 32px;
   padding: 0 12px;
   background: linear-gradient(90deg, var(--color-titlebar-start) 0%, var(--color-titlebar-end) 100%);
   -webkit-app-region: drag;
@@ -92,38 +92,44 @@ html, body {
 .titlebar__title {
   font-size: 13px;
   font-weight: 500;
-  line-height: 1.0;
   color: #4A3A5A;
+  line-height: 32px;
 }
 
 .titlebar__controls {
   display: flex;
-  gap: 2px;
+  height: 100%;
   -webkit-app-region: no-drag;
 }
 
 .titlebar__btn {
-  width: 32px;
-  height: 26px;
+  width: 46px;
+  height: 100%;
   border: none;
   background: transparent;
   color: #4A3A5A;
-  font-size: 14px;
-  line-height: 26px;
+  font-family: 'Segoe MDL2 Assets', 'Segoe UI', sans-serif;
+  font-size: 10px;
   cursor: pointer;
-  border-radius: var(--radius-xs);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 200ms ease;
+  transition: background 0.1s ease;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar__btn--pin {
+  font-family: inherit;
+  font-size: 13px;
 }
 
 .titlebar__btn:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .titlebar__btn--close:hover {
-  background: var(--color-status-offline);
+  background: #E81123;
+  color: #ffffff;
 }
 
 .titlebar__btn--active {
@@ -133,7 +139,7 @@ html, body {
 /* ===== 主布局 (38% / 42% / 20%) ===== */
 .main-layout {
   display: flex;
-  height: calc(100% - 36px - 28px); /* 减去标题栏 36px + 状态栏 28px */
+  height: calc(100% - 32px - 28px); /* 减去标题栏 32px + 状态栏 28px */
 }
 
 /* 左侧：角色展示区 38% */
