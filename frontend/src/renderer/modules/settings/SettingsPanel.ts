@@ -17,6 +17,13 @@ const TABS: TabDef[] = [
   { id: "model", label: "模型配置", icon: "⚙" },
 ];
 
+/** 眼睛图标 — 闭眼（密码隐藏中，点击显示） */
+const EYE_HIDDEN =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 0-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+/** 眼睛图标 — 睁眼（密码可见中，点击隐藏） */
+const EYE_VISIBLE =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+
 export interface ModelConfig {
   api_key: string | null;  // null = 不改
   base_url: string | null;
@@ -276,18 +283,25 @@ export class SettingsPanel {
     toggleLabel.className = "settings-toggle-label";
     toggleLabel.id = "settings-toggle-label";
 
+    const helpBubble = document.createElement("span");
+    helpBubble.className = "help-bubble";
+    helpBubble.textContent = "?";
+    helpBubble.title = "开启后，风堇会记住你们之间的对话，变得越来越懂你";
+
     const toggle = document.createElement("button");
-    toggle.className = `settings-toggle ${this._data.memory_enabled ? "settings-toggle--on" : ""}`;
-    toggle.textContent = this._data.memory_enabled ? "开" : "关";
+    toggle.className = `toggle-switch ${this._data.memory_enabled ? "toggle-switch--on" : ""}`;
     toggle.setAttribute("role", "switch");
     toggle.setAttribute("aria-checked", String(this._data.memory_enabled));
     toggle.setAttribute("aria-labelledby", "settings-toggle-label");
+    const knob = document.createElement("span");
+    knob.className = "toggle-switch__knob";
+    toggle.appendChild(knob);
     toggle.addEventListener("click", () => {
       this._data.memory_enabled = !this._data.memory_enabled;
-      toggle.classList.toggle("settings-toggle--on", this._data.memory_enabled);
-      toggle.textContent = this._data.memory_enabled ? "开" : "关";
+      toggle.classList.toggle("toggle-switch--on", this._data.memory_enabled);
       toggle.setAttribute("aria-checked", String(this._data.memory_enabled));
-      // 灰色不可编辑的视觉
+      // 记忆 section 整体灰/亮切换（保留 toggle row 可点击）
+      memSection.classList.toggle("settings-section--disabled", !this._data.memory_enabled);
       const inputs = memSection.querySelectorAll<HTMLInputElement>("input");
       inputs.forEach((inp) => {
         inp.disabled = !this._data.memory_enabled;
@@ -297,10 +311,12 @@ export class SettingsPanel {
     });
 
     toggleRow.appendChild(toggleLabel);
+    toggleRow.appendChild(helpBubble);
     toggleRow.appendChild(toggle);
     memSection.insertBefore(toggleRow, memSection.firstChild);
 
     if (!this._data.memory_enabled) {
+      memSection.classList.add("settings-section--disabled");
       memSection.querySelectorAll<HTMLInputElement>("input").forEach((inp) => {
         inp.disabled = true;
         (inp.parentElement as HTMLElement)?.classList.add("settings-field--disabled");
@@ -348,17 +364,34 @@ export class SettingsPanel {
       input.id = inputId;
       input.type = f.type;
       input.value = cfg[f.key] ?? "";
-      input.placeholder = f.type === "password" ? "输入以更新" : "";
+      input.placeholder = "";
       input.autocomplete = f.type === "password" ? "new-password" : "off";
-      // API Key 脱敏显示
-      if (f.key === "api_key" && cfg[f.key] && cfg[f.key]!.startsWith("****")) {
-        input.value = "";  // 不显示脱敏后的值，留空让用户重新输入
-        input.placeholder = "输入新的 API Key（留空则不变）";
-      }
+      // API Key: password 类型默认黑点遮蔽真实值，不设 placeholder
       input.addEventListener("input", () => this._markDirty());
 
       row.appendChild(label);
-      row.appendChild(input);
+
+      // input 外包一层容器（给密码眼睛按钮提供定位锚点）
+      const inputWrap = document.createElement("div");
+      inputWrap.className = "settings-field-input-wrap";
+      inputWrap.appendChild(input);
+      row.appendChild(inputWrap);
+
+      // API Key 眼睛切换（显示/隐藏）
+      if (f.type === "password") {
+        const eyeBtn = document.createElement("button");
+        eyeBtn.className = "eye-btn";
+        eyeBtn.setAttribute("type", "button");
+        eyeBtn.setAttribute("aria-label", "显示 API Key");
+        eyeBtn.innerHTML = EYE_HIDDEN;
+        eyeBtn.addEventListener("click", () => {
+          const isHidden = input.type === "password";
+          input.type = isHidden ? "text" : "password";
+          eyeBtn.setAttribute("aria-label", isHidden ? "隐藏 API Key" : "显示 API Key");
+          eyeBtn.innerHTML = isHidden ? EYE_VISIBLE : EYE_HIDDEN;
+        });
+        inputWrap.appendChild(eyeBtn);
+      }
 
       if (f.hint) {
         const hint = document.createElement("div");

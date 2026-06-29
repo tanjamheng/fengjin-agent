@@ -10,6 +10,10 @@
 
 import { CONFIG } from "../../config";
 
+/** 停止按钮图标（圆角填充方块，网页版大模型风格） */
+const STOP_ICON =
+  '<svg class="chat-send-stop-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2.5"/></svg>';
+
 export class InputController {
   private _textarea: HTMLTextAreaElement;
   private _button: HTMLButtonElement;
@@ -119,8 +123,11 @@ export class InputController {
   }
 
   private _updateButtonState(): void {
+    // 切换前清除图标态残留的 aria-label（图标无文字，需语义标签；文字态不需要）
+    this._button.removeAttribute("aria-label");
     if (this._sending) {
-      this._button.textContent = "停止";
+      this._button.innerHTML = STOP_ICON;
+      this._button.setAttribute("aria-label", "停止");
       this._button.className = "chat-send-btn chat-send-btn--stop";
       this._button.disabled = false;
       return;
@@ -143,7 +150,11 @@ export class InputController {
 
   private _autoResize(): void {
     this._textarea.style.height = "auto";
-    const newHeight = Math.min(this._textarea.scrollHeight, CONFIG.input.maxHeight);
-    this._textarea.style.height = `${Math.max(newHeight, CONFIG.input.minHeight)}px`;
+    // border-box 下 height 含 border，而 scrollHeight 只含 padding+content。
+    // 必须补上 border 厚度，否则内容刚好填满时会少算 border → 误显滚动条 + 滚动条穿出。
+    const cs = getComputedStyle(this._textarea);
+    const borderH = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    const target = Math.min(this._textarea.scrollHeight + borderH, CONFIG.input.maxHeight);
+    this._textarea.style.height = `${Math.max(target, CONFIG.input.minHeight)}px`;
   }
 }

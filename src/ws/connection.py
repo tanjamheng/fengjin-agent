@@ -185,9 +185,10 @@ async def websocket_endpoint(websocket: WebSocket):
             # ── get_config ──
             elif msg_type == "get_config":
                 from ..server.config_manager import ConfigManager
+                cfg = ConfigManager.get_current_config()
                 await websocket.send_json({
                     "type": "current_config",
-                    **ConfigManager.get_current_config(),
+                    **cfg,
                 })
 
             # ── update_config ──

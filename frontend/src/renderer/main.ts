@@ -275,40 +275,41 @@ sidebar.onClearAll = () => {
 };
 
 sidebar.onOpenSettings = async () => {
-  if (_settingsPanelVisible) return; // P1-FIX: 重入守卫，防止双击创建多个面板
+  if (_settingsPanelVisible) return;
   _settingsPanelVisible = true;
-  // 先获取当前配置
-  ws.getConfig();
-  // 用已有数据或默认空值初始化面板
-  const initial = _settingsData ?? {
-    main: { api_key: "****", base_url: "", model: "" },
-    memory: { api_key: "****", base_url: "", model: "" },
+
+  // 请求最新配置并等待返回，用新鲜数据初始化面板（消除 updateData 异步重渲染竞态）
+  const freshConfig = await new Promise<SettingsData | null>((resolve) => {
+    const orig = ws.onCurrentConfig;
+    const timeout = setTimeout(() => { ws.onCurrentConfig = orig; resolve(null); }, 3000);
+    ws.onCurrentConfig = (data) => {
+      clearTimeout(timeout);
+      ws.onCurrentConfig = orig;
+      _settingsData = {
+        main: data.main,
+        memory: data.memory,
+        memory_enabled: data.memory_enabled,
+      };
+      resolve(_settingsData);
+    };
+    ws.getConfig();
+  });
+
+  const initial: SettingsData = freshConfig || {
+    main: { api_key: "", base_url: "", model: "" },
+    memory: { api_key: "", base_url: "", model: "" },
     memory_enabled: false,
   };
-  // 传入触发按钮引用，用于焦点恢复
   const triggerBtn = document.querySelector<HTMLElement>(".sidebar__settings-btn") ?? undefined;
   const panel = new SettingsPanel(initial, triggerBtn);
-	_settingsPanelClose = () => panel.close(); // R3 补漏：供 onConfigUpdated 清理 DOM
-  // getConfig 回调会更新数据
-  const origOnConfig = ws.onCurrentConfig;
-  ws.onCurrentConfig = (data) => {
-    _settingsData = {
-      main: data.main,
-      memory: data.memory,
-      memory_enabled: data.memory_enabled,
-    };
-    panel.updateData(_settingsData);
-    ws.onCurrentConfig = origOnConfig;
-  };
+  _settingsPanelClose = () => panel.close();
+
   const result = await panel.show();
-  // 无论取消还是确认，立即恢复原回调，防止取消路径泄漏
-  ws.onCurrentConfig = origOnConfig;
   if (!result) {
     _settingsPanelVisible = false;
-    return; // 取消
+    return;
   }
 
-  // 构建 update payload：null = 不改
   const main = {
     api_key: result.main.api_key,
     base_url: result.main.base_url,
@@ -320,7 +321,6 @@ sidebar.onOpenSettings = async () => {
     model: result.memory.model,
   };
   ws.updateConfig(main, memory, result.memory_enabled);
-  // _settingsPanelVisible 由 onConfigUpdated 回调负责清除，不在此时清
 };
 
 // ===== 连接 =====

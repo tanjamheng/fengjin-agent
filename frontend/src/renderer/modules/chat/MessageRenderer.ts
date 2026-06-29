@@ -32,14 +32,6 @@ export class MessageRenderer {
   appendAIStreamChunk(text: string): void {
     if (!this._aiBubble) {
       const wrapper = this._createWrapper("ai");
-
-      // 星星图标
-      const star = document.createElement("span");
-      star.className = "chat-message__star";
-      star.textContent = "★"; // ★
-      star.setAttribute("aria-label", "风堇回复");
-      wrapper.appendChild(star);
-
       this._aiBubble = document.createElement("div");
       this._aiBubble.className = "chat-message--ai";
       wrapper.appendChild(this._aiBubble);
@@ -92,13 +84,6 @@ export class MessageRenderer {
     if (!Array.isArray(messages)) return;
     for (const msg of messages) {
       const wrapper = this._createWrapper(msg.role);
-      if (msg.role === "assistant") {
-        const star = document.createElement("span");
-        star.className = "chat-message__star";
-        star.textContent = "★";
-        star.setAttribute("aria-label", "风堇回复");
-        wrapper.appendChild(star);
-      }
       const bubble = this._createBubble(msg.role, msg.content);
       wrapper.appendChild(bubble);
       this._container.appendChild(wrapper);

@@ -231,12 +231,12 @@ class ConfigManager:
 
         return {
             "main": {
-                "api_key": mask_key(main_ak),
+                "api_key": main_ak,  # 完整值，前端 type=password 黑点遮蔽 + 眼睛切换
                 "base_url": os.environ.get("FENGJIN_BASE_URL", ""),
                 "model": os.environ.get("FENGJIN_MODEL", ""),
             },
             "memory": {
-                "api_key": mask_key(memo_ak),
+                "api_key": memo_ak,  # 同上
                 "base_url": os.environ.get("MEMO_BASE_URL", ""),
                 "model": os.environ.get("MEMO_MODEL", ""),
             },
