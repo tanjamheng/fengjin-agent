@@ -42,6 +42,7 @@
 | # | 陷阱 | 说明 |
 |---|------|------|
 | 1 | **PowerShell 中不要用 `git commit -m @'...'@`** | here-string 的 `@'` 会被当作文本的一部分混入提交消息，导致消息以 `@ ` 开头。正确做法：先 `$msg = @'...'@` 赋值变量，再 `git commit -m $msg` |
+| 2 | **禁止提交任何中文文档** | `核心文档/`、`重要文档/`、`前端开发核心文档/`、`*.md`（中文设计/规范/流程文档）已被 `.gitignore` 忽略。git add 会报 `ignored by .gitignore`。**永远不要用 `-f` 强制提交中文文档**——它们是本地工作副本，不入仓库。只提交 `src/`、`frontend/src/`、`config/`、`main.py`、`requirements.txt`、`CLAUDE.md`、`start.bat` 等代码文件 |
 
 ---
 

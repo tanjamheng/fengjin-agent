@@ -125,6 +125,8 @@ ws.onConnected = (sessionId: string) => {
   if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
   _loadingSession = false;
   _loadingSessionId = null;
+  _settingsPanelClose?.(); _settingsPanelClose = null; // 重连时清理残留设置面板句柄
+  _settingsPanelVisible = false;
   appState.currentSessionId = sessionId;
   appState.isReplying = false;
   chat.clearMessages();
@@ -169,7 +171,18 @@ ws.onConfigUpdated = (result) => {
 		_settingsPanelClose?.(); _settingsPanelClose = null;
   }
   actions.insertBefore(hint, actions.firstChild);
-  if (result.success) setTimeout(() => { hint.remove(); _settingsPanelClose?.(); _settingsPanelClose = null; _settingsPanelVisible = false; }, 3000);
+  if (result.success) {
+    // 快照当前句柄；3s 后仅在未被替换（用户未重开新面板）时才关闭，防止旧回调误关新面板
+    const closeFn = _settingsPanelClose;
+    setTimeout(() => {
+      hint.remove();
+      if (_settingsPanelClose === closeFn) {
+        closeFn?.();
+        _settingsPanelClose = null;
+        _settingsPanelVisible = false;
+      }
+    }, 3000);
+  }
 };
 
 ws.onStatusChange = (status) => {
