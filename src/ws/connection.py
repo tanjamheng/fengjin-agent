@@ -241,13 +241,22 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 # 成功后：写 .env（持久化）+ 更新局部引用
-                ConfigManager.update_env_file(main_cfg, memory_cfg, memory_enabled)
+                env_persisted = ConfigManager.update_env_file(main_cfg, memory_cfg, memory_enabled)
                 client = websocket.app.state.client
                 memory_mgr = getattr(websocket.app.state, "memory_manager", None)
                 context_mgr = ContextManager(
                     websocket.app.state.context_config,
                     memory_retriever=memory_mgr.retriever if memory_mgr else None,
                 )
+
+                # 持久化失败：运行时已生效，但重启后回滚——必须告知用户（红线8：静默失败零容忍）
+                if not env_persisted:
+                    await websocket.send_json({
+                        "type": "config_updated",
+                        "success": False,
+                        "errors": ["配置已生效，但持久化失败，重启后端后将回滚"],
+                    })
+                    continue
 
                 await websocket.send_json({
                     "type": "config_updated",

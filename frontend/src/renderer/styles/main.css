@@ -959,8 +959,8 @@ html, body {
   cursor: pointer;
   font-family: inherit;
   font-weight: 500;
-  background: #ddd;
-  color: #888;
+  background: #E0DCE8;
+  color: #6A6A7A;
   transition: all 150ms ease;
   min-width: 44px;
 }

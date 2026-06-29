@@ -233,6 +233,8 @@ export class SettingsPanel {
     activeBtn?.classList.add("settings-tab--active");
     activeBtn?.setAttribute("aria-selected", "true");
     this._renderTab(id);
+    this._collectFocusable(); // tab 切换后内容区 DOM 已变，重新收集可聚焦元素
+    if (this._focusableElements.length > 0) this._focusableElements[0].focus();
   }
 
   private _renderTab(id: TabId): void {
