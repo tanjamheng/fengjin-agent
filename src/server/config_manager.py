@@ -35,10 +35,11 @@ class ConfigManager:
     }
 
     @staticmethod
-    def update_env_file(main: dict, memory: dict) -> bool:
+    def update_env_file(main: dict, memory: dict, memory_enabled: bool | None = None) -> bool:
         """原子写入 .env：先写 .tmp 再 os.replace
 
         main/memory 中的 null 值表示该字段不更新，保持原值。
+        memory_enabled 为 None 表示不更新，否则写入 MEMORY_ENABLED=true/false。
         """
         env_path = _PROJECT_ROOT / ".env"
         if not env_path.exists():
@@ -56,9 +57,15 @@ class ConfigManager:
                     continue  # null = 不改
                 updates[env_key] = str(val).strip()
 
+        # 记忆开关（独立键，不在 _KEY_MAP 中）
+        if memory_enabled is not None:
+            updates["MEMORY_ENABLED"] = "true" if memory_enabled else "false"
+
         if not updates:
             log.info("配置无变更，跳过写入")
             return True
+
+        initial_count = len(updates)
 
         # 逐行读取、替换、写入临时文件
         tmp_path = env_path.with_suffix(".env.tmp")
@@ -87,7 +94,9 @@ class ConfigManager:
 
             # 原子替换
             os.replace(tmp_path, env_path)
-            log.info(".env 配置已更新 ({} 项)", len(updates) + len(updates))
+            replaced = initial_count - len(updates)
+            appended = len(updates)
+            log.info(".env 配置已更新 ({} 替换, {} 新增)", replaced, appended)
             return True
 
         except Exception as e:
@@ -204,6 +213,13 @@ class ConfigManager:
         main_ak = os.environ.get("FENGJIN_API_KEY", "")
         memo_ak = os.environ.get("MEMO_API_KEY", "")
 
+        # 记忆开关: 优先读 MEMORY_ENABLED 持久化值，回退到 API Key 推断
+        mem_enabled_str = os.environ.get("MEMORY_ENABLED", "")
+        if mem_enabled_str:
+            memory_enabled = mem_enabled_str.lower() == "true"
+        else:
+            memory_enabled = memo_ak != ""
+
         return {
             "main": {
                 "api_key": mask_key(main_ak),
@@ -215,7 +231,7 @@ class ConfigManager:
                 "base_url": os.environ.get("MEMO_BASE_URL", ""),
                 "model": os.environ.get("MEMO_MODEL", ""),
             },
-            "memory_enabled": os.environ.get("MEMO_API_KEY", "") != "",
+            "memory_enabled": memory_enabled,
         }
 
 

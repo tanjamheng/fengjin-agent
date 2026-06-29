@@ -162,9 +162,10 @@ ws.onConfigUpdated = (result) => {
   } else if (result.errors) {
     hint.style.color = "var(--color-status-offline)";
     hint.textContent = result.errors.join("; ");
+    _settingsPanelVisible = false; // 错误时允许重新打开设置
   }
   actions.insertBefore(hint, actions.firstChild);
-  if (result.success) setTimeout(() => hint.remove(), 3000);
+  if (result.success) setTimeout(() => { hint.remove(); _settingsPanelVisible = false; }, 3000);
 };
 
 ws.onStatusChange = (status) => {
@@ -176,6 +177,7 @@ ws.onStatusChange = (status) => {
     if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
     _loadingSession = false;
     _loadingSessionId = null;
+    _settingsPanelVisible = false; // 断线时重置设置面板可见性
     appState.isReplying = false;
     chat.endReplyMode();
     sidebar.setDisabled(false);
@@ -255,6 +257,7 @@ sidebar.onClearAll = () => {
 };
 
 sidebar.onOpenSettings = async () => {
+  if (_settingsPanelVisible) return; // P1-FIX: 重入守卫，防止双击创建多个面板
   _settingsPanelVisible = true;
   // 先获取当前配置
   ws.getConfig();
@@ -277,8 +280,12 @@ sidebar.onOpenSettings = async () => {
     ws.onCurrentConfig = origOnConfig;
   };
   const result = await panel.show();
-  _settingsPanelVisible = false;
-  if (!result) return; // 取消
+  // 无论取消还是确认，立即恢复原回调，防止取消路径泄漏
+  ws.onCurrentConfig = origOnConfig;
+  if (!result) {
+    _settingsPanelVisible = false;
+    return; // 取消
+  }
 
   // 构建 update payload：null = 不改
   const main = {
@@ -292,6 +299,7 @@ sidebar.onOpenSettings = async () => {
     model: result.memory.model,
   };
   ws.updateConfig(main, memory, result.memory_enabled);
+  // _settingsPanelVisible 由 onConfigUpdated 回调负责清除，不在此时清
 };
 
 // ===== 连接 =====

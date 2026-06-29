@@ -73,6 +73,8 @@ export class SettingsPanel {
   private _build(): void {
     this._overlay = document.createElement("div");
     this._overlay.className = "dialog-overlay settings-overlay";
+    this._overlay.setAttribute("role", "dialog");
+    this._overlay.setAttribute("aria-modal", "true");
     this._overlay.addEventListener("click", (e) => {
       if (e.target === this._overlay) this._close(null);
     });
@@ -167,7 +169,7 @@ export class SettingsPanel {
   }
 
   private _renderTab(id: TabId): void {
-    const content = this._overlay.querySelector("#settings-content");
+    const content = this._overlay.querySelector<HTMLElement>("#settings-content");
     if (!content) return;
     content.innerHTML = "";
 
@@ -179,7 +181,7 @@ export class SettingsPanel {
   // ---- 模型配置 Tab ----
 
   private _renderModelTab(): void {
-    const content = this._overlay.querySelector("#settings-content");
+    const content = this._overlay.querySelector<HTMLElement>("#settings-content");
     if (!content) return;
     content.innerHTML = "";
     this._renderModelTabInto(content);
@@ -256,15 +258,20 @@ export class SettingsPanel {
       const row = document.createElement("div");
       row.className = "settings-field";
 
+      const inputId = `settings-${sectionKey}-${f.key}`;
+
       const label = document.createElement("label");
       label.className = "settings-field-label";
       label.textContent = f.label;
+      label.setAttribute("for", inputId);
 
       const input = document.createElement("input");
       input.className = "settings-field-input";
+      input.id = inputId;
       input.type = f.type;
       input.value = cfg[f.key] ?? "";
       input.placeholder = f.type === "password" ? "输入以更新" : "";
+      input.autocomplete = f.type === "password" ? "new-password" : "off";
       // API Key 脱敏显示
       if (f.key === "api_key" && cfg[f.key] && cfg[f.key]!.startsWith("****")) {
         input.value = "";  // 不显示脱敏后的值，留空让用户重新输入
@@ -320,10 +327,9 @@ export class SettingsPanel {
   private async _save(): Promise<void> {
     this._readForm();
 
-    // 必填校验：主模型的三个字段，如果原来就是空的且没填，则报错
-    const mainEmpty = !this._data.main.api_key && !this._data.main.base_url && !this._data.main.model;
-    if (mainEmpty) {
-      return;  // 全空说明用户没有填任何东西，忽略
+    // 无任何修改（含纯记忆字段保存时 _dirty 已由 _markDirty 设为 true）
+    if (!this._dirty) {
+      return;
     }
 
     if (this._resolve) {

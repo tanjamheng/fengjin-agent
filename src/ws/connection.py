@@ -195,7 +195,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 main_cfg = data.get("main", {})
                 memory_cfg = data.get("memory", {})
-                memory_enabled = bool(data.get("memory_enabled", True))
+                memory_enabled = bool(data.get("memory_enabled", False))
 
                 # 校验主模型
                 errors = _validate_config(main_cfg, "主模型")
@@ -210,8 +210,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     continue
 
-                # 写 .env
-                if not ConfigManager.update_env_file(main_cfg, memory_cfg):
+                # 写 .env + 记忆开关
+                if not ConfigManager.update_env_file(main_cfg, memory_cfg, memory_enabled):
                     await websocket.send_json({
                         "type": "config_updated",
                         "success": False,
@@ -219,13 +219,23 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     continue
 
-                # 更新 os.environ
-                ConfigManager.apply_to_os_environ(main_cfg, memory_cfg)
+                # 重建客户端（内部 reload_dotenv → 读配置）
+                try:
+                    await ConfigManager.rebuild_clients(
+                        websocket.app, main_cfg, memory_cfg, memory_enabled,
+                    )
+                except Exception as e:
+                    log.opt(exception=True).error("配置热更新失败: {}", e)
+                    await websocket.send_json({
+                        "type": "config_updated",
+                        "success": False,
+                        "errors": ["配置热更新失败，请重启后端"],
+                    })
+                    continue
 
-                # 重建客户端
-                await ConfigManager.rebuild_clients(
-                    websocket.app, main_cfg, memory_cfg, memory_enabled,
-                )
+                # 成功后：同步 os.environ + 更新局部 client 引用（防止后续 user_msg 用旧 client）
+                ConfigManager.apply_to_os_environ(main_cfg, memory_cfg)
+                client = websocket.app.state.client
 
                 await websocket.send_json({
                     "type": "config_updated",

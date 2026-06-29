@@ -6,6 +6,7 @@ import type {
   ServerMessage,
   SessionMeta,
   ChatMessage,
+  ServerCurrentConfig,
 } from "../../types/protocol";
 
 /**
@@ -51,7 +52,7 @@ export class WSClient {
   // 会话ID变更回调（首次消息创建会话、加载历史等场景）
   onSessionChanged?: (sessionId: string) => void;
   // 配置回调
-  onCurrentConfig?: (config: any) => void;
+  onCurrentConfig?: (config: ServerCurrentConfig) => void;
   onConfigUpdated?: (result: { success: boolean; errors?: string[] }) => void;
 
   // ---- 公开属性 ----

@@ -7,6 +7,8 @@ export function showConfirm(message: string): Promise<boolean> {
     // 遮罩
     const overlay = document.createElement("div");
     overlay.className = "dialog-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
 
     // 卡片
     const card = document.createElement("div");
