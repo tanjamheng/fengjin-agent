@@ -415,11 +415,12 @@ html, body {
 
 .chat-send-btn--stop {
   border-color: var(--color-status-offline);
-  color: var(--color-status-offline);
+  color: #C9302C;
 }
 
 .chat-send-btn--stop:hover {
   background: #FFE0E0;
+  color: #B02020;
 }
 
 /* ===== 滚动提示 ===== */
@@ -569,7 +570,7 @@ html, body {
   height: 32px;
   border: none;
   background: transparent;
-  color: #888;
+  color: #707070;
   font-size: 20px;
   cursor: pointer;
   border-radius: 50%;
@@ -794,7 +795,7 @@ html, body {
 }
 .dialog-btn--cancel {
   background: rgba(180, 160, 200, 0.15);
-  color: #7A6A8A;
+  color: #6E5E7E;
 }
 .dialog-btn--cancel:hover {
   background: rgba(180, 160, 200, 0.25);
@@ -960,7 +961,7 @@ html, body {
   font-family: inherit;
   font-weight: 500;
   background: #E0DCE8;
-  color: #6A6A7A;
+  color: #4A4A5A;
   transition: all 150ms ease;
   min-width: 44px;
 }
