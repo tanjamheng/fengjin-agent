@@ -1,4 +1,5 @@
 import type { SessionMeta } from "../../types/protocol";
+import { showConfirm } from "../../utils/dialog";
 
 /**
  * HistorySidebar — 历史侧边栏 DOM 管理
@@ -67,11 +68,10 @@ export class HistorySidebar {
     const clearAllBtn = document.createElement("button");
     clearAllBtn.className = "sidebar__clear-all";
     clearAllBtn.textContent = "清空全部";
-    clearAllBtn.addEventListener("click", () => {
+    clearAllBtn.addEventListener("click", async () => {
       if (this._disabled) return;
-      if (window.confirm("确定清空全部历史对话？此操作不可撤销")) {
-        this.onClearAll?.();
-      }
+      const ok = await showConfirm("确定清空全部历史对话？此操作不可撤销");
+      if (ok) this.onClearAll?.();
     });
     footer.appendChild(clearAllBtn);
     this._container.appendChild(footer);
@@ -162,9 +162,13 @@ export class HistorySidebar {
     delBtn.className = "sidebar__item-delete";
     delBtn.textContent = "×";
     delBtn.setAttribute("aria-label", `删除会话: ${session.title}`);
-    delBtn.addEventListener("click", (e) => {
+    delBtn.title = "删除此会话";
+    delBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (!this._disabled) this.onDeleteSession?.(session.id);
+      if (this._disabled) return;
+      const ok = await showConfirm(`确定删除会话「${session.title || "新对话"}」？此操作不可撤销`);
+      if (!ok) return;
+      this.onDeleteSession?.(session.id);
     });
     item.appendChild(delBtn);
 
