@@ -691,7 +691,19 @@ html, body {
   .sidebar__settings-btn,
   .sidebar__item,
   .sidebar__item-delete,
-  .sidebar__tooltip,
+  .sidebar__tooltip {
+    transition: none !important;
+  }
+
+  .dialog-overlay {
+    transition: none !important;
+  }
+
+  .dialog-card,
+  .settings-card {
+    transition: none !important;
+    transform: none !important;
+  }
 }
 
 *:focus-visible {

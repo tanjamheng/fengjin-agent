@@ -190,41 +190,4 @@ export class HistorySidebar {
     if (days < 7) return `${days} 天前`;
     return "更早";
   }
-
-  private _tooltipTimer: ReturnType<typeof setTimeout> | null = null;
-
-  private _showTooltip(anchor: HTMLElement, text: string): void {
-    // 清除上一次的 tooltip 定时器，防止快速点击堆积
-    if (this._tooltipTimer !== null) {
-      clearTimeout(this._tooltipTimer);
-      this._tooltipTimer = null;
-    }
-
-    // 移除已有 tooltip DOM
-    const existing = document.querySelector(".sidebar__tooltip");
-    if (existing) existing.remove();
-
-    const tooltip = document.createElement("div");
-    tooltip.className = "sidebar__tooltip";
-    tooltip.setAttribute("role", "tooltip");
-    tooltip.textContent = text;
-
-    const rect = anchor.getBoundingClientRect();
-    tooltip.style.left = `${rect.left - 160}px`;
-    tooltip.style.top = `${rect.top}px`;
-
-    document.body.appendChild(tooltip);
-
-    // 淡入
-    requestAnimationFrame(() => {
-      tooltip.style.opacity = "1";
-    });
-
-    // 2s 后自动消失
-    this._tooltipTimer = setTimeout(() => {
-      tooltip.style.opacity = "0";
-      setTimeout(() => tooltip.remove(), 200);
-      this._tooltipTimer = null;
-    }, 2000);
-  }
 }
