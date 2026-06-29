@@ -174,7 +174,7 @@ class ConfigManager:
             old_mgr = getattr(app.state, "memory_manager", None)
             try:
                 if memory_enabled:
-                    _reload_dotenv()
+                    # 不调 _reload_dotenv()——connection.py 已在 rebuild 前 apply_to_os_environ
                     mem_settings = MemorySettings.load(
                         str(_PROJECT_ROOT / "config" / "memory.yaml")
                     ).memory
