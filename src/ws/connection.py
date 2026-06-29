@@ -233,9 +233,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     continue
 
-                # 成功后：同步 os.environ + 更新局部 client 引用（防止后续 user_msg 用旧 client）
-                ConfigManager.apply_to_os_environ(main_cfg, memory_cfg)
+                # 成功后：同步 os.environ + 更新局部引用（防止后续请求用旧实例）
+                ConfigManager.apply_to_os_environ(main_cfg, memory_cfg, memory_enabled)
                 client = websocket.app.state.client
+                memory_mgr = getattr(websocket.app.state, "memory_manager", None)
+                context_mgr = ContextManager(
+                    websocket.app.state.context_config,
+                    memory_retriever=memory_mgr.retriever if memory_mgr else None,
+                )
 
                 await websocket.send_json({
                     "type": "config_updated",

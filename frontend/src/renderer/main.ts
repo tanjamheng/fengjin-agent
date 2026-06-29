@@ -149,19 +149,21 @@ ws.onCurrentConfig = (data) => {
 ws.onConfigUpdated = (result) => {
   if (!_settingsPanelVisible) return;
   const actions = document.querySelector(".settings-actions");
-  if (!actions) return;
+  if (!actions) { _settingsPanelVisible = false; return; }
   // 清除旧提示
   actions.querySelector(".settings-saved-hint")?.remove();
   const hint = document.createElement("span");
   hint.className = "settings-saved-hint";
   hint.style.fontSize = "12px";
   hint.style.lineHeight = "30px";
+  hint.setAttribute("role", "status");
+  hint.setAttribute("aria-live", "polite");
   if (result.success) {
     hint.style.color = "var(--color-status-online)";
-    hint.textContent = "✓ 已保存";
+    hint.textContent = "保存成功";
   } else if (result.errors) {
     hint.style.color = "var(--color-status-offline)";
-    hint.textContent = result.errors.join("; ");
+    hint.textContent = result.errors?.join("; ") ?? "配置更新失败";
     _settingsPanelVisible = false; // 错误时允许重新打开设置
   }
   actions.insertBefore(hint, actions.firstChild);
@@ -267,7 +269,9 @@ sidebar.onOpenSettings = async () => {
     memory: { api_key: "****", base_url: "", model: "" },
     memory_enabled: false,
   };
-  const panel = new SettingsPanel(initial);
+  // 传入触发按钮引用，用于焦点恢复
+  const triggerBtn = document.querySelector<HTMLElement>(".sidebar__settings-btn") ?? undefined;
+  const panel = new SettingsPanel(initial, triggerBtn);
   // getConfig 回调会更新数据
   const origOnConfig = ws.onCurrentConfig;
   ws.onCurrentConfig = (data) => {

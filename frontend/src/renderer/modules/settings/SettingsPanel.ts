@@ -33,8 +33,8 @@ export class SettingsPanel {
   private _overlay!: HTMLElement;
   private _activeTab: TabId = "model";
   private _data: SettingsData;
-  private _original: SettingsData;  // 快照，用于取消恢复
   private _resolve: ((result: SettingsData | null) => void) | null = null;
+  private _triggerEl: HTMLElement | null = null;
 
   // 脏跟踪
   private _dirty = false;
@@ -42,9 +42,13 @@ export class SettingsPanel {
   // Tab 按钮引用
   private _tabBtns = new Map<TabId, HTMLElement>();
 
-  constructor(initialData: SettingsData) {
+  // 可聚焦元素缓存（用于焦点陷阱）
+  private _focusableElements: HTMLElement[] = [];
+  private _focusedIndex = -1;
+
+  constructor(initialData: SettingsData, triggerEl?: HTMLElement) {
     this._data = JSON.parse(JSON.stringify(initialData));
-    this._original = JSON.parse(JSON.stringify(initialData));
+    this._triggerEl = triggerEl || null;
   }
 
   /** 显示面板。返回 null 表示取消，返回 SettingsData 表示确认 */
@@ -63,7 +67,6 @@ export class SettingsPanel {
   /** 更新内存中的数据（get_config 返回后调用） */
   updateData(data: SettingsData): void {
     this._data = JSON.parse(JSON.stringify(data));
-    this._original = JSON.parse(JSON.stringify(data));
     this._dirty = false;
     this._renderModelTab();
   }
@@ -75,6 +78,9 @@ export class SettingsPanel {
     this._overlay.className = "dialog-overlay settings-overlay";
     this._overlay.setAttribute("role", "dialog");
     this._overlay.setAttribute("aria-modal", "true");
+    this._overlay.setAttribute("aria-label", "设置");
+
+    // 点击遮罩关闭
     this._overlay.addEventListener("click", (e) => {
       if (e.target === this._overlay) this._close(null);
     });
@@ -92,6 +98,8 @@ export class SettingsPanel {
     header.className = "settings-header";
     const h = document.createElement("span");
     h.textContent = "⚙ 设置";
+    h.id = "settings-dialog-title";
+    this._overlay.setAttribute("aria-labelledby", "settings-dialog-title");
     header.appendChild(h);
 
     // 主体：左侧 Tab + 右侧内容
@@ -138,17 +146,68 @@ export class SettingsPanel {
     // Escape 关闭
     this._keyHandler = (e: KeyboardEvent) => {
       if (e.key === "Escape") this._close(null);
+      if (e.key === "Tab") this._handleTabTrap(e);
     };
     document.addEventListener("keydown", this._keyHandler);
+
+    // 收集可聚焦元素并设置初始焦点
+    requestAnimationFrame(() => {
+      this._collectFocusable();
+      this._focusFirstElement();
+    });
+  }
+
+  // ---- 焦点陷阱 ----
+
+  private _collectFocusable(): void {
+    this._focusableElements = Array.from(
+      this._overlay.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter(el => !(el as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).disabled);
+  }
+
+  private _focusFirstElement(): void {
+    if (this._focusableElements.length > 0) {
+      this._focusableElements[0].focus();
+      this._focusedIndex = 0;
+    }
+  }
+
+  private _handleTabTrap(e: KeyboardEvent): void {
+    if (this._focusableElements.length === 0) {
+      this._collectFocusable();
+      if (this._focusableElements.length === 0) return;
+    }
+
+    const first = this._focusableElements[0];
+    const last = this._focusableElements[this._focusableElements.length - 1];
+
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
   }
 
   private _buildSidebar(): HTMLElement {
     const sidebar = document.createElement("div");
     sidebar.className = "settings-sidebar";
+    sidebar.setAttribute("role", "tablist");
+    sidebar.setAttribute("aria-label", "设置分类");
 
     for (const tab of TABS) {
       const btn = document.createElement("button");
       btn.className = "settings-tab";
+      btn.setAttribute("role", "tab");
+      btn.setAttribute("aria-selected", String(tab.id === this._activeTab));
+      btn.setAttribute("aria-controls", "settings-content");
       btn.textContent = `${tab.icon} ${tab.label}`;
       btn.addEventListener("click", () => this._switchTab(tab.id));
       if (tab.id === this._activeTab) {
@@ -163,8 +222,11 @@ export class SettingsPanel {
 
   private _switchTab(id: TabId): void {
     this._tabBtns.get(this._activeTab)?.classList.remove("settings-tab--active");
+    this._tabBtns.get(this._activeTab)?.setAttribute("aria-selected", "false");
     this._activeTab = id;
-    this._tabBtns.get(id)?.classList.add("settings-tab--active");
+    const activeBtn = this._tabBtns.get(id);
+    activeBtn?.classList.add("settings-tab--active");
+    activeBtn?.setAttribute("aria-selected", "true");
     this._renderTab(id);
   }
 
@@ -176,6 +238,10 @@ export class SettingsPanel {
     if (id === "model") {
       this._renderModelTabInto(content);
     }
+
+    // Tab 内容区绑定 tabpanel role
+    content.setAttribute("role", "tabpanel");
+    content.setAttribute("aria-label", TABS.find(t => t.id === id)?.label ?? "");
   }
 
   // ---- 模型配置 Tab ----
@@ -201,14 +267,19 @@ export class SettingsPanel {
     const toggleLabel = document.createElement("span");
     toggleLabel.textContent = "启用记忆";
     toggleLabel.className = "settings-toggle-label";
+    toggleLabel.id = "settings-toggle-label";
 
     const toggle = document.createElement("button");
     toggle.className = `settings-toggle ${this._data.memory_enabled ? "settings-toggle--on" : ""}`;
     toggle.textContent = this._data.memory_enabled ? "开" : "关";
+    toggle.setAttribute("role", "switch");
+    toggle.setAttribute("aria-checked", String(this._data.memory_enabled));
+    toggle.setAttribute("aria-labelledby", "settings-toggle-label");
     toggle.addEventListener("click", () => {
       this._data.memory_enabled = !this._data.memory_enabled;
       toggle.classList.toggle("settings-toggle--on", this._data.memory_enabled);
       toggle.textContent = this._data.memory_enabled ? "开" : "关";
+      toggle.setAttribute("aria-checked", String(this._data.memory_enabled));
       // 灰色不可编辑的视觉
       const inputs = memSection.querySelectorAll<HTMLInputElement>("input");
       inputs.forEach((inp) => {
@@ -329,6 +400,7 @@ export class SettingsPanel {
 
     // 无任何修改（含纯记忆字段保存时 _dirty 已由 _markDirty 设为 true）
     if (!this._dirty) {
+      this._close(null); // 无修改则直接关闭面板
       return;
     }
 
@@ -348,6 +420,10 @@ export class SettingsPanel {
       if (this._resolve) {
         this._resolve(result);
         this._resolve = null;
+      }
+      // 焦点恢复到触发元素
+      if (this._triggerEl) {
+        this._triggerEl.focus();
       }
     }, 200);
   }

@@ -109,7 +109,7 @@ class ConfigManager:
             return False
 
     @staticmethod
-    def apply_to_os_environ(main: dict, memory: dict) -> None:
+    def apply_to_os_environ(main: dict, memory: dict, memory_enabled: bool | None = None) -> None:
         """立即更新 os.environ（不写 .env，仅运行时生效）"""
         for section_name, section in [("main", main), ("memory", memory)]:
             for env_key, (sec, field) in ConfigManager._KEY_MAP.items():
@@ -120,6 +120,9 @@ class ConfigManager:
                     continue
                 os.environ[env_key] = str(val).strip()
                 log.debug("os.environ[{}] = {}", env_key, "***" if "KEY" in env_key else os.environ[env_key])
+        # 同步记忆开关（独立键）
+        if memory_enabled is not None:
+            os.environ["MEMORY_ENABLED"] = "true" if memory_enabled else "false"
 
     @staticmethod
     async def rebuild_clients(app, main: dict, memory: dict, memory_enabled: bool) -> None:
@@ -204,7 +207,8 @@ class ConfigManager:
 
     @staticmethod
     def get_current_config() -> dict:
-        """从 os.environ 读取当前配置，脱敏后返回"""
+        """从 .env 文件读取当前配置（重新加载），脱敏后返回"""
+        _reload_dotenv()  # 确保读取最新 .env，而非可能过时的 os.environ
         def mask_key(k: str) -> str:
             if not k or len(k) <= 6:
                 return "****"
