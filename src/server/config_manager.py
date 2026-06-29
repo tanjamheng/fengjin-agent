@@ -157,7 +157,8 @@ class ConfigManager:
                     app.state.client = old_client
                 raise
             finally:
-                if old_client:
+                # 仅在新客户端成功替换后才关闭旧客户端（回滚时保留）
+                if old_client and app.state.client is not old_client:
                     try:
                         await old_client.close()
                     except Exception as e:

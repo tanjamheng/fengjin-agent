@@ -5,6 +5,7 @@
 """
 
 import json
+import os
 import asyncio
 from typing import Optional
 
@@ -210,22 +211,28 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     continue
 
-                # 写 .env + 记忆开关
-                if not ConfigManager.update_env_file(main_cfg, memory_cfg, memory_enabled):
-                    await websocket.send_json({
-                        "type": "config_updated",
-                        "success": False,
-                        "errors": ["写入 .env 文件失败"],
-                    })
-                    continue
+                # 保存旧 os.environ 快照（用于 rebuild 失败时回滚）
+                _old_environ = {k: os.environ.get(k) for k in [
+                    "FENGJIN_API_KEY", "FENGJIN_BASE_URL", "FENGJIN_MODEL",
+                    "MEMO_API_KEY", "MEMO_BASE_URL", "MEMO_MODEL", "MEMORY_ENABLED",
+                ]}
 
-                # 重建客户端（内部 reload_dotenv → 读配置）
+                # 先更新 os.environ（rebuild 内部 _reload_dotenv 需读取新值）
+                ConfigManager.apply_to_os_environ(main_cfg, memory_cfg, memory_enabled)
+
+                # 重建客户端
                 try:
                     await ConfigManager.rebuild_clients(
                         websocket.app, main_cfg, memory_cfg, memory_enabled,
                     )
                 except Exception as e:
                     log.opt(exception=True).error("配置热更新失败: {}", e)
+                    # 回滚 os.environ 到旧值
+                    for k, v in _old_environ.items():
+                        if v is None:
+                            os.environ.pop(k, None)
+                        else:
+                            os.environ[k] = v
                     await websocket.send_json({
                         "type": "config_updated",
                         "success": False,
@@ -233,8 +240,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     continue
 
-                # 成功后：同步 os.environ + 更新局部引用（防止后续请求用旧实例）
-                ConfigManager.apply_to_os_environ(main_cfg, memory_cfg, memory_enabled)
+                # 成功后：写 .env（持久化）+ 更新局部引用
+                ConfigManager.update_env_file(main_cfg, memory_cfg, memory_enabled)
                 client = websocket.app.state.client
                 memory_mgr = getattr(websocket.app.state, "memory_manager", None)
                 context_mgr = ContextManager(

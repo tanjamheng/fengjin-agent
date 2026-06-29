@@ -137,6 +137,7 @@ ws.onConnected = (sessionId: string) => {
 // 配置回调
 let _settingsData: SettingsData | null = null;
 let _settingsPanelVisible = false;
+let _settingsPanelClose: (() => void) | null = null; // 面板关闭句柄，用于 onConfigUpdated 中清理 DOM
 
 ws.onCurrentConfig = (data) => {
   _settingsData = {
@@ -167,7 +168,7 @@ ws.onConfigUpdated = (result) => {
     _settingsPanelVisible = false; // 错误时允许重新打开设置
   }
   actions.insertBefore(hint, actions.firstChild);
-  if (result.success) setTimeout(() => { hint.remove(); _settingsPanelVisible = false; }, 3000);
+  if (result.success) setTimeout(() => { hint.remove(); _settingsPanelClose?.(); _settingsPanelClose = null; _settingsPanelVisible = false; }, 3000);
 };
 
 ws.onStatusChange = (status) => {

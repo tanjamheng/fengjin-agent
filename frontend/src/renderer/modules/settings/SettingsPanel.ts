@@ -64,6 +64,11 @@ export class SettingsPanel {
     });
   }
 
+  /** 外部关闭面板（不触发 resolve，仅清理 DOM） */
+  close(): void {
+    this._close(null);
+  }
+
   /** 更新内存中的数据（get_config 返回后调用） */
   updateData(data: SettingsData): void {
     this._data = JSON.parse(JSON.stringify(data));
