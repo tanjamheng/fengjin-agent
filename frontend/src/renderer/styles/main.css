@@ -704,6 +704,17 @@ html, body {
     transition: none !important;
     transform: none !important;
   }
+
+  .dialog-btn,
+  .settings-tab,
+  .settings-field-input,
+  .settings-toggle {
+    transition: none !important;
+  }
+
+  .dialog-btn--confirm:hover {
+    transform: none !important;
+  }
 }
 
 *:focus-visible {

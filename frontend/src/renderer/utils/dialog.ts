@@ -1,9 +1,19 @@
 /**
  * 自定义确认对话框 — 替代原生 window.confirm
  * 统一使用"风堇温馨提示"标题
+ *
+ * 无障碍设计：
+ * - role="dialog" + aria-modal="true" + aria-labelledby + aria-describedby
+ * - 焦点陷阱：Tab/Shift+Tab 在对话框内循环
+ * - 打开时自动聚焦确认按钮
+ * - 关闭时焦点恢复到触发元素（通过 document.activeElement 记录）
  */
+
 export function showConfirm(message: string): Promise<boolean> {
   return new Promise((resolve) => {
+    // 记录触发焦点
+    const triggerEl = document.activeElement as HTMLElement | null;
+
     // 遮罩
     const overlay = document.createElement("div");
     overlay.className = "dialog-overlay";
@@ -20,10 +30,14 @@ export function showConfirm(message: string): Promise<boolean> {
     const title = document.createElement("div");
     title.className = "dialog-title";
     title.textContent = "✦ 风堇温馨提示";
+    title.id = "dialog-title";
+    overlay.setAttribute("aria-labelledby", "dialog-title");
 
     const body = document.createElement("div");
     body.className = "dialog-body";
     body.textContent = message;
+    body.id = "dialog-body";
+    overlay.setAttribute("aria-describedby", "dialog-body");
 
     const actions = document.createElement("div");
     actions.className = "dialog-actions";
@@ -52,11 +66,30 @@ export function showConfirm(message: string): Promise<boolean> {
       if (e.target === overlay) close(false);
     });
 
-    // Escape 关闭
+    // 焦点陷阱
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         close(false);
-        document.removeEventListener("keydown", onKey);
+        return;
+      }
+      if (e.key === "Tab") {
+        const focusable = overlay.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
       }
     };
     document.addEventListener("keydown", onKey);
@@ -66,11 +99,24 @@ export function showConfirm(message: string): Promise<boolean> {
       overlay.classList.add("dialog-overlay--visible");
     });
 
+    // 初始焦点到确认按钮
+    requestAnimationFrame(() => {
+      confirmBtn.focus();
+    });
+
     function close(result: boolean): void {
+      // 先移除键盘监听，防止重复关闭
+      document.removeEventListener("keydown", onKey);
       overlay.classList.remove("dialog-overlay--visible");
       setTimeout(() => {
-        document.body.removeChild(overlay);
+        if (overlay.parentElement) {
+          document.body.removeChild(overlay);
+        }
         resolve(result);
+        // 焦点恢复到触发元素
+        if (triggerEl && triggerEl !== document.body) {
+          triggerEl.focus();
+        }
       }, 200);
     }
   });
