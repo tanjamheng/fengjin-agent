@@ -181,6 +181,57 @@ async def websocket_endpoint(websocket: WebSocket):
                     "session_id": target_id,
                 })
 
+            # ── get_config ──
+            elif msg_type == "get_config":
+                from ..server.config_manager import ConfigManager
+                await websocket.send_json({
+                    "type": "current_config",
+                    **ConfigManager.get_current_config(),
+                })
+
+            # ── update_config ──
+            elif msg_type == "update_config":
+                from ..server.config_manager import ConfigManager
+
+                main_cfg = data.get("main", {})
+                memory_cfg = data.get("memory", {})
+                memory_enabled = bool(data.get("memory_enabled", True))
+
+                # 校验主模型
+                errors = _validate_config(main_cfg, "主模型")
+                if memory_enabled:
+                    errors.extend(_validate_config(memory_cfg, "记忆模型"))
+
+                if errors:
+                    await websocket.send_json({
+                        "type": "config_updated",
+                        "success": False,
+                        "errors": errors,
+                    })
+                    continue
+
+                # 写 .env
+                if not ConfigManager.update_env_file(main_cfg, memory_cfg):
+                    await websocket.send_json({
+                        "type": "config_updated",
+                        "success": False,
+                        "errors": ["写入 .env 文件失败"],
+                    })
+                    continue
+
+                # 更新 os.environ
+                ConfigManager.apply_to_os_environ(main_cfg, memory_cfg)
+
+                # 重建客户端
+                await ConfigManager.rebuild_clients(
+                    websocket.app, main_cfg, memory_cfg, memory_enabled,
+                )
+
+                await websocket.send_json({
+                    "type": "config_updated",
+                    "success": True,
+                })
+
     except WebSocketDisconnect:
         log.info("客户端主动断开")
     except Exception as e:
@@ -341,3 +392,21 @@ def _fmt_dt(val) -> str:
     if hasattr(val, "isoformat"):
         return val.isoformat()
     return str(val)
+
+
+def _validate_config(cfg: dict, label: str) -> list[str]:
+    """校验配置字段。只检查用户明确传了值的字段（null 表示不更新，跳过）"""
+    errors = []
+    # api_key: 如果传了值，不能为空
+    ak = cfg.get("api_key")
+    if ak is not None and (not isinstance(ak, str) or not ak.strip()):
+        errors.append(f"{label} API Key 不能为空")
+    # base_url: 如果传了值，必须以 http 开头
+    url = cfg.get("base_url")
+    if url is not None and (not isinstance(url, str) or not url.strip().startswith(("http://", "https://"))):
+        errors.append(f"{label} Base URL 格式不正确（需以 http:// 或 https:// 开头）")
+    # model: 如果传了值，不能为空
+    model = cfg.get("model")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        errors.append(f"{label} 模型名不能为空")
+    return errors

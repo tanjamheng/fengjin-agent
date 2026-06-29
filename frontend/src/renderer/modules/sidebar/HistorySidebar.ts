@@ -20,6 +20,7 @@ export class HistorySidebar {
   onSelectSession?: (sessionId: string) => void;
   onDeleteSession?: (sessionId: string) => void;
   onClearAll?: () => void;
+  onOpenSettings?: () => void;
 
   constructor(container: HTMLElement) {
     this._container = container;
@@ -41,9 +42,9 @@ export class HistorySidebar {
     settingsBtn.className = "sidebar__settings-btn";
     settingsBtn.textContent = "⚙ 设置";
     settingsBtn.setAttribute("aria-label", "设置");
-    settingsBtn.title = "设置功能即将上线";
+    settingsBtn.title = "设置";
     settingsBtn.addEventListener("click", () => {
-      this._showTooltip(settingsBtn, "设置功能即将上线");
+      if (!this._disabled) this.onOpenSettings?.();
     });
     header.appendChild(settingsBtn);
 

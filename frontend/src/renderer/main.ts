@@ -11,6 +11,7 @@ import { CharacterDisplay } from "./modules/character/CharacterDisplay";
 import { WSClient } from "./modules/ws/WSClient";
 import { ChatUI } from "./modules/chat/ChatUI";
 import { HistorySidebar } from "./modules/sidebar/HistorySidebar";
+import { SettingsPanel, type SettingsData } from "./modules/settings/SettingsPanel";
 import type { SessionMeta, ChatMessage } from "./types/protocol";
 
 // ===== 会话加载保护 =====
@@ -133,6 +134,39 @@ ws.onConnected = (sessionId: string) => {
   ws.listSessions();
 };
 
+// 配置回调
+let _settingsData: SettingsData | null = null;
+let _settingsPanelVisible = false;
+
+ws.onCurrentConfig = (data) => {
+  _settingsData = {
+    main: data.main,
+    memory: data.memory,
+    memory_enabled: data.memory_enabled,
+  };
+};
+
+ws.onConfigUpdated = (result) => {
+  if (!_settingsPanelVisible) return;
+  const actions = document.querySelector(".settings-actions");
+  if (!actions) return;
+  // 清除旧提示
+  actions.querySelector(".settings-saved-hint")?.remove();
+  const hint = document.createElement("span");
+  hint.className = "settings-saved-hint";
+  hint.style.fontSize = "12px";
+  hint.style.lineHeight = "30px";
+  if (result.success) {
+    hint.style.color = "var(--color-status-online)";
+    hint.textContent = "✓ 已保存";
+  } else if (result.errors) {
+    hint.style.color = "var(--color-status-offline)";
+    hint.textContent = result.errors.join("; ");
+  }
+  actions.insertBefore(hint, actions.firstChild);
+  if (result.success) setTimeout(() => hint.remove(), 3000);
+};
+
 ws.onStatusChange = (status) => {
   appState.wsStatus = status;
   chat.updateConnectionStatus(status);
@@ -218,6 +252,46 @@ sidebar.onClearAll = () => {
   for (const s of sessions) {
     ws.deleteSession(s.id);
   }
+};
+
+sidebar.onOpenSettings = async () => {
+  _settingsPanelVisible = true;
+  // 先获取当前配置
+  ws.getConfig();
+  // 用已有数据或默认空值初始化面板
+  const initial = _settingsData ?? {
+    main: { api_key: "****", base_url: "", model: "" },
+    memory: { api_key: "****", base_url: "", model: "" },
+    memory_enabled: false,
+  };
+  const panel = new SettingsPanel(initial);
+  // getConfig 回调会更新数据
+  const origOnConfig = ws.onCurrentConfig;
+  ws.onCurrentConfig = (data) => {
+    _settingsData = {
+      main: data.main,
+      memory: data.memory,
+      memory_enabled: data.memory_enabled,
+    };
+    panel.updateData(_settingsData);
+    ws.onCurrentConfig = origOnConfig;
+  };
+  const result = await panel.show();
+  _settingsPanelVisible = false;
+  if (!result) return; // 取消
+
+  // 构建 update payload：null = 不改
+  const main = {
+    api_key: result.main.api_key,
+    base_url: result.main.base_url,
+    model: result.main.model,
+  };
+  const memory = {
+    api_key: result.memory.api_key,
+    base_url: result.memory.base_url,
+    model: result.memory.model,
+  };
+  ws.updateConfig(main, memory, result.memory_enabled);
 };
 
 // ===== 连接 =====

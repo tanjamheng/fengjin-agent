@@ -63,7 +63,7 @@
 | 会话管理 | JSON 原子写入，14 个 CLI 命令（含会话、知识库管理、调试） |
 | WebSocket API | FastAPI + /ws 端点，流式推送 + 取消控制（前端联调用） |
 
-## 前端（V1 计划中，尚未开发）
+## 前端（V1 已实现）
 
 > **前端开发时，本节是唯一需要看的核心文档内容。** 详细规格查 `前端开发核心文档/`（1=功能边界 2=UI像素 3=架构类接口），WS 协议查 `核心文档/核心4_WS通信协议.md`。
 
@@ -181,6 +181,7 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 ```
 AI风堇_治愈晨昏/
 ├── main.py                          # CLI 入口：启动序列 + 对话循环 + 命令路由
+├── start.bat                        # 一键启动脚本（双击启动后端+前端）
 ├── .env                             # API Key（不入 Git）
 │
 ├── config/
@@ -272,6 +273,7 @@ AI风堇_治愈晨昏/
 │   │       ├── index.html           # 入口 HTML
 │   │       ├── main.ts              # 渲染进程入口，串联五大模块
 │   │       ├── state.ts             # 中心状态管理（AppState）
+│   │       ├── config.ts            # 前端配置中心（图片路径/WS地址/超时等）
 │   │       ├── styles/
 │   │       │   └── main.css         # 全局样式 + CSS 变量
 │   │       ├── modules/
@@ -286,8 +288,10 @@ AI风堇_治愈晨昏/
 │   │       │   └── ws/
 │   │       │       ├── WSClient.ts          # WebSocket 连接管理 + 心跳 + 超时
 │   │       │       └── MessageParser.ts     # 消息解析 + 类型判断
-│   │       └── types/
-│   │           └── protocol.ts      # WS 协议 TypeScript 类型定义
+│   │       ├── types/
+│   │       │   └── protocol.ts      # WS 协议 TypeScript 类型定义
+│   │       ├── utils/
+│   │       │   └── dialog.ts        # 自定义确认弹窗（showConfirm）
 │   ├── assets/
 │   │   └── fengjin.jpg              # 风堇角色展示图
 │   ├── electron-builder.yml         # 打包配置

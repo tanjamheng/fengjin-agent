@@ -50,13 +50,26 @@ export interface ClientDeleteSession {
   session_id: string;
 }
 
+export interface ClientGetConfig {
+  type: "get_config";
+}
+
+export interface ClientUpdateConfig {
+  type: "update_config";
+  main: { api_key: string | null; base_url: string | null; model: string | null };
+  memory: { api_key: string | null; base_url: string | null; model: string | null };
+  memory_enabled: boolean;
+}
+
 export type ClientMessage =
   | ClientUserMsg
   | ClientPing
   | ClientCancel
   | ClientListSessions
   | ClientLoadSession
-  | ClientDeleteSession;
+  | ClientDeleteSession
+  | ClientGetConfig
+  | ClientUpdateConfig;
 
 // ---- Server → Client 消息 ----
 
@@ -121,6 +134,19 @@ export interface ServerError {
   session_id?: string;
 }
 
+export interface ServerCurrentConfig {
+  type: "current_config";
+  main: { api_key: string; base_url: string; model: string };
+  memory: { api_key: string; base_url: string; model: string };
+  memory_enabled: boolean;
+}
+
+export interface ServerConfigUpdated {
+  type: "config_updated";
+  success: boolean;
+  errors?: string[];
+}
+
 export type ServerMessage =
   | ServerConnected
   | ServerPong
@@ -132,4 +158,6 @@ export type ServerMessage =
   | ServerSessionLoaded
   | ServerSessionDeleted
   | ServerQuickReplies
-  | ServerError;
+  | ServerError
+  | ServerCurrentConfig
+  | ServerConfigUpdated;

@@ -50,6 +50,9 @@ export class WSClient {
   onConnected?: (sessionId: string) => void;
   // 会话ID变更回调（首次消息创建会话、加载历史等场景）
   onSessionChanged?: (sessionId: string) => void;
+  // 配置回调
+  onCurrentConfig?: (config: any) => void;
+  onConfigUpdated?: (result: { success: boolean; errors?: string[] }) => void;
 
   // ---- 公开属性 ----
 
@@ -153,6 +156,23 @@ export class WSClient {
 
   deleteSession(sessionId: string): void {
     this._send({ type: "delete_session", session_id: sessionId });
+  }
+
+  getConfig(): void {
+    this._send({ type: "get_config" });
+  }
+
+  updateConfig(
+    main: { api_key: string | null; base_url: string | null; model: string | null },
+    memory: { api_key: string | null; base_url: string | null; model: string | null },
+    memory_enabled: boolean,
+  ): void {
+    this._send({
+      type: "update_config",
+      main,
+      memory,
+      memory_enabled: memory_enabled,
+    });
   }
 
   // ===== 内部方法 =====
@@ -317,6 +337,14 @@ export class WSClient {
         this._replyActive = false;
         this._clearReplyTimer();
         this.onError?.(msg.message ?? "AI 服务异常，请稍后重试");
+        break;
+
+      case "current_config":
+        this.onCurrentConfig?.(msg);
+        break;
+
+      case "config_updated":
+        this.onConfigUpdated?.({ success: msg.success, errors: msg.errors });
         break;
 
       default:
