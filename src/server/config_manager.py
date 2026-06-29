@@ -201,8 +201,12 @@ class ConfigManager:
 
     @staticmethod
     def _build_config_from_env() -> Config:
-        """从 os.environ 读取当前配置，构建 Config 对象（用于重建客户端）"""
-        _reload_dotenv()
+        """从 os.environ 读取当前配置，构建 Config 对象（用于重建客户端）
+
+        注意：不调用 _reload_dotenv()——调用方（rebuild_clients）的调用者
+        （connection.py update_config）已先 apply_to_os_environ 将新值写入 os.environ。
+        如果在此处 reload，load_dotenv(override=True) 会用旧 .env 覆盖新 os.environ。
+        """
         config_path = _PROJECT_ROOT / "config" / "config.yaml"
         return Config.load(str(config_path))
 

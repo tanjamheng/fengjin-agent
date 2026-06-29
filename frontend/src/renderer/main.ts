@@ -166,6 +166,7 @@ ws.onConfigUpdated = (result) => {
     hint.style.color = "var(--color-status-offline)";
     hint.textContent = result.errors?.join("; ") ?? "配置更新失败";
     _settingsPanelVisible = false; // 错误时允许重新打开设置
+		_settingsPanelClose?.(); _settingsPanelClose = null;
   }
   actions.insertBefore(hint, actions.firstChild);
   if (result.success) setTimeout(() => { hint.remove(); _settingsPanelClose?.(); _settingsPanelClose = null; _settingsPanelVisible = false; }, 3000);
@@ -181,6 +182,7 @@ ws.onStatusChange = (status) => {
     _loadingSession = false;
     _loadingSessionId = null;
     _settingsPanelVisible = false; // 断线时重置设置面板可见性
+		_settingsPanelClose?.(); _settingsPanelClose = null;
     appState.isReplying = false;
     chat.endReplyMode();
     sidebar.setDisabled(false);
@@ -273,6 +275,7 @@ sidebar.onOpenSettings = async () => {
   // 传入触发按钮引用，用于焦点恢复
   const triggerBtn = document.querySelector<HTMLElement>(".sidebar__settings-btn") ?? undefined;
   const panel = new SettingsPanel(initial, triggerBtn);
+	_settingsPanelClose = () => panel.close(); // R3 补漏：供 onConfigUpdated 清理 DOM
   // getConfig 回调会更新数据
   const origOnConfig = ws.onCurrentConfig;
   ws.onCurrentConfig = (data) => {
