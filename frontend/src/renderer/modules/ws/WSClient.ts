@@ -96,6 +96,7 @@ export class WSClient {
     this._clearReplyTimer();
     this._cancelled = false;
     this._replyActive = false;
+    this._cancelledEndPending = false;
     this._retryCount = this._maxRetries; // 停止重试
     if (this._retryTimer !== null) {
       clearTimeout(this._retryTimer);
@@ -143,6 +144,7 @@ export class WSClient {
   sendCancel(): void {
     this._cancelled = true; // 忽略后续到达的 stream/end 幽灵气泡
     this._replyActive = false;
+    this._cancelledEndPending = true; // 标记：被取消回复的 end 包在路上，到达时消费
     this._send({ type: "cancel" });
     this._clearReplyTimer();
   }
@@ -226,6 +228,7 @@ export class WSClient {
   private _connectedBefore = false;
   private _cancelled = false; // 停止后忽略残留 stream/end，防止幽灵气泡
   private _replyActive = false; // 回复进行中（sendUserMessage→end/blocked/error/cancel）
+  private _cancelledEndPending = false; // 被取消回复的 end 包在路上，到达时消费而非触发 onStreamEnd
 
   // 自动重连（后端冷启动模型加载约 15s，前端可能先就绪）
   private _retryCount = 0;
@@ -287,6 +290,8 @@ export class WSClient {
 
       case "thinking":
         this._captureSessionId(msg);
+        // 新回复已开始（后端串行处理保证旧 end 必先于新 thinking 到达），清除残留标记
+        this._cancelledEndPending = false;
         // 服务端在响应，刷新回复超时计时器而非清除
         this._startReplyTimer();
         this.onThinking?.();
@@ -309,6 +314,12 @@ export class WSClient {
 
       case "end":
         this._captureSessionId(msg);
+        // 消费被取消回复的残留 end（防止它在新回复进行中触发 onStreamEnd）
+        if (this._cancelledEndPending) {
+          this._cancelledEndPending = false;
+          this._cancelled = false;
+          break;
+        }
         if (this._cancelled) { this._cancelled = false; break; } // 已取消，忽略
         if (!this._replyActive) break; // 回复未激活，忽略（防止幽灵 end 创建气泡）
         this._replyActive = false;
@@ -336,6 +347,7 @@ export class WSClient {
       case "error":
         this._captureSessionId(msg);
         this._replyActive = false;
+        this._cancelledEndPending = false; // 错误兜底：清除残留标记
         this._clearReplyTimer();
         this.onError?.(msg.message ?? "AI 服务异常，请稍后重试");
         break;
