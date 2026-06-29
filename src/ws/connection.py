@@ -194,11 +194,19 @@ async def websocket_endpoint(websocket: WebSocket):
 
         if current_stream and not current_stream.done():
             if current_controller:
-                current_controller.cancel()
-            current_stream.cancel()
+                current_controller.cancel()  # 协作式旗标：让 stream_reply 优雅停生
             try:
-                await current_stream
-            except asyncio.CancelledError:
+                # 给流任务 5 秒时间自然结束（保存部分文字）
+                await asyncio.wait_for(current_stream, timeout=5)
+            except asyncio.TimeoutError:
+                # 超时则强制取消
+                current_stream.cancel()
+                try:
+                    await current_stream
+                except asyncio.CancelledError:
+                    pass
+            except Exception:
+                # 流任务以其他异常结束（如 WebSocketDisconnect 自然传播）
                 pass
 
         session_mgr.flush()
@@ -241,17 +249,27 @@ async def _handle_user_msg(
     try:
         await websocket.send_json({"type": "thinking", "session_id": current_sid})
         full_text = ""
-        async for token in stream_reply(
-            user_content, session_mgr, safety, controller, client, config, context_mgr,
-            trace_id=trace_id,
-            tool_definitions=tool_definitions,
-            execute_tool_async=execute_tool_async,
-        ):
-            full_text += token
-            await websocket.send_json({"type": "stream", "text": token})
+        try:
+            async for token in stream_reply(
+                user_content, session_mgr, safety, controller, client, config, context_mgr,
+                trace_id=trace_id,
+                tool_definitions=tool_definitions,
+                execute_tool_async=execute_tool_async,
+            ):
+                full_text += token
+                await websocket.send_json({"type": "stream", "text": token})
+        except WebSocketDisconnect:
+            # 客户端断开（关闭窗口/退出程序）：保存已生成的部分文字到会话
+            logger.info("客户端断开，保存部分回复 ({} 字符)", len(full_text))
+            if full_text:
+                # streaming 层已将 user 消息入历史，直接追加 assistant 回复
+                session_mgr.append_message("assistant", full_text)
+                session_mgr.flush()
+                if memory_mgr:
+                    memory_mgr.extract_async(user_content, full_text, trace_id=trace_id)
+            return  # 不继续，前端已不在
 
         # 生成器正常结束（含协作式取消），service 层已落盘
-        # 异步提取记忆（对齐 CLI 路径 core.py:183-185）
         if memory_mgr and full_text:
             memory_mgr.extract_async(user_content, full_text, trace_id=trace_id)
         await websocket.send_json({
@@ -271,13 +289,10 @@ async def _handle_user_msg(
 
     except asyncio.CancelledError:
         # task.cancel() 强制中断：streaming 层已回滚 user 消息，不补存 partial_text
-        # 以避免 user 被回滚后 assistant 孤立破坏配对完整性
         raise
 
     except Exception as e:
         logger.opt(exception=True).error("流式生成异常: {}", e)
-        # streaming 层已在 raise 前回滚 user 消息，此处不补存 partial_text
-        # 以避免 user 被回滚后 assistant 孤立破坏消息配对完整性
         try:
             await websocket.send_json({
                 "type": "error",
