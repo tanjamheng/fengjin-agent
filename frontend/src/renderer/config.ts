@@ -13,6 +13,14 @@ export const CONFIG = {
     imagePath: "./assets/fengjin.jpg",
   },
 
+  /** 对话头像 */
+  avatar: {
+    /** 风堇 AI 头像（对话区左侧） */
+    fengjin: "./assets/avatar-fengjin.png",
+    /** 开拓者用户头像（对话区右侧） */
+    trailblazer: "./assets/avatar-trailblazer.png",
+  },
+
   /** WebSocket 连接 */
   ws: {
     /** 后端 WebSocket 地址 */

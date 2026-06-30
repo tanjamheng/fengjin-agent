@@ -30,7 +30,7 @@ export class ChatUI {
     // 消息区
     const messagesEl = container.querySelector<HTMLElement>(".chat-messages");
     if (!messagesEl) throw new Error("ChatUI: .chat-messages not found");
-    this._renderer = new MessageRenderer(messagesEl);
+    this._renderer = new MessageRenderer(messagesEl, CONFIG.avatar);
 
     // 滚动监听
     messagesEl.addEventListener("scroll", () => {

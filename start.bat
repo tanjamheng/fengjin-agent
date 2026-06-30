@@ -1,6 +1,5 @@
 @echo off
 cd /d "%~dp0"
-setlocal enabledelayedexpansion
 title Fengjin AI - Starting...
 
 echo.
@@ -13,27 +12,17 @@ REM ============================================================
 echo  [0/5] Checking for running instances...
 
 powershell -Command ^
-  "$conns = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
-  "if ($conns) {" ^
-  "  foreach ($line in $conns) {" ^
-  "    $parts = $line.ToString().Trim() -split '\s+';" ^
-  "    $pid = $parts[-1];" ^
-  "    if ($pid -ne '0' -and $pid -ne '4') {" ^
-  "      try {" ^
-  "        $proc = Get-Process -Id $pid -ErrorAction Stop;" ^
-  "        $name = $proc.ProcessName;" ^
-  "        Write-Host ('  Found old backend: ' + $name + ' (PID: ' + $pid + ')');" ^
-  "        Stop-Process -Id $pid -Force -ErrorAction Stop;" ^
-  "        Write-Host ('  Stopped.');" ^
-  "        Start-Sleep -Milliseconds 500;" ^
-  "      } catch {" ^
-  "        Write-Host ('  WARNING: Port 8765 in use (PID:' + $pid + '), unable to stop');" ^
+  "$c = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
+  "if ($c) {" ^
+  "  foreach ($l in $c) {" ^
+  "    $p = $l.ToString().Trim() -split '\s+' | Select-Object -Last 1;" ^
+  "    if ($p -ne '0' -and $p -ne '4') {" ^
+  "      try { Stop-Process -Id $p -Force -ErrorAction Stop; Write-Host '  Stopped old backend (PID:' $p ')' } catch {" ^
+  "        Write-Host '  WARNING: Port 8765 in use, unable to stop'" ^
   "      }" ^
   "    }" ^
   "  }" ^
-  "} else {" ^
-  "  Write-Host '  No existing instance found';" ^
-  "}"
+  "} else { Write-Host '  No existing instance' }"
 
 echo.
 
@@ -50,7 +39,6 @@ if not exist "venv\Scripts\python.exe" (
         exit /b 1
     )
 )
-call venv\Scripts\python.exe --version 2>&1 >nul
 echo    OK
 
 REM ============================================================
@@ -70,14 +58,13 @@ echo  [3/5] Frontend dependencies...
 if not exist "frontend\node_modules\" (
     echo    Installing...
     cd frontend
-    call npm install >nul 2>&1
+    call npm install
+    cd ..
     if errorlevel 1 (
         echo    ERROR: npm install failed
-        cd ..
         pause
         exit /b 1
     )
-    cd ..
 )
 echo    OK
 
@@ -87,19 +74,21 @@ REM ============================================================
 echo  [4/5] Starting backend...
 start "" /B venv\Scripts\python.exe -m src.server.server >nul 2>&1
 
-echo    Waiting for models to load (~30s first run)...
+echo    Waiting for backend (models loading, ~30s first run)...
 powershell -Command ^
   "for ($i=1; $i -le 120; $i++) {" ^
   "  try {" ^
   "    $r = Invoke-RestMethod http://127.0.0.1:8765/health -TimeoutSec 2;" ^
-  "    if ($r.status -eq 'ready') { Write-Host ('   Backend ready (' + $i + 's)'); exit 0 }" ^
+  "    if ($r.status -eq 'ready') { Write-Host ('    Backend ready in ' + $i + 's'); exit 0 }" ^
   "  } catch {}" ^
+  "  if ($i %% 15 -eq 0) { Write-Host ('    ...still waiting (' + $i + 's)') };" ^
   "  Start-Sleep 1" ^
-  "}; Write-Host '   ERROR: Backend timeout (120s)'; exit 1"
+  "}; Write-Host '    ERROR: Backend did not respond within 120s'; exit 1"
 
 if errorlevel 1 (
     echo.
-    echo    ERROR: Backend failed to start. Check logs\app.log
+    echo    Backend failed to start. Check logs\app.log
+    echo    Run manually: venv\Scripts\python.exe -m src.server.server
     pause
     exit /b 1
 )
@@ -108,7 +97,8 @@ REM ============================================================
 REM  5. Start frontend (Electron opens its own window)
 REM ============================================================
 echo  [5/5] Starting frontend...
-start "" /B cmd /c "cd /d "%CD%\frontend" && npm run dev >nul 2>&1"
+start "" /B cmd /c "cd /d frontend && npm run dev >nul 2>&1"
+echo    Electron launching...
 
 REM ============================================================
 REM  Done
@@ -126,14 +116,10 @@ echo    ====================================
 echo.
 pause
 
-REM Cleanup: kill backend when user closes this window
+REM Cleanup
+echo.
+echo    Shutting down...
 powershell -Command ^
-  "$conns = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
-  "if ($conns) {" ^
-  "  foreach ($line in $conns) {" ^
-  "    $parts = $line.ToString().Trim() -split '\s+';" ^
-  "    try { Stop-Process -Id $parts[-1] -Force -ErrorAction Stop } catch {}" ^
-  "  }" ^
-  "}"
-
-echo   Goodbye~
+  "$c = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
+  "if ($c) { foreach ($l in $c) { $p = ($l.ToString().Trim() -split '\s+')[-1]; try { Stop-Process -Id $p -Force -ErrorAction Stop } catch {} } }"
+echo    Goodbye.

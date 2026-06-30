@@ -43,8 +43,8 @@
 |---|------|------|
 | 1 | **PowerShell 中不要用 `git commit -m @'...'@`** | here-string 的 `@'` 会被当作文本的一部分混入提交消息，导致消息以 `@ ` 开头。正确做法：先 `$msg = @'...'@` 赋值变量，再 `git commit -m $msg` |
 | 2 | **禁止提交任何中文文档** | `核心文档/`、`重要文档/`、`前端开发核心文档/`、`*.md`（中文设计/规范/流程文档）已被 `.gitignore` 忽略。git add 会报 `ignored by .gitignore`。**永远不要用 `-f` 强制提交中文文档**——它们是本地工作副本，不入仓库。只提交 `src/`、`frontend/src/`、`config/`、`main.py`、`requirements.txt`、`CLAUDE.md`、`start.bat` 等代码文件 |
-
----
+| 3 | **`.bat` 中 PowerShell inline 命令的 `%` 必须写成 `%%`** | CMD 会把 `%` 当变量前缀吃掉——`$i % 15` 会变成 `$i  15`（`%` 被吞 → 后面的数字变成裸 token → PowerShell 语法错误）。正确写法：`$i %% 15`（CMD 将 `%%` 转义为 `%` 传给 PowerShell）。任何传给 PowerShell 的 `%` 都要双写 |
+| 4 | **禁止未经允许执行 `git commit`** | 所有 git 提交必须等用户明确说"提交"/"commit"之后才能执行。用户没开口 = 不准 commit。**例外：Code Review 循环中每轮修复后允许自动提交**（CR 流程本身要求每轮 commit） |
 
 # 功能速查
 

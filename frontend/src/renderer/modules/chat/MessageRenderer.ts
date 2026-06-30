@@ -7,13 +7,20 @@ import type { ChatMessage } from "../../types/protocol";
  * 由 ChatUI 调用，不直接操作聊天区容器。
  */
 
+interface AvatarConfig {
+  fengjin: string;
+  trailblazer: string;
+}
+
 export class MessageRenderer {
   private _container: HTMLElement;
   private _aiBubble: HTMLElement | null = null; // 当前流式 AI 气泡
   private _lastMessageTime: number = 0; // 上一条消息时间戳
+  private _avatars: AvatarConfig;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, avatars: AvatarConfig) {
     this._container = container;
+    this._avatars = avatars;
   }
 
   /** 追加用户消息气泡 */
@@ -24,6 +31,7 @@ export class MessageRenderer {
     const wrapper = this._createWrapper("user");
     const bubble = this._createBubble("user", content);
     wrapper.appendChild(bubble);
+    wrapper.appendChild(this._createAvatar(this._avatars.trailblazer, "开拓者", "user"));
     this._container.appendChild(wrapper);
     this._updateLastTime();
   }
@@ -86,6 +94,9 @@ export class MessageRenderer {
       const wrapper = this._createWrapper(msg.role);
       const bubble = this._createBubble(msg.role, msg.content);
       wrapper.appendChild(bubble);
+      if (msg.role === "user") {
+        wrapper.appendChild(this._createAvatar(this._avatars.trailblazer, "开拓者", "user"));
+      }
       this._container.appendChild(wrapper);
     }
     if (messages.length > 0) {
@@ -120,7 +131,28 @@ export class MessageRenderer {
   private _createWrapper(role: string): HTMLElement {
     const wrapper = document.createElement("div");
     wrapper.className = `chat-message-wrapper chat-message-wrapper--${role}`;
+
+    // AI/assistant 消息：左侧加风堇头像
+    if (role === "ai" || role === "assistant") {
+      const avatar = this._createAvatar(this._avatars.fengjin, "风堇", "ai");
+      wrapper.appendChild(avatar);
+    }
+
     return wrapper;
+  }
+
+  /** 创建圆形头像 img 元素（加载失败时保留白色圆形占位） */
+  private _createAvatar(src: string, alt: string, side: "ai" | "user"): HTMLElement {
+    const img = document.createElement("img");
+    img.className = `chat-avatar chat-avatar--${side}`;
+    img.src = src;
+    img.alt = alt;
+    img.loading = "lazy";
+    // 加载失败时保留圆形占位
+    img.onerror = () => {
+      img.style.display = "none";
+    };
+    return img;
   }
 
   private _createBubble(role: string, content: string): HTMLElement {
