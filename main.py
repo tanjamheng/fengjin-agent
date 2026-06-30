@@ -637,7 +637,7 @@ def main():
             console.print("\n[yellow]再见！[/yellow]")
             break
         except Exception as e:
-            _log = get_logger(trace_id)
+            _log = get_logger("main", trace_id=trace_id)
             _log.opt(exception=True).error("对话循环异常 [input={}]: {}", user_input[:50], e)
             if in_chat:
                 from src.agent.message_builder import rollback_last_user

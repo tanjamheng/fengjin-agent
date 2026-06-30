@@ -77,7 +77,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(15)
             elapsed = asyncio.get_event_loop().time() - last_pong
             if elapsed > HEARTBEAT_TIMEOUT:
-                log.warning("心跳超时（%.0fs），关闭连接", elapsed)
+                log.warning("心跳超时（{:.0f}s），关闭连接", elapsed)
                 try:
                     await websocket.close()
                 except Exception as e:

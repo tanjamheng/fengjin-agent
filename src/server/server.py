@@ -7,9 +7,12 @@ import yaml
 from pathlib import Path
 
 import uvicorn
+from src.utils.logger import setup_logger, LogConfig
 
 
 def main():
+    setup_logger(LogConfig(log_level="DEBUG"))
+
     config_path = Path(__file__).parent.parent.parent / "config" / "config.yaml"
     ws_config = {}
     if config_path.exists():

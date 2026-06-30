@@ -62,7 +62,7 @@ function createWindow(): void {
 
   if (logStream) {
     // 跨 createWindow 调用时关闭旧流（macOS activate 场景）
-    try { logStream.end(); } catch { /* ignore */ }
+    try { logStream.end(); } catch (e) { console.error('日志流关闭失败:', e); }
     logStream = null;
   }
   try {
@@ -137,7 +137,7 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   // 刷新日志流缓冲，防止最后几行日志丢失
   if (logStream) {
-    try { logStream.end(); } catch { /* ignore */ }
+    try { logStream.end(); } catch (e) { console.error('日志流关闭失败:', e); }
     logStream = null;
   }
   // V2: Three.js 资源释放在此追加

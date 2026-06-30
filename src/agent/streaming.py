@@ -197,7 +197,7 @@ async def stream_reply(
                     if execute_tool_async is None:
                         raise RuntimeError("execute_tool_async 未提供")
                     result_text = await execute_tool_async(tool_name, tool_input)
-                    logger.info("WS Tool {} 执行成功", tool_name)
+                    logger.debug("WS Tool {} 执行成功", tool_name)
                 except Exception as e:
                     logger.error("WS Tool {} 执行失败: {}", tool_name, e)
                     result_text = "工具调用失败，请稍后重试"

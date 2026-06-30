@@ -83,7 +83,8 @@ export class WSClient {
 
     try {
       this._ws = new WebSocket(url);
-    } catch {
+    } catch (e) {
+      log.error("Failed to create WebSocket: {}", e);
       this._setStatus("disconnected");
       this.onError?.("无法创建 WebSocket 连接");
       return;
@@ -199,8 +200,8 @@ export class WSClient {
     try {
       this._ws.send(JSON.stringify(msg));
       log.debug("→ {}", msg.type);
-    } catch {
-      log.warn("Send failed: socket error (type={})", msg.type);
+    } catch (e) {
+      log.warn("Send failed: socket error (type={}): {}", msg.type, e);
       this._clearReplyTimer();
       this.onError?.("消息发送失败，请重试");
       return false;

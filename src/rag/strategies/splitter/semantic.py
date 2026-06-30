@@ -27,6 +27,8 @@ class SemanticSplitter(SplitterStrategy):
         self.threshold = threshold
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
+        from ....utils.logger import get_logger
+        self.log = get_logger("semantic_splitter")
         self.embedding_model_name = embedding_model
         self._embedding_model = None
         self._embedding_is_shared = False  # 是否通过 registry 共享
@@ -45,8 +47,7 @@ class SemanticSplitter(SplitterStrategy):
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
             except Exception as e:
-                from ....utils.logger import get_logger
-                get_logger("semantic_splitter").warning("嵌入模型释放异常: {}", e)
+                self.log.warning("嵌入模型释放异常: {}", e)
             self._embedding_model = None
             self._embedding_is_shared = False
 

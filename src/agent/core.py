@@ -338,7 +338,7 @@ class Agent:
                                  tc.function.arguments[:100])
                 tool_input = {}
 
-            self.log.info("调用 Tool: {}, 参数: {}", tool_name, tool_input)
+            self.log.info("调用 Tool: {}, 参数: {}", tool_name, str(tool_input)[:200])
 
             tool_calls_list.append({
                 "id": tool_use_id,
