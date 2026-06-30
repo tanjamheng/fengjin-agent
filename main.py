@@ -378,6 +378,16 @@ def main():
     except Exception as e:
         console.print(f"[red]Agent 初始化失败（环境变量缺失或配置错误）: {e}[/red]")
         get_logger("main").opt(exception=True).error("Agent 初始化失败")
+        # 清理已初始化的上游组件（memory_manager + safety_engine）
+        if memory_manager:
+            try:
+                memory_manager.cleanup()
+            except Exception as cleanup_ex:
+                get_logger("main").warning("MemoryManager 清理异常: {}", cleanup_ex)
+        try:
+            safety_engine.cleanup()
+        except Exception as cleanup_ex:
+            get_logger("main").warning("SafetyManager 清理异常: {}", cleanup_ex)
         return
 
     # 创建 RAG 服务（使用独立同步 OpenAI 客户端，不影响 Agent 的异步路径）
@@ -464,7 +474,6 @@ def main():
             if cmd == "/clear":
                 session_mgr.flush()
                 agent.clear_history()
-                session_mgr.create_session()
                 console.print("[green]对话历史已清空，新会话已创建[/green]")
                 continue
 

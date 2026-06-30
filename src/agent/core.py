@@ -213,6 +213,7 @@ class Agent:
 
         # 5. Tool Calling 流水线
         full_text = ""
+        all_text = ""  # 跨 Tool Calling 轮次累积（StreamInterrupted 时保存完整内容）
         tool_loop_messages: list[dict] = []
         tool_rounds = 0
         total_tokens = 0
@@ -355,17 +356,19 @@ class Agent:
                 logger.info("Tool calling 第 {} 轮完成 ({:.0f}ms)",
                             tool_rounds, t_tools_total)
 
+                all_text += full_text
                 full_text = ""
                 total_tokens = 0
 
         except StreamInterrupted:
-            # 流式输出中断（客户端断开）：保留 user 消息 + 部分回复 + 记忆提取
-            if full_text:
-                self.session_mgr.append_message("assistant", full_text)
+            # 流式输出中断（客户端断开）：保留 user 消息 + 完整回复（含前几轮 Tool Calling 中间文本）
+            combined = all_text + full_text
+            if combined:
+                self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
                 if self.memory_manager:
                     self.memory_manager.extract_async(
-                        user_input, full_text, trace_id=self.trace_id
+                        user_input, combined, trace_id=self.trace_id
                     )
             raise
         except asyncio.CancelledError:
@@ -475,10 +478,22 @@ def _build_api_messages(
 ) -> list[dict]:
     """组装 API messages：system + 历史 + tool calling 中间消息"""
     messages = [{"role": "system", "content": system_content}]
-    history = [
-        m for m in session_mgr.get_current_messages()
-        if m.get("role") != "tool"
-    ]
+    # 过滤 tool 消息 + 被拦截消息对（核心1 2.5：被拦截消息不送入 AI）
+    raw = session_mgr.get_current_messages()
+    history = []
+    i = 0
+    while i < len(raw):
+        m = raw[i]
+        if m.get("role") == "tool":
+            i += 1
+            continue
+        if (m["role"] == "user" and i + 1 < len(raw)
+            and raw[i + 1].get("role") == "assistant"
+            and raw[i + 1].get("content", "").startswith("[小伊卡拦截]")):
+            i += 2  # 跳过被拦截的 user 消息 + 小伊卡通知
+            continue
+        history.append(m)
+        i += 1
     messages.extend(history)
     # 替换最后一条 user 消息为记忆增强版
     for i in range(len(messages) - 1, -1, -1):
