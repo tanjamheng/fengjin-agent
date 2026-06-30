@@ -10,9 +10,13 @@
 
 import { CONFIG } from "../../config";
 
-/** 停止按钮图标（圆角填充方块，网页版大模型风格） */
+/** 发送按钮图标 — 圆形向上箭头 */
+const SEND_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="2" x2="8" y2="13"/><polyline points="4 6 8 2 12 6"/></svg>';
+
+/** 停止按钮图标 — 实心方块 */
 const STOP_ICON =
-  '<svg class="chat-send-stop-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2.5"/></svg>';
+  '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2"/></svg>';
 
 export class InputController {
   private _textarea: HTMLTextAreaElement;
@@ -123,8 +127,7 @@ export class InputController {
   }
 
   private _updateButtonState(): void {
-    // 切换前清除图标态残留的 aria-label（图标无文字，需语义标签；文字态不需要）
-    this._button.removeAttribute("aria-label");
+    // 图标按钮统一设置 aria-label
     if (this._sending) {
       this._button.innerHTML = STOP_ICON;
       this._button.setAttribute("aria-label", "停止");
@@ -134,14 +137,16 @@ export class InputController {
     }
 
     if (this._locked) {
-      this._button.textContent = "发送";
+      this._button.innerHTML = SEND_ICON;
+      this._button.setAttribute("aria-label", "发送");
       this._button.className = "chat-send-btn chat-send-btn--disabled";
       this._button.disabled = true;
       return;
     }
 
     const hasContent = this._textarea.value.trim().length > 0;
-    this._button.textContent = "发送";
+    this._button.innerHTML = SEND_ICON;
+    this._button.setAttribute("aria-label", "发送");
     this._button.className = hasContent
       ? "chat-send-btn"
       : "chat-send-btn chat-send-btn--disabled";

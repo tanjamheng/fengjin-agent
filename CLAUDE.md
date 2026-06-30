@@ -276,7 +276,7 @@ AI风堇_治愈晨昏/
 │   │       ├── index.html           # 入口 HTML
 │   │       ├── main.ts              # 渲染进程入口，串联五大模块
 │   │       ├── state.ts             # 中心状态管理（AppState）
-│   │       ├── config.ts            # 前端配置中心（图片路径/WS地址/超时等）
+│   │       ├── config.ts            # 前端配置中心（角色图/头像/WS地址/超时等）
 │   │       ├── styles/
 │   │       │   └── main.css         # 全局样式 + CSS 变量
 │   │       ├── modules/
@@ -296,7 +296,9 @@ AI风堇_治愈晨昏/
 │   │       ├── utils/
 │   │       │   └── dialog.ts        # 自定义确认弹窗（showConfirm）
 │   ├── assets/
-│   │   └── fengjin.jpg              # 风堇角色展示图
+│   │   ├── fengjin.jpg              # 风堇角色展示图
+│   │   ├── avatar-fengjin.png       # 风堇 AI 头像（对话区左侧圆形头像）
+│   │   └── avatar-trailblazer.png   # 开拓者用户头像（对话区右侧圆形头像）
 │   ├── electron-builder.yml         # 打包配置
 │   ├── tsconfig.json
 │   └── package.json

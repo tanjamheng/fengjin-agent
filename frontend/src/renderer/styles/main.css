@@ -399,10 +399,10 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 70px;
+  width: 40px;
   height: 40px;
-  border: 1px solid var(--color-send-btn-border);
-  border-radius: var(--radius-lg);
+  border: none;
+  border-radius: 50%;
   background: var(--color-send-btn-bg);
   color: var(--color-text-ai);
   font-family: var(--font-stack);
@@ -410,38 +410,39 @@ html, body {
   font-weight: 600;
   line-height: 1.0;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
-  transition: background 200ms ease, border-color 200ms ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
+  transition: background 200ms ease, box-shadow 200ms ease, transform 200ms ease;
   flex-shrink: 0;
 }
 
 .chat-send-btn:hover:not(:disabled) {
   background: #F0F6FF;
-  border-color: var(--color-input-border-focus);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.14);
+  transform: scale(1.05);
 }
 
 .chat-send-btn--disabled {
   background: var(--color-disabled-bg);
   color: var(--color-disabled-text);
-  border-color: var(--color-disabled-border);
   cursor: not-allowed;
   box-shadow: none;
 }
 
 .chat-send-btn--stop {
-  border-color: var(--color-input-border);
-  color: #5A4A6A;
+  background: #F5F0FA;
+  color: #6B5B7B;
 }
 
 .chat-send-btn--stop:hover {
-  background: rgba(180, 160, 200, 0.14);
-  border-color: #B0A0C0;
+  background: #EDE0F5;
   color: #4A3A5A;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.14);
+  transform: scale(1.05);
 }
 
-.chat-send-stop-icon {
-  width: 14px;
-  height: 14px;
+.chat-send-btn svg {
+  width: 16px;
+  height: 16px;
   display: block;
 }
 
