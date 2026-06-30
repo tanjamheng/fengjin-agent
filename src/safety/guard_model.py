@@ -251,8 +251,14 @@ class GuardModel:
                     reason=f"语义检测 [{cat_name}]: Llama Guard {cat}",
                     user_message=user_msg,
                 )
-                if action == Action.COMFORT and self._comfort_prompt:
-                    result.comfort_prompt = self._comfort_prompt
+                if action == Action.COMFORT:
+                    if self._comfort_prompt:
+                        result.comfort_prompt = self._comfort_prompt
+                    else:
+                        self.log.error(
+                            "COMFORT self_harm_prompt 为空！自伤疏导将无效，"
+                            "请检查 safety.yaml comfort.self_harm_prompt"
+                        )
                 return result
 
         # 类别不在映射表中

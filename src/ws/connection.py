@@ -289,9 +289,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     await current_stream
                 except asyncio.CancelledError:
                     pass
-            except Exception:
-                # 流任务以其他异常结束（如 WebSocketDisconnect 自然传播）
-                pass
+            except Exception as e:
+                # 流任务以其他异常结束
+                log.warning("流任务异常结束: {}", e)
 
         session_mgr.flush()
         log.info("WebSocket 连接关闭，会话已保存")

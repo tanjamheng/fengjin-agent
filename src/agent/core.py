@@ -27,6 +27,7 @@ from .message_builder import (
     assemble_system_prompt,
     rollback_last_user,
     DEFAULT_BLOCKED_MESSAGE,
+    BLOCKED_PREFIX,
 )
 from ..utils.logger import get_logger, generate_trace_id
 
@@ -181,7 +182,7 @@ class Agent:
                 blocked_msg = result.user_message or DEFAULT_BLOCKED_MESSAGE
                 self.session_mgr.append_message(
                     "assistant",
-                    f"[小伊卡拦截] {blocked_msg}",
+                    f"{BLOCKED_PREFIX} {blocked_msg}",
                 )
                 self.session_mgr.flush()
                 logger.info("对话已拦截 (category={})，总耗时 {:.0f}ms",
@@ -489,7 +490,7 @@ def _build_api_messages(
             continue
         if (m["role"] == "user" and i + 1 < len(raw)
             and raw[i + 1].get("role") == "assistant"
-            and raw[i + 1].get("content", "").startswith("[小伊卡拦截]")):
+            and raw[i + 1].get("content", "").startswith(BLOCKED_PREFIX)):
             i += 2  # 跳过被拦截的 user 消息 + 小伊卡通知
             continue
         history.append(m)

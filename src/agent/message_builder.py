@@ -14,6 +14,9 @@ from ..utils.logger import get_logger
 
 log = get_logger("message_builder")
 
+# BLOCK 拦截消息前缀 — core.py 和 _build_api_messages 统一引用，防止分散定义不同步
+BLOCKED_PREFIX = "[小伊卡拦截]"
+
 # BLOCK 拦截时若 category 未定义 user_message 的统一兜底话术
 DEFAULT_BLOCKED_MESSAGE = "小伊卡发现了一些不太对劲的内容呢~请换个话题和风堇姐姐聊天吧！"
 
