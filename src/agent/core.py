@@ -161,10 +161,15 @@ class Agent:
         # 1. Skill 注入（如有）
         message_content = user_input
         if skills:
+            logger.info("Skill 注入: {} 个 Skill → {}", len(skills), skills)
+            t_skill_start = time.monotonic()
             message_content = self._execute_skills(user_input, skills)
+            t_skill = (time.monotonic() - t_skill_start) * 1000
+            logger.info("Skill 注入完成 ({:.0f}ms)", t_skill)
 
         # 2. 用户消息入历史（无论安全判定如何，核心1 2.5）
         self.session_mgr.append_message("user", message_content)
+        logger.debug("用户消息已入历史 ({} chars)", len(message_content))
 
         # 提前创建 controller + 赋值，消除 cancel 信号丢失窗口
         controller = StreamController()
@@ -196,6 +201,8 @@ class Agent:
                 if result.action == SafetyAction.COMFORT
                 else None
             )
+            if comfort_prompt:
+                logger.info("COMFORT 模式已激活: 自伤安抚指令将注入 system_prompt")
 
             # 4. 记忆检索 + 上下文组装
             t_memory_start = time.monotonic()
@@ -250,16 +257,45 @@ class Agent:
                 trim_target = (
                     api_messages[1:] if system_msg else api_messages
                 )
+
+                # 裁剪前统计
+                pre_trim_count = len(trim_target)
+                pre_trim_tokens = (
+                    self.context_manager._estimate_tokens(trim_target)
+                    if self.context_manager else 0
+                )
+
                 if self.context_manager:
                     trim_target = self.context_manager.trim_messages(
                         trim_target, trace_id=self.trace_id
                     )
+
+                # 裁剪后统计
+                post_trim_count = len(trim_target)
+                post_trim_tokens = (
+                    self.context_manager._estimate_tokens(trim_target)
+                    if self.context_manager else pre_trim_tokens
+                )
+                trimmed = pre_trim_count - post_trim_count
+
                 api_messages = (
                     [system_msg] + trim_target if system_msg else trim_target
                 )
                 t_build = (time.monotonic() - t_build_start) * 1000
-                logger.info("调用 LLM: {} (消息数={}, 裁剪耗时 {:.0f}ms)",
-                            self.config.model, len(api_messages), t_build)
+                if trimmed > 0:
+                    logger.info(
+                        "上下文组装: {} 条消息 (裁剪 {} 条, {}→{}), "
+                        "估算 {}→{} tokens, 耗时 {:.0f}ms",
+                        len(api_messages), trimmed, pre_trim_count, post_trim_count,
+                        pre_trim_tokens, post_trim_tokens, t_build,
+                    )
+                else:
+                    logger.info(
+                        "上下文组装: {} 条消息, 估算 {} tokens, 耗时 {:.0f}ms",
+                        len(api_messages), pre_trim_tokens, t_build,
+                    )
+                logger.info("调用 LLM: {} (消息数={})",
+                            self.config.model, len(api_messages))
 
                 # 5b. 流式调用 LLM
                 t_llm_start = time.monotonic()
@@ -301,6 +337,7 @@ class Agent:
                             total_tokens, t_llm, tps)
 
                 if controller.cancel_requested:
+                    logger.info("用户取消回复 (已生成 {} tokens)", total_tokens)
                     break
 
                 # 5c. Tool Calling
@@ -363,8 +400,10 @@ class Agent:
 
         except StreamInterrupted:
             # 流式输出中断（客户端断开）：保留 user 消息 + 完整回复（含前几轮 Tool Calling 中间文本）
+            logger.info("流式输出中断 (客户端断开), 已生成 {} chars", len(all_text + full_text))
             combined = all_text + full_text
             if combined:
+                logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
                 if self.memory_manager:
@@ -373,9 +412,11 @@ class Agent:
                     )
             raise
         except asyncio.CancelledError:
+            logger.info("对话任务被取消, 回滚用户消息")
             rollback_last_user(self.session_mgr, message_content)
             raise
         except Exception:
+            logger.exception("对话管线异常, 回滚用户消息")
             rollback_last_user(self.session_mgr, message_content)
             raise
         finally:
@@ -385,21 +426,30 @@ class Agent:
         if full_text:
             self.session_mgr.append_message("assistant", full_text)
             self.session_mgr.flush()
+            logger.info("会话已落盘 (回复 {} chars)", len(full_text))
         elif controller.cancel_requested:
             rollback_last_user(self.session_mgr, message_content)
+            logger.info("用户取消: 用户消息已回滚, 不保存")
         else:
             self.session_mgr.append_message("assistant", "")
             self.session_mgr.flush()
+            logger.warning("回复为空, 空消息已落盘")
 
         # 7. 异步记忆提取（不阻塞回复）
         if self.memory_manager and full_text:
+            logger.debug("触发异步记忆提取")
             self.memory_manager.extract_async(
                 user_input, full_text, trace_id=self.trace_id
             )
+        elif self.memory_manager:
+            logger.debug("跳过记忆提取: 回复为空")
+        else:
+            logger.debug("跳过记忆提取: 记忆系统未启用")
 
         t_total = (time.monotonic() - t_total_start) * 1000
-        logger.info("对话完成: {} chars, {} tokens, {:.0f}ms 总耗时",
-                    len(full_text), total_tokens, t_total)
+        logger.info("对话完成: {} chars, {} tokens, {:.0f}ms 总耗时 (安全 {:.0f}ms + 记忆 {:.0f}ms + LLM {:.0f}ms)",
+                    len(full_text), total_tokens, t_total,
+                    t_safety, t_memory, t_llm)
         return full_text
 
     # ── 管理方法 ────────────────────────────────────────────

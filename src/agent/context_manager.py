@@ -1,5 +1,6 @@
 """多轮对话上下文管理器"""
 
+import time
 from typing import Optional, List, Dict, Protocol
 
 from ..config import ContextConfig
@@ -31,10 +32,13 @@ class ContextManager:
         记忆系统未启用或检索结果为空时，返回原始输入。
         """
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
+        t_start = time.monotonic()
         if not self.config.memory.enabled:
+            log.debug("记忆系统未启用，使用原始输入")
             return user_input
 
         if not self.memory_retriever:
+            log.debug("无记忆检索器，使用原始输入")
             return user_input
 
         try:
@@ -43,13 +47,17 @@ class ContextManager:
             log.error("记忆检索失败（不阻塞对话）: {}", e)
             return user_input
         if not memory_text:
+            log.debug("记忆检索结果为空，使用原始输入")
             return user_input
 
-        # Python format() 的参数值是原样插入的，不会被二次解析大括号
-        return self.config.memory.template.format(
+        result = self.config.memory.template.format(
             memory=memory_text,
             input=user_input
         )
+        t_total = (time.monotonic() - t_start) * 1000
+        log.info("上下文组装完成 ({:.0f}ms): 记忆注入成功, 增强后输入 {} chars → {} chars",
+                 t_total, len(user_input), len(result))
+        return result
 
     def trim_messages(self, messages: List[Dict], trace_id: str = "") -> List[Dict]:
         """滑动窗口：从头部淘汰旧消息

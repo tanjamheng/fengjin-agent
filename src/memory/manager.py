@@ -1,6 +1,7 @@
 """记忆管理器（门面类）"""
 
 import threading
+import time
 
 from .config import MemoryConfig, MemorySettings
 from .storage import MemoryStorage
@@ -49,11 +50,22 @@ class MemoryManager:
     def extract_async(self, user_input: str, assistant_message: str,
                       trace_id: str = "") -> None:
         """异步提取记忆并写入（不阻塞主流程）"""
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
+
         def _worker():
+            t_start = time.time()
             try:
+                log.debug("异步记忆提取开始")
                 facts = self.extractor.extract(user_input, assistant_message, trace_id=trace_id)
-                if facts and self.writer._running:
-                    self.writer.write(facts)
+                t_extract = (time.time() - t_start) * 1000
+                if facts:
+                    if self.writer._running:
+                        self.writer.write(facts)
+                        log.info("异步记忆提取完成: {} 条事实 ({:.0f}ms)", len(facts), t_extract)
+                    else:
+                        log.warning("异步记忆提取跳过: writer 已停止")
+                else:
+                    log.debug("异步记忆提取: 无新事实 ({:.0f}ms)", t_extract)
             except Exception as e:
                 self.log.opt(exception=True).error("记忆提取失败 [trace={}]: {}", trace_id, e)
 
