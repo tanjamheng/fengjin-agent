@@ -195,14 +195,16 @@ class RAGService:
             documents = self.loader.load_directory(dir_path)
 
         total_chunks = 0
+        document_count = 0
         for doc in documents:
             chunks = self.splitter.split_document(doc)
             self.indexer.add(chunks)
             total_chunks += len(chunks)
+            document_count += 1
 
         return {
             "dir_path": dir_path,
-            "document_count": len(documents),
+            "document_count": document_count,
             "total_chunks": total_chunks,
         }
 

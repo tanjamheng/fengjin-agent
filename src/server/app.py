@@ -21,12 +21,17 @@ async def lifespan(app: FastAPI):
     SafetyManager 内含 Llama Guard GPU 模型，加载约 13 秒，
     提升为应用级单例后只加载一次（而非每个连接重载），符合资源红线。
     """
-    log.info("正在加载应用级单例（配置 / OpenAI / 安全模型 / 记忆 / RAG / 工具）...")
+    log.info("正在加载应用级单例（模型检查 / 配置 / 安全 / 记忆 / RAG / 工具）...")
     memory_manager = None
     rag_service = None
     try:
         # 使用基于 __file__ 的绝对路径，与 CLI 路径保持一致
         _project_root = Path(__file__).resolve().parent.parent.parent
+
+        # ── 0. 模型检查：下载 + FP16 量化（在加载任何模型之前）──
+        from ..utils.models import ensure_models as _ensure_models
+        _ensure_models(msg=lambda text: log.info(text))
+
         config = Config.load(str(_project_root / "config" / "config.yaml"))
         app.state.config = config
         app.state.client = AsyncOpenAI(

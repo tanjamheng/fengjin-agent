@@ -127,6 +127,11 @@ class RuleEngine:
 
         # 加载关键词和正则
         self._keywords = load_keywords(words_dir, self.config.categories)
+        # 预计算小写关键词集（case_sensitive=false 的默认路径，避免每关键词 .lower()）
+        self._keywords_lower = {
+            cat_id: [kw.lower() for kw in kws]
+            for cat_id, kws in self._keywords.items()
+        }
         self._regex_patterns = load_regex_patterns(words_dir / "regex_patterns.yaml")
 
         total_keywords = sum(len(v) for v in self._keywords.values())
@@ -190,16 +195,19 @@ class RuleEngine:
 
     def _check_keywords(self, text: str) -> Optional[SafetyResult]:
         """关键词匹配：遍历所有启用的类别"""
-        search_text = text if self.config.match.case_sensitive else text.lower()
+        if self.config.match.case_sensitive:
+            search_text = text
+            keywords_map = self._keywords
+        else:
+            search_text = text.lower()
+            keywords_map = self._keywords_lower
 
         for cat_id, cat_config in self.config.categories.items():
             if not cat_config.enabled:
                 continue
 
-            keywords = self._keywords.get(cat_id, [])
-            for keyword in keywords:
-                kw = keyword if self.config.match.case_sensitive else keyword.lower()
-                if kw in search_text:
+            for keyword in keywords_map.get(cat_id, ()):
+                if keyword in search_text:
                     return self._build_result(cat_id, cat_config, "keyword", keyword)
 
         return None

@@ -63,13 +63,11 @@ class HybridIndex(IndexStrategy):
 
         # 收集所有文档
         all_docs = {}
-        doc_contents = {}
 
         # Dense 结果
         for rank, result in enumerate(dense_results):
             doc_id = result.get("id", str(hash(result["content"])))
             all_docs[doc_id] = result
-            doc_contents[doc_id] = result["content"]
             rrf_score = 1 / (k + rank + 1)
             if "rrf_score" not in all_docs[doc_id]:
                 all_docs[doc_id]["rrf_score"] = 0
@@ -80,7 +78,6 @@ class HybridIndex(IndexStrategy):
             doc_id = result.get("id", str(hash(result["content"])))
             if doc_id not in all_docs:
                 all_docs[doc_id] = result
-                doc_contents[doc_id] = result["content"]
                 all_docs[doc_id]["rrf_score"] = 0
             rrf_score = 1 / (k + rank + 1)
             all_docs[doc_id]["rrf_score"] += rrf_score * self.sparse_weight

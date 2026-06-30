@@ -22,7 +22,7 @@ class SemanticSplitter(SplitterStrategy):
         threshold: float = 0.85,
         min_chunk_size: int = 100,
         max_chunk_size: int = 1000,
-        embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        embedding_model: str = "models/bge-m3"
     ):
         self.threshold = threshold
         self.min_chunk_size = min_chunk_size
@@ -41,11 +41,8 @@ class SemanticSplitter(SplitterStrategy):
                     from ...embedding_registry import release
                     release()
                 else:
-                    # 独立实例：直接删除 + 清理 GPU 缓存
+                    # 独立实例：直接删除
                     del self._embedding_model
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
             except Exception as e:
                 self.log.warning("嵌入模型释放异常: {}", e)
             self._embedding_model = None
@@ -108,8 +105,11 @@ class SemanticSplitter(SplitterStrategy):
         # 计算句子 embedding
         model = self._get_embedding_model()
         import torch
-        with torch.no_grad():
-            embeddings = model.encode(sentences, convert_to_numpy=True)
+        with torch.inference_mode():
+            embeddings = model.encode(
+                sentences, convert_to_numpy=True, batch_size=64,
+                normalize_embeddings=True, show_progress_bar=False,
+            )
 
         # 计算相邻句子相似度
         similarities = []
@@ -120,39 +120,34 @@ class SemanticSplitter(SplitterStrategy):
         # 根据相似度分块
         chunks = []
         current_chunk_sentences = [sentences[0]]
+        current_chunk_len = len(sentences[0])  # 追踪字符数，避免每次 join
         chunk_id = 0
         base_metadata = metadata or {}
 
         for i, sim in enumerate(similarities):
             current_sentence = sentences[i + 1]
-            current_chunk_text = " ".join(current_chunk_sentences)
 
-            # 判断是否断开
+            # 判断是否断开（用追踪的字符数，避免 O(n²) join）
             should_split = False
-
-            # 相似度低于阈值
             if sim < self.threshold:
                 should_split = True
-
-            # 当前块超过最大长度
-            if len(current_chunk_text) > self.max_chunk_size:
+            if current_chunk_len + len(current_sentence) + 1 > self.max_chunk_size:
                 should_split = True
-
-            # 判断是否需要合并（块太小）
-            if should_split and len(current_chunk_text) < self.min_chunk_size:
+            if should_split and current_chunk_len < self.min_chunk_size:
                 should_split = False
 
             if should_split:
-                # 保存当前块
                 chunks.append(TextChunk(
-                    content=current_chunk_text,
+                    content=" ".join(current_chunk_sentences),
                     metadata={**base_metadata, "chunk_index": chunk_id, "strategy": "semantic"},
                     chunk_id=chunk_id
                 ))
                 chunk_id += 1
                 current_chunk_sentences = [current_sentence]
+                current_chunk_len = len(current_sentence)
             else:
                 current_chunk_sentences.append(current_sentence)
+                current_chunk_len += len(current_sentence) + 1  # +1 for space
 
         # 保存最后一个块
         if current_chunk_sentences:

@@ -48,57 +48,24 @@ from src.session import SessionManager
 from src.utils import setup_logger, LogConfig, get_logger
 from src.utils.logger import generate_trace_id
 
-# ── 模型目录 ──
-PROJECT_ROOT = Path(__file__).resolve().parent
-MODELS_DIR = PROJECT_ROOT / "models"
-
-# 模型清单：(本地子目录, ModelScope model_id)
-MODELS = [
-    ("bge-m3", "BAAI/bge-m3"),
-    ("bge-reranker-v2-m3", "BAAI/bge-reranker-v2-m3"),
-    ("Llama-Guard-3-1B", "LLM-Research/Llama-Guard-3-1B"),
-]
-
 # ── 路径常量 ──
+PROJECT_ROOT = Path(__file__).resolve().parent
 SESSIONS_DIR = PROJECT_ROOT / "data" / "sessions"
 
 
 def ensure_models(console: Console) -> None:
-    """检查本地模型是否存在，缺失则通过 ModelScope 自动下载
+    """检查本地模型 → 下载 → FP16 量化（一体化）
 
     FENGJIN_GUARD_MODEL_ENABLED=false 时跳过 Llama Guard 模型。
     """
-    from modelscope.hub.snapshot_download import snapshot_download
+    from src.utils.models import ensure_models as _ensure
 
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # P1 安全模型开关：环境变量优先，默认启用
-    guard_enabled = os.getenv("FENGJIN_GUARD_MODEL_ENABLED", "false").lower() not in ("false", "0")
-
-    missing = []
-    for local_name, ms_id in MODELS:
-        if local_name == "Llama-Guard-3-1B" and not guard_enabled:
-            console.print(f"[dim]模型 {local_name} 已禁用 (FENGJIN_GUARD_MODEL_ENABLED=false)，跳过[/dim]")
-            continue
-        local_path = MODELS_DIR / local_name
-        if not local_path.exists() or not any(local_path.iterdir()):
-            missing.append((local_name, ms_id))
-
-    if not missing:
-        console.print("[green]所有模型已在本地就绪[/green]")
-        return
-
-    for local_name, ms_id in missing:
-        console.print(f"[yellow]模型 {local_name} 未找到，正在从 ModelScope 下载...[/yellow]")
-        local_path = MODELS_DIR / local_name
-        try:
-            snapshot_download(ms_id, local_dir=str(local_path))
-            console.print(f"[green]  {local_name} 下载完成[/green]")
-        except Exception as e:
-            console.print(f"[red]  {local_name} 下载失败: {e}[/red]")
-            console.print(f"[yellow]  请检查网络连接或手动下载到 {local_path}[/yellow]")
-
-    console.print("[green]所有模型下载完成[/green]")
+    console.print("[bold]检查模型...[/bold]")
+    ok = _ensure_models(msg=console.print)
+    if ok:
+        console.print("[green]所有模型就绪[/green]")
+    else:
+        console.print("[yellow]部分模型未就绪，将降级运行[/yellow]")
 
 
 def _validate_ingest_path(path_str: str) -> bool:

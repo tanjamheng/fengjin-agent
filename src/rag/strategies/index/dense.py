@@ -66,19 +66,22 @@ class DenseIndex(IndexStrategy):
             raise ValueError(f"不支持的向量库类型: {self.store_type}")
 
     def _init_chroma(self):
-        """初始化 ChromaDB"""
+        """初始化 ChromaDB（通过共享注册表，避免重复创建客户端连接）"""
         try:
-            import chromadb
-            from chromadb.config import Settings
+            from ...chroma_registry import acquire as chroma_acquire
 
             Path(self.persist_directory).mkdir(parents=True, exist_ok=True)
 
-            self._store = chromadb.PersistentClient(
-                path=self.persist_directory,
-                settings=Settings(anonymized_telemetry=False)
-            )
+            self._store = chroma_acquire(str(Path(self.persist_directory).resolve()))
+            self._chroma_shared = True
             self._collection = self._store.get_or_create_collection(
-                name=self.collection_name
+                name=self.collection_name,
+                metadata={
+                    "hnsw:space": "cosine",
+                    "hnsw:M": 8,
+                    "hnsw:construction_ef": 50,
+                    "hnsw:search_ef": 20,
+                },
             )
         except ImportError:
             raise ImportError("请安装 chromadb: pip install chromadb")
@@ -94,12 +97,14 @@ class DenseIndex(IndexStrategy):
         except ImportError:
             raise ImportError("请安装 faiss: pip install faiss-cpu 或 pip install faiss-gpu")
 
-    def _embed(self, texts: List[str]) -> List[List[float]]:
-        """生成向量"""
+    def _embed(self, texts: List[str]):
+        """生成向量（返回 numpy ndarray，避免 list[list[float]] 6-8× 内存膨胀）"""
         import torch
-        with torch.no_grad():
-            embeddings = self._embedding_model.encode(texts, convert_to_numpy=True)
-        return embeddings.tolist()
+        with torch.inference_mode():
+            return self._embedding_model.encode(
+                texts, convert_to_numpy=True, batch_size=64,
+                normalize_embeddings=True, show_progress_bar=False,
+            )
 
     def add(self, chunks: List) -> None:
         """添加文本块"""
@@ -143,7 +148,8 @@ class DenseIndex(IndexStrategy):
         if self.store_type == "chroma":
             results = self._collection.query(
                 query_embeddings=[query_embedding],
-                n_results=top_k
+                n_results=top_k,
+                include=["documents", "metadatas", "distances"],
             )
             return self._format_chroma_results(results)
         elif self.store_type == "faiss":
@@ -202,28 +208,19 @@ class DenseIndex(IndexStrategy):
                 from ...embedding_registry import release
                 release()
             else:
-                # 独立实例：直接删除 + 清理 GPU 缓存
+                # 独立实例：直接删除
                 del self._embedding_model
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception as e:
-                    self.log.warning("独立嵌入模型GPU缓存清理异常: {}", e)
             self._embedding_model = None
             self._embedding_is_shared = False
         # 释放 ChromaDB 客户端连接（不删除 collection 数据）
         self._collection = None
         if self._store is not None:
-            try:
-                self._store._system.stop()
-            except Exception as e:
-                self.log.warning("ChromaDB 客户端关闭异常: {}", e)
+            if getattr(self, "_chroma_shared", False):
+                from ...chroma_registry import release as chroma_release
+                chroma_release()
+            else:
+                try:
+                    self._store._system.stop()
+                except Exception as e:
+                    self.log.warning("ChromaDB 客户端关闭异常: {}", e)
             self._store = None
-        # 安全线：确保 GPU 缓存清理（与其他 GPU 持有类对齐）
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception as e:
-            self.log.warning("安全线GPU缓存清理异常: {}", e)

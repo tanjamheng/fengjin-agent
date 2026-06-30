@@ -21,8 +21,13 @@ class MemoryRetriever:
         self.storage = storage
         self._core_path = Path(config.core_file)
         self.log = get_logger("memory_retriever")
+        self._core_cache: str | None = None
+        self._core_mtime: float = 0.0
 
-    def retrieve(self, user_input: str, trace_id: str = "") -> str:
+    def invalidate_core_cache(self) -> None:
+        """外部写入了 core_memory.md 后调用，使缓存失效"""
+        self._core_cache = None
+        self._core_mtime = 0.0
         """检索记忆，返回格式化的记忆文本"""
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         t_start = time.monotonic()
@@ -50,9 +55,13 @@ class MemoryRetriever:
         return result
 
     def _load_core(self) -> str:
-        """读取 core_memory.md 内容（不含标题行和占位符）"""
+        """读取 core_memory.md 内容（缓存 + mtime 失效，避免每对话重复 I/O）"""
         if not self._core_path.exists():
             return ""
+        mtime = self._core_path.stat().st_mtime
+        if self._core_cache is not None and mtime == self._core_mtime:
+            return self._core_cache
+
         lines = self._core_path.read_text(encoding="utf-8").strip().splitlines()
         content = "\n".join(
             line for line in lines
@@ -64,7 +73,9 @@ class MemoryRetriever:
             "(风堇会在对话中逐渐了解你",
         )
         if content.startswith(_PLACEHOLDER_PREFIXES):
-            return ""
+            content = ""
+        self._core_cache = content
+        self._core_mtime = mtime
         return content
 
     def _search_db(self, user_input: str) -> str:

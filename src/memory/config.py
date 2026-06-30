@@ -13,7 +13,7 @@ load_dotenv()
 
 
 class ChromaConfig(BaseModel):
-    persist_directory: str = "data/memory_chroma"
+    persist_directory: str = "data/chroma"
     collection_name: str = "memories"
     embedding_model: str = "models/bge-m3"
     device: str = "cpu"

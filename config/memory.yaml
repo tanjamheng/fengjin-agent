@@ -3,7 +3,7 @@ memory:
   # ChromaDB 存储配置
   # embedding_model: 支持 HuggingFace model_id 或本地目录路径
   chroma:
-    persist_directory: "data/memory_chroma"
+    persist_directory: "data/chroma"
     collection_name: "memories"
     embedding_model: "models/bge-m3"
     device: "cpu"

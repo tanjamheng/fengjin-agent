@@ -41,10 +41,27 @@ def acquire(model_path: str, device: str = "cpu") -> "SentenceTransformer":
             from sentence_transformers import SentenceTransformer
             return SentenceTransformer(model_path, device=device)
 
-        # 首次加载
+        # 首次加载：确保模型是 FP16（应由 ensure_models 预处理，此处为防御性兜底）
+        import torch
         from sentence_transformers import SentenceTransformer
-        log.info("加载嵌入模型: {} (device={})", model_path, device)
-        _model = SentenceTransformer(model_path, device=device)
+
+        _model_dir = Path(model_path)
+        _state_file = _model_dir / ".state"
+        if _state_file.exists() and _state_file.read_text().strip() == "fp16":
+            log.info("加载嵌入模型: {} (device={}, dtype=float16)", model_path, device)
+            _model = SentenceTransformer(
+                model_path,
+                device=device,
+                model_kwargs={"torch_dtype": torch.float16},
+            )
+        else:
+            # 防御路径：ensure_models 未运行或中途崩溃，现场量化
+            log.warning("嵌入模型 {} 未预量化为 FP16，现场处理...", model_path)
+            _model = SentenceTransformer(model_path, device=device)
+            _model.half()
+            _model.save(model_path, safe_serialization=True)
+            _state_file.write_text("fp16")
+            log.info("FP16 模型已保存至 {}", model_path)
         _model_path = model_path
         _refcount = 1
         return _model
@@ -68,12 +85,6 @@ def release() -> None:
             del _model
             _model = None
         _model_path = None
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception as e:
-            log.warning("CUDA缓存清理异常: {}", e)
 
 
 def _get_model() -> Optional["SentenceTransformer"]:
@@ -108,8 +119,11 @@ class SharedEmbeddingFunction:
         if self._model is None:
             raise RuntimeError("嵌入模型已释放")
         import torch
-        with torch.no_grad():
-            embeddings = self._model.encode(input, convert_to_numpy=True)
+        with torch.inference_mode():
+            embeddings = self._model.encode(
+                input, convert_to_numpy=True, batch_size=64,
+                normalize_embeddings=True, show_progress_bar=False,
+            )
         return embeddings.tolist()
 
     def cleanup(self) -> None:

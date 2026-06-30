@@ -4,8 +4,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import chromadb
-
 from .config import MemoryConfig
 from ..utils.logger import get_logger
 
@@ -17,12 +15,21 @@ class MemoryStorage:
       - documents: 记忆文本
       - ids: 唯一标识
       - metadatas: {is_core: int, type: str, created_at: str, updated_at: str?}
+
+    通过 chroma_registry 与 RAG DenseIndex 共享同一个 PersistentClient，
+    避免重复创建 SQLite 连接和 HNSW 索引元数据。
     """
 
     def __init__(self, config: MemoryConfig):
         self.config = config
         self.log = get_logger("memory_storage")
-        self.client = chromadb.PersistentClient(path=config.chroma.persist_directory)
+
+        # 通过共享注册表获取 ChromaDB 客户端（与 RAG 共享）
+        from ..rag.chroma_registry import acquire as chroma_acquire
+        persist_dir = str(Path(config.chroma.persist_directory).resolve())
+        Path(persist_dir).mkdir(parents=True, exist_ok=True)
+        self.client = chroma_acquire(persist_dir)
+        self._chroma_shared = True
 
         # 相对路径解析为项目根目录下的绝对路径
         embedding_model = config.chroma.embedding_model
@@ -46,11 +53,17 @@ class MemoryStorage:
 
     def _get_or_create_collection(self, name: str, ef):
         """创建或获取集合，自动处理 embedding function 冲突（如模型升级导致的签名变化）"""
+        hnsw_metadata = {
+            "hnsw:space": "cosine",
+            "hnsw:M": 8,
+            "hnsw:construction_ef": 50,
+            "hnsw:search_ef": 20,
+        }
         try:
             return self.client.get_or_create_collection(
                 name=name,
                 embedding_function=ef,
-                metadata={"hnsw:space": "cosine"}
+                metadata=hnsw_metadata,
             )
         except ValueError as e:
             if "embedding function conflict" in str(e).lower():
@@ -65,7 +78,7 @@ class MemoryStorage:
                 return self.client.get_or_create_collection(
                     name=name,
                     embedding_function=ef,
-                    metadata={"hnsw:space": "cosine"}
+                    metadata=hnsw_metadata,
                 )
             else:
                 raise
@@ -140,15 +153,13 @@ class MemoryStorage:
                 self.log.warning("Embedding模型释放异常: {}", e)
         self.collection = None
         if self.client is not None:
-            try:
-                self.client._system.stop()
-            except Exception as e:
-                self.log.warning("ChromaDB 客户端关闭异常: {}", e)
+            if getattr(self, "_chroma_shared", False):
+                from ..rag.chroma_registry import release as chroma_release
+                chroma_release()
+            else:
+                try:
+                    self.client._system.stop()
+                except Exception as e:
+                    self.log.warning("ChromaDB 客户端关闭异常: {}", e)
             self.client = None
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception as e:
-            self.log.warning("CUDA缓存清理异常: {}", e)
         self.log.info("MemoryStorage 资源已清理")

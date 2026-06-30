@@ -8,7 +8,11 @@ from .base import IndexStrategy
 
 
 class SparseIndex(IndexStrategy):
-    """BM25 稀疏索引"""
+    """BM25 稀疏索引
+
+    文档存储：(tokens, content, metadata) 三元组，避免三平行列表冗余。
+    BM25 索引惰性构建：add() 设脏标记，search() 首次调用时重建。
+    """
 
     def __init__(self, k1: float = 1.5, b: float = 0.75):
         """
@@ -20,81 +24,79 @@ class SparseIndex(IndexStrategy):
         self.b = b
 
         self._bm25 = None
-        self._corpus = []       # tokenized texts (for BM25)
-        self._raw_texts = []    # original texts (for search results)
-        self._metadatas = []
+        self._bm25_dirty = False
+        self._docs: list[tuple] = []  # [(tokens, content, metadata), ...]
 
     def initialize(self) -> None:
         """初始化"""
-        # BM25 不需要额外初始化
         pass
 
     def _tokenize(self, text: str) -> List[str]:
         """简单分词"""
-        # 中文简单分词：按字符
-        # 英文按空格
         import re
-        # 移除标点
-        text = re.sub(r'[^\w\s\u4e00-\u9fff]', '', text)
-        # 中文按字符，英文按空格
+        text = re.sub(r'[^\w\s一-鿿]', '', text)
         tokens = []
         for char in text:
-            if '\u4e00' <= char <= '\u9fff':
+            if '一' <= char <= '鿿':
                 tokens.append(char)
             elif char.strip():
                 tokens.append(char)
-
-        # 英文单词
         words = re.findall(r'[a-zA-Z]+', text)
         tokens.extend(words)
-
         return tokens
 
     def add(self, chunks: List) -> None:
-        """添加文本块"""
+        """添加文本块（惰性：不立即重建 BM25）"""
         try:
             from rank_bm25 import BM25Okapi
-
             for chunk in chunks:
-                self._corpus.append(self._tokenize(chunk.content))
-                self._raw_texts.append(chunk.content)
-                self._metadatas.append(chunk.metadata)
-
-            # 重建 BM25 索引
-            self._bm25 = BM25Okapi(self._corpus)
-
+                self._docs.append((
+                    self._tokenize(chunk.content),
+                    chunk.content,
+                    chunk.metadata,
+                ))
+            self._bm25_dirty = True
         except ImportError:
             raise ImportError("请安装 rank_bm25: pip install rank_bm25")
 
+    def _ensure_bm25(self) -> None:
+        """惰性重建 BM25 索引"""
+        if not self._bm25_dirty:
+            return
+        from rank_bm25 import BM25Okapi
+        self._bm25 = BM25Okapi([tokens for tokens, _, _ in self._docs])
+        self._bm25_dirty = False
+
     def search(self, query: str, top_k: int = 5) -> List[dict]:
         """BM25 搜索"""
+        self._ensure_bm25()
         if self._bm25 is None:
             return []
 
         query_tokens = self._tokenize(query)
         scores = self._bm25.get_scores(query_tokens)
 
-        # 排序
-        ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        ranked_indices = sorted(
+            range(len(scores)), key=lambda i: scores[i], reverse=True
+        )[:top_k]
 
         results = []
         for idx in ranked_indices:
+            _, content, metadata = self._docs[idx]
             results.append({
-                "content": self._raw_texts[idx],  # 使用原始文本，避免token拼接损坏中文
-                "metadata": self._metadatas[idx],
+                "content": content,
+                "metadata": metadata,
                 "score": scores[idx],
-                "id": str(idx)
+                "id": str(idx),
             })
-
         return results
 
     def count(self) -> int:
         """返回文档数量"""
-        return len(self._corpus)
+        return len(self._docs)
 
     def cleanup(self) -> None:
         """清理资源"""
         self._bm25 = None
-        self._corpus = []
-        self._raw_texts = []
-        self._metadatas = []
+        self._docs = []
+        self._bm25_dirty = False

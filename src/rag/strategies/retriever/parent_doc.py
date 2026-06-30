@@ -36,8 +36,7 @@ class ParentDocRetriever(RetrieverStrategy):
         self.parent_chunk_size = parent_chunk_size
         self.score_threshold = score_threshold
 
-        # 存储 child -> parent 映射
-        self._child_to_parent: Dict[str, str] = {}
+        # 存储 parent -> content 映射（parent_id 从 child 的 metadata 中提取）
         self._parent_chunks: Dict[str, str] = {}
 
     def initialize(self) -> None:
@@ -72,9 +71,6 @@ class ParentDocRetriever(RetrieverStrategy):
                     },
                     chunk_id=len(child_chunks)
                 ))
-
-                # 记录映射
-                self._child_to_parent[child_id] = parent_id
 
             # 存储大块
             self._parent_chunks[parent_id] = text
@@ -120,5 +116,4 @@ class ParentDocRetriever(RetrieverStrategy):
     def cleanup(self) -> None:
         """清理"""
         self.index.cleanup()
-        self._child_to_parent.clear()
         self._parent_chunks.clear()

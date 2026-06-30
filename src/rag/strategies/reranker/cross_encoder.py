@@ -33,7 +33,7 @@ class CrossEncoderReranker(RerankerStrategy):
         self.log = get_logger("cross_encoder_reranker")
 
     def initialize(self) -> None:
-        """加载模型"""
+        """加载模型（FP16 精度：首次加载转换并覆盖磁盘，后续直读 FP16）"""
         try:
             import torch
             from sentence_transformers import CrossEncoder
@@ -48,7 +48,25 @@ class CrossEncoderReranker(RerankerStrategy):
                 from ....utils.helpers import get_project_root
                 model_path = str(get_project_root() / model_path)
 
-            self._model = CrossEncoder(model_path, device=effective_device)
+            _model_dir = Path(model_path)
+            _state_file = _model_dir / ".state"
+            if _state_file.exists() and _state_file.read_text().strip() == "fp16":
+                self.log.info("加载重排序模型: {} (device={}, dtype=float16)", model_path, effective_device)
+                self._model = CrossEncoder(
+                    model_path,
+                    device=effective_device,
+                    automodel_args={"torch_dtype": torch.float16},
+                )
+            else:
+                # 防御路径：ensure_models 未运行或中途崩溃，现场量化
+                self.log.warning("重排序模型 {} 未预量化为 FP16，现场处理...", model_path)
+                self._model = CrossEncoder(model_path, device=effective_device)
+                self._model.model.half()
+                self._model.model.save_pretrained(model_path, safe_serialization=True)
+                if hasattr(self._model, "tokenizer") and self._model.tokenizer is not None:
+                    self._model.tokenizer.save_pretrained(model_path)
+                _state_file.write_text("fp16")
+                self.log.info("FP16 重排序模型已保存至 {}", model_path)
         except ImportError:
             raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")
 
@@ -62,8 +80,13 @@ class CrossEncoderReranker(RerankerStrategy):
 
         # 打分
         import torch
-        with torch.no_grad():
-            scores = self._model.predict(pairs)
+        with torch.inference_mode():
+            scores = self._model.predict(
+                pairs,
+                activation_fct=None,       # bge-reranker-v2-m3 输出 logits，不压缩
+                batch_size=32,
+                show_progress_bar=False,
+            )
 
         # 按分数排序
         scored_results = []
@@ -82,13 +105,7 @@ class CrossEncoderReranker(RerankerStrategy):
         return scored_results[:self.top_n]
 
     def cleanup(self) -> None:
-        """清理模型并释放 GPU 显存"""
+        """清理模型"""
         if self._model is not None:
             del self._model
             self._model = None
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception as e:
-            self.log.warning("CUDA缓存清理异常: {}", e)

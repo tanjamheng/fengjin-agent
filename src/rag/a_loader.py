@@ -91,8 +91,8 @@ class DocumentLoader:
         self.log.info("从目录 {} 加载了 {} 个文档", dir_path, len(documents))
         return documents
 
-    def load_directory_recursive(self, dir_path: str) -> List[Document]:
-        """递归加载目录下所有文档，自动从子目录名提取分类元数据
+    def load_directory_recursive(self, dir_path: str):
+        """递归加载目录下所有文档，自动从子目录名提取分类元数据（生成器）
 
         目录结构约定：
             data/knowledge/
@@ -102,40 +102,35 @@ class DocumentLoader:
                 人物关系/   → category="人物关系"
                 剧情事件/   → category="剧情事件"
 
-        Args:
-            dir_path: 知识库根目录路径
+        使用生成器逐文件 yield，峰值内存 O(最大单文件) 而非 O(总文档量)。
         """
         root = Path(dir_path)
         if not root.is_dir():
             raise ValueError(f"不是目录: {dir_path}")
 
-        documents = []
+        doc_count = 0
 
-        # 遍历子目录
         for subdir in sorted(root.iterdir()):
             if not subdir.is_dir():
                 continue
-
             category = subdir.name
             for file_path in sorted(subdir.iterdir()):
                 if file_path.is_file() and file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS:
                     try:
-                        doc = self.load(str(file_path), category=category)
-                        documents.append(doc)
+                        yield self.load(str(file_path), category=category)
+                        doc_count += 1
                     except Exception as e:
                         self.log.warning("加载文件失败: {}, 错误: {}", file_path, e)
 
-        # 也检查根目录下的文件（无分类）
         for file_path in sorted(root.iterdir()):
             if file_path.is_file() and file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS:
                 try:
-                    doc = self.load(str(file_path))
-                    documents.append(doc)
+                    yield self.load(str(file_path))
+                    doc_count += 1
                 except Exception as e:
                     self.log.warning("加载文件失败: {}, 错误: {}", file_path, e)
 
-        self.log.info("递归加载 {}，共 {} 个文档", dir_path, len(documents))
-        return documents
+        self.log.info("递归加载 {}，共 {} 个文档", dir_path, doc_count)
 
     def _load_text(self, path: Path) -> str:
         """加载纯文本"""
@@ -151,19 +146,15 @@ class DocumentLoader:
         try:
             import pypdf
             reader = pypdf.PdfReader(str(path))
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() + "\n"
-            return text
+            parts = [page.extract_text() for page in reader.pages]
+            return "\n".join(parts)
         except ImportError:
             self.log.warning("pypdf 未安装，尝试使用 PyMuPDF")
             try:
                 import fitz
                 doc = fitz.open(str(path))
-                text = ""
-                for page in doc:
-                    text += page.get_text() + "\n"
-                return text
+                parts = [page.get_text() for page in doc]
+                return "\n".join(parts)
             except ImportError:
                 raise ImportError("请安装 pypdf 或 PyMuPDF: pip install pypdf 或 pip install PyMuPDF")
 
@@ -172,9 +163,7 @@ class DocumentLoader:
         try:
             from docx import Document as DocxDocument
             doc = DocxDocument(str(path))
-            text = ""
-            for paragraph in doc.paragraphs:
-                text += paragraph.text + "\n"
-            return text
+            parts = [p.text for p in doc.paragraphs]
+            return "\n".join(parts)
         except ImportError:
             raise ImportError("请安装 python-docx: pip install python-docx")

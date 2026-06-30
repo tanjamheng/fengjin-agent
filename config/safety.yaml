@@ -91,7 +91,7 @@ safety:
     model_id: "models/Llama-Guard-3-1B"
     source: "local"
     device: "auto"
-    dtype: "bfloat16"
+    dtype: "float16"
     lazy_load: false
     timeout: 5.0
     fallback: "pass"

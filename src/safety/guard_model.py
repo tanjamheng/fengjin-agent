@@ -42,7 +42,7 @@ class GuardModelConfig(BaseModel):
     model_id: str = "LLM-Research/Llama-Guard-3-1B"
     source: str = "modelscope"  # modelscope / huggingface
     device: str = "auto"
-    dtype: str = "bfloat16"
+    dtype: str = "float16"
     lazy_load: bool = True
     timeout: float = 5.0
     fallback: str = "pass"
@@ -168,14 +168,25 @@ class GuardModel:
             # 解析模型路径：支持 ModelScope 本地缓存 / HuggingFace / 本地路径
             model_path = self._resolve_model_path()
 
-            self._tokenizer = AutoTokenizer.from_pretrained(model_path)
+            # 防御检查：若 ensure_models 未预量化，发出警告
+            _state_file = Path(model_path) / ".state"
+            if not _state_file.exists() or _state_file.read_text().strip() != "fp16":
+                self.log.warning(
+                    "Llama Guard 模型未预量化为 FP16，加载可能耗时较长"
+                )
+
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                use_fast=True,
+                local_files_only=True,
+            )
 
             dtype_map = {
                 "bfloat16": torch.bfloat16,
                 "float16": torch.float16,
                 "float32": torch.float32,
             }
-            torch_dtype = dtype_map.get(self.config.dtype, torch.bfloat16)
+            torch_dtype = dtype_map.get(self.config.dtype, torch.float16)
 
             # 抑制 transformers 加载时的 stderr 噪音（如 "meta device" 警告）
             with open(os.devnull, "w") as devnull:
@@ -184,6 +195,8 @@ class GuardModel:
                         model_path,
                         torch_dtype=torch_dtype,
                         device_map=self.config.device,
+                        use_safetensors=True,
+                        local_files_only=True,
                     )
             self._device = self._model.device
 
