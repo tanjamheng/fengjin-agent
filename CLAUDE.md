@@ -169,7 +169,7 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | RAG | 检索增强生成——6 步管道（加载→切分→索引→查询增强→检索→重排序） |
 | bge-m3 | 嵌入模型 ~1.1GB——将文本转为向量，供 DenseIndex 和 MemoryStorage 使用 |
 | bge-reranker-v2-m3 | Cross-Encoder 重排序模型 ~1.1GB——对检索结果精排 |
-| Llama Guard 3 1B | Meta 安全语义检测模型 ~2GB——P1 防线，13 类语义分类 |
+| Llama Guard 3 1B | Meta 安全语义检测模型（FP16 ~2GB 内存）——P1 防线，13 类语义分类。默认关闭，由 `FENGJIN_GUARD_MODEL_ENABLED` 控制 |
 | ChromaDB | 向量数据库——RAG 和 Memory 各一个 PersistentClient |
 | Tool Calling | LLM 自主决定调用工具的能力——本项目上限 5 轮 |
 | StreamController | 流式取消机制——协作式 cancel flag + task.cancel() 兜底 |
@@ -199,11 +199,10 @@ AI风堇_治愈晨昏/
 │   └── prompts/                     # Prompt 模板（core_memory / memory_extraction / memory_merge）
 │
 ├── data/
-│   ├── chroma/                      # RAG 向量库
-│   ├── memory_chroma/               # 记忆向量库
+│   ├── chroma/                      # RAG + Memory 共享向量库（Memory 已合并到此）
 │   └── sessions/                    # 会话 JSON 文件
 │
-├── models/                          # 本地模型（bge-m3 / bge-reranker-v2-m3 / Llama-Guard-3-1B）
+├── models/                          # 本地模型（自动 FP16 量化：bge-m3 ~2.1G/bge-reranker ~1.1G/Llama-Guard ~2.8G 磁盘）
 ├── logs/                             # app.log (Python全量) + renderer.log (前端)
 │
 ├── src/
@@ -229,6 +228,7 @@ AI风堇_治愈晨昏/
 │   │   ├── rag_service.py           # RAGService — 门面：retrieve() / ingest_document() / ingest_directory()
 │   │   ├── a_loader.py ~ f_reranker.py    # Loader→Splitter→Indexer→Retriever→QueryEnhancer→Reranker
 │   │   ├── embedding_registry.py    # 嵌入模型进程级单例（引用计数），RAG+Memory 共享 bge-m3
+│   │   ├── chroma_registry.py       # ChromaDB 客户端进程级单例（引用计数），RAG+Memory 共享 PersistentClient
 │   │   └── strategies/              # 策略仓库（splitter / index / retriever / query / reranker）
 │   │
 │   ├── memory/                      # 记忆系统
@@ -266,7 +266,8 @@ AI风堇_治愈晨昏/
 │   │
 │   └── utils/
 │       ├── logger.py                # loguru 配置
-│       └── helpers.py               # 通用工具
+│       ├── helpers.py               # 通用工具
+│       └── models.py                # 模型下载+FP16量化一体化（CLI/Server共用）
 │
 ├── frontend/                        # 前端代码（Electron + TypeScript，尚未开发）
 │   ├── src/
@@ -336,12 +337,14 @@ AI风堇_治愈晨昏/
 
 ## 资源红线
 
-12. **加载到 GPU 的模型必须有 cleanup()**——需同时做 `self._model = None` + `torch.cuda.empty_cache()`。
-13. **不能同时驻留超过显存容量的模型**——当前预算：bge-m3 ~1.1GB + bge-reranker-v2-m3 ~1.1GB + Llama-Guard-3-1B ~2GB = ~4.2GB。
-14. **ChromaDB PersistentClient 在 cleanup 中必须关闭或置 None**。
-15. **daemon 线程必须有停止信号和 join 超时**。
-16. **`cleanup()` 必须是幂等的**——加 `self._cleaned` 标志位，支持 cleanup→reinit→cleanup 序列。`initialize()` 中必须将 `_cleaned` 重置为 `False`。
-17. **持有资源的 `__init__`/`initialize()` 必须支持部分初始化回滚**——中途失败时清理已初始化的子组件，防止 GPU 模型/ChromaDB/线程永久泄漏。
+12. **加载到 GPU 的模型必须有 cleanup()**——需同时做 `self._model = None`（当前全部 CPU 模式，仅 guard_model 保留空缓存调用）。
+13. **不能同时驻留超过显存容量的模型**——当前预算（全部 FP16，CPU 模式）：bge-m3 ~550MB + bge-reranker-v2-m3 ~550MB + Llama-Guard-3-1B ~2GB（默认关闭，env var 控制）= 基础 ~1.1GB / 全开 ~3.1GB。
+14. **ChromaDB PersistentClient 必须走 chroma_registry.acquire() 共享单例**——禁止各模块独立创建客户端。Memory 和 RAG 已合并到 data/chroma 同目录不同 collection。
+15. **新增本地模型必须走 ensure_models() 统一下载+FP16 量化**——禁止自行下载或加载原始精度。src/utils/models.py 是模型获取唯一入口。
+16. **ChromaDB PersistentClient 在 cleanup 中必须关闭或置 None**。
+17. **daemon 线程必须有停止信号和 join 超时**。
+18. **`cleanup()` 必须是幂等的**——加 `self._cleaned` 标志位，支持 cleanup→reinit→cleanup 序列。`initialize()` 中必须将 `_cleaned` 重置为 `False`。
+19. **持有资源的 `__init__`/`initialize()` 必须支持部分初始化回滚**——中途失败时清理已初始化的子组件，防止 GPU 模型/ChromaDB/线程永久泄漏。
 
 ## Python 陷阱红线
 

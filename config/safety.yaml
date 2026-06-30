@@ -83,8 +83,8 @@ safety:
       - 保持风堇的语气：温柔、阳光、不沉重——即使聊的是沉重的事，也要让对方感受到光
 
   # P1 Llama Guard 模型（语义安全检测）
-  # 开关由环境变量 FENGJIN_GUARD_MODEL_ENABLED 控制（默认 true）
-  # 设为 false 后不会下载/加载/运行此模型
+  # 开关由环境变量 FENGJIN_GUARD_MODEL_ENABLED 控制（默认 false）
+  # 设为 false 后不会加载/运行此模型（磁盘上的 FP16 模型文件会预下载以备将来启用）
   # source: "local" 使用本地模型（由 main.py ensure_models 自动下载到 models/）
   # source: "modelscope" 使用 ModelScope 在线缓存
   guard_model:

@@ -28,6 +28,8 @@ class MemoryRetriever:
         """外部写入了 core_memory.md 后调用，使缓存失效"""
         self._core_cache = None
         self._core_mtime = 0.0
+
+    def retrieve(self, user_input: str, trace_id: str = "") -> str:
         """检索记忆，返回格式化的记忆文本"""
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         t_start = time.monotonic()

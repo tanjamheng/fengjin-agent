@@ -7,6 +7,7 @@ DenseIndex 和 MemoryStorage 各自需要加载 bge-m3 嵌入模型 (~1.1GB)。
 """
 
 import threading
+from pathlib import Path
 from typing import Optional
 
 from ..utils.logger import get_logger

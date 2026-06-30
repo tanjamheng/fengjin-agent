@@ -61,7 +61,7 @@ class GuardModel:
         raw = _safety.get("guard_model", {})
         self.config = GuardModelConfig(**raw)
 
-        # P1 开关由环境变量 FENGJIN_GUARD_MODEL_ENABLED 唯一控制（默认 true）
+        # P1 开关由环境变量 FENGJIN_GUARD_MODEL_ENABLED 唯一控制（默认 false）
         self.enabled = os.getenv("FENGJIN_GUARD_MODEL_ENABLED", "false").lower() not in ("false", "0")
 
         if not self.enabled:
