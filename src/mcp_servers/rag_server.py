@@ -47,7 +47,7 @@ class RAGMCPServer(MCPServerBase):
             description="风堇知识库检索服务，提供翁法罗斯世界设定、角色关系、剧情事件等知识检索"
         )
         self.rag_service = rag_service
-        self.log = get_logger()
+        self.log = get_logger("rag_server")
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
         return [RAG_RETRIEVE_TOOL]

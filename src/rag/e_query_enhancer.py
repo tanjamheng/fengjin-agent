@@ -26,7 +26,7 @@ class QueryEnhancer:
         self.strategy_type = strategy_type
         self.strategy_params = strategy_params or {}
         self.llm_client = llm_client
-        self.log = get_logger(generate_trace_id())
+        self.log = get_logger("rag_query_enhancer")
 
         self._strategy: Optional[QueryEnhancerStrategy] = None
 

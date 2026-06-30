@@ -100,6 +100,7 @@ ws.onSessionLoaded = (sessionId: string, title: string, messages: ChatMessage[])
 };
 
 ws.onSessionDeleted = (sessionId: string) => {
+  log.info("Session deleted (id={})", sessionId);
   appState.sessions = appState.sessions.filter((s) => s.id !== sessionId);
   sidebar.renderList(appState.sessions);
   if (appState.currentSessionId === sessionId) {
@@ -266,6 +267,7 @@ sidebar.onSelectSession = (sessionId: string) => {
     appState.isReplying = false;
     sidebar.setDisabled(false);
     chat.endReplyMode(); // 解锁 InputController
+    log.warn("Session load timeout");
     chat.appendSystemMessage("加载会话超时，请重试", "warning");
     ws.resetSessionId(); // 加载失败时重置，防止消息发错会话
     appState.currentSessionId = ""; // 同步重置 AppState
@@ -278,6 +280,7 @@ sidebar.onDeleteSession = (sessionId: string) => {
   ws.deleteSession(sessionId);
 };
 sidebar.onClearAll = () => {
+  log.info("Clear all sessions requested ({} sessions)", appState.sessions.length);
   const sessions = [...appState.sessions];
   for (const s of sessions) {
     ws.deleteSession(s.id);
@@ -317,6 +320,7 @@ sidebar.onOpenSettings = async () => {
 
   const result = await panel.show();
   if (!result) {
+    log.info("Settings panel closed (cancelled)");
     _settingsPanelVisible = false;
     return;
   }

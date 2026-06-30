@@ -141,6 +141,7 @@ export class WSClient {
   sendUserMessage(content: string): void {
     this._cancelled = false; // 新消息，清除取消标志
     this._replyActive = true; // 新回复开始
+    log.info("Sending user message ({} chars)", content.length);
     if (this._send({ type: "user_msg", session_id: this._sessionId, content })) {
       this._startReplyTimer();
     }
@@ -150,6 +151,7 @@ export class WSClient {
     this._cancelled = true; // 忽略后续到达的 stream/end 幽灵气泡
     this._replyActive = false;
     this._cancelledEndPending = true; // 标记：被取消回复的 end 包在路上，到达时消费
+    log.info("Cancel requested");
     this._send({ type: "cancel" });
     this._clearReplyTimer();
   }
@@ -342,15 +344,18 @@ export class WSClient {
         break;
 
       case "session_list":
+        log.debug("← session_list ({} items)", Array.isArray(msg.sessions) ? msg.sessions.length : 0);
         this.onSessionList?.(Array.isArray(msg.sessions) ? msg.sessions : []);
         break;
 
       case "session_loaded":
+        log.info("Session loaded (id={})", msg.session_id);
         // _sessionId 由回调方通过 setSessionId() 更新，防止废弃 session_loaded 污染
         this.onSessionLoaded?.(msg.session_id, msg.title, msg.messages ?? []);
         break;
 
       case "session_deleted":
+        log.info("Session deleted (id={})", msg.session_id);
         this.onSessionDeleted?.(msg.session_id);
         break;
 

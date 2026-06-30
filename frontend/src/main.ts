@@ -8,6 +8,7 @@ app.commandLine.appendSwitch("high-dpi-support", "1");
 // V1 移除 device-scale-factor 强设为 1，使用系统默认缩放（HiDPI 适配）
 
 let win: BrowserWindow | null = null;
+let logStream: WriteStream | null = null;
 
 // 单实例锁 — 防止多窗口 WebSocket 冲突
 const gotTheLock = app.requestSingleInstanceLock();
@@ -54,19 +55,30 @@ function createWindow(): void {
         if (existsSync(bak)) renameSync(bak, logPath.replace('.log', '.2.log'));
         renameSync(logPath, bak);
       }
-    } catch { /* 轮转失败不阻塞启动 */ }
+    } catch (e) {
+      console.error('日志轮转失败:', e);
+    }
   }
 
-  let logStream: WriteStream | null = null;
+  if (logStream) {
+    // 跨 createWindow 调用时关闭旧流（macOS activate 场景）
+    try { logStream.end(); } catch { /* ignore */ }
+    logStream = null;
+  }
   try {
     logStream = createWriteStream(logPath, { flags: 'a' });
-  } catch { /* 日志文件不可用时静默降级 */ }
+  } catch (e) {
+    console.error('无法创建日志文件:', e);
+    logStream = null;
+  }
 
   if (logStream) {
     win.webContents.on('console-message', (_event, _level, message) => {
       try {
         logStream!.write(message + '\n');
-      } catch { /* 写失败不阻塞渲染 */ }
+      } catch (e) {
+        console.error('日志写入失败:', e);
+      }
     });
   }
 
@@ -123,6 +135,10 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  // V1: WebSocket 在渲染进程关闭时自动断开
+  // 刷新日志流缓冲，防止最后几行日志丢失
+  if (logStream) {
+    try { logStream.end(); } catch { /* ignore */ }
+    logStream = null;
+  }
   // V2: Three.js 资源释放在此追加
 });

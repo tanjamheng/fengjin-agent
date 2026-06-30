@@ -31,7 +31,7 @@ class Indexer:
             "store_type": "chroma",
             "device": "cpu"
         }
-        self.log = get_logger(generate_trace_id())
+        self.log = get_logger("rag_indexer")
 
         self._strategy: Optional[IndexStrategy] = None
 

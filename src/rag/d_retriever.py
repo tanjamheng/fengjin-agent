@@ -30,7 +30,7 @@ class Retriever:
             "top_k": 5,
             "score_threshold": 0.7
         }
-        self.log = get_logger(generate_trace_id())
+        self.log = get_logger("rag_retriever")
 
         self._strategy: Optional[RetrieverStrategy] = None
 

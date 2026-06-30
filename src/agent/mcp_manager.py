@@ -13,7 +13,7 @@ class MCPManager:
 
     def __init__(self):
         self._servers: Dict[str, MCPServerBase] = {}
-        self.log = get_logger()
+        self.log = get_logger("mcp_manager")
 
     def register(self, server: MCPServerBase) -> None:
         """注册并初始化 MCP 服务器"""

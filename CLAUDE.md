@@ -164,7 +164,8 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | Skill | 系统注入能力——LLM 不可见，由系统代码决定时机 |
 | Tool | LLM 可调用的函数——通过 function calling 暴露，返回 str |
 | MCP | 标准化工具协议——MCPServerBase 子类，注册时立即初始化 |
-| trace_id | 每次对话生成的唯一追踪 ID——贯穿日志、会话、记忆全链路 |
+| source | 日志模块标识——调用 `get_logger("source")` 时必传的可读字符串（如 `"ws"`, `"core"`）。禁止传 uuid 或留空 |  
+| trace_id | 每次对话生成的唯一追踪 ID（8位hex）——贯穿日志、会话、记忆全链路。非请求事件自动填充 `--------` |
 | RAG | 检索增强生成——6 步管道（加载→切分→索引→查询增强→检索→重排序） |
 | bge-m3 | 嵌入模型 ~1.1GB——将文本转为向量，供 DenseIndex 和 MemoryStorage 使用 |
 | bge-reranker-v2-m3 | Cross-Encoder 重排序模型 ~1.1GB——对检索结果精排 |
@@ -202,7 +203,7 @@ AI风堇_治愈晨昏/
 │   └── sessions/                    # 会话 JSON 文件
 │
 ├── models/                          # 本地模型（bge-m3 / bge-reranker-v2-m3 / Llama-Guard-3-1B）
-├── logs/
+├── logs/                             # app.log (Python全量) + renderer.log (前端)
 │
 ├── src/
 │   ├── config.py                    # Pydantic 配置模型（Config, RAGSettings, ContextSettings 等）

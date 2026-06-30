@@ -6,6 +6,10 @@
  *   [HH:MM:SS] [LEVEL] [Module] message
  *
  * 使用方式：各模块 `const log = new Logger('ModuleName')` 然后 log.info(...) 等。
+ *
+ * 占位符：支持 `{}` 作为占位符（与 Python loguru 风格一致），
+ *         `log.info("连接 {} 成功", url)` → "连接 ws://... 成功"
+ *         多余参数追加到末尾。
  */
 
 type LogLevel = "DEBUG" | "INFO " | "WARN " | "ERROR";
@@ -17,7 +21,7 @@ const LEVEL_MAP: Record<"debug" | "info" | "warn" | "error", LogLevel> = {
   error: "ERROR",
 };
 
-/** 生成短 action_id（前端等效 trace_id，追踪一次用户操作） */
+/** 生成短 action_id（前端等效 trace_id，贯穿一次用户操作的所有日志） */
 export function actionId(): string {
   return Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(2, 6);
 }
@@ -49,10 +53,22 @@ export class Logger {
     const ts = new Date().toISOString().slice(11, 19); // HH:MM:SS
     const level = LEVEL_MAP[method];
     const prefix = `[${ts}] [${level}] [${this._module}]`;
-    if (args.length > 0) {
-      console[method](prefix, msg, ...args);
+
+    // 替换 {} 占位符（与 loguru 风格一致）
+    let formatted = msg;
+    const remaining: unknown[] = [];
+    for (const arg of args) {
+      if (formatted.includes("{}")) {
+        formatted = formatted.replace("{}", String(arg));
+      } else {
+        remaining.push(arg);
+      }
+    }
+
+    if (remaining.length > 0) {
+      console[method](prefix, formatted, ...remaining);
     } else {
-      console[method](prefix, msg);
+      console[method](prefix, formatted);
     }
   }
 }

@@ -58,7 +58,7 @@ class Agent:
 
         # 当前 trace_id
         self.trace_id = generate_trace_id()
-        self.log = get_logger(self.trace_id)
+        self.log = get_logger("core", trace_id=self.trace_id)
 
         self.log.info("Agent 初始化: {}", config.agent.name)
 
@@ -103,7 +103,7 @@ class Agent:
             return ""
 
         self.trace_id = trace_id or generate_trace_id()
-        self.log = get_logger(self.trace_id)
+        self.log = get_logger("core", trace_id=self.trace_id)
 
         self.log.info("用户输入: {}...", user_input[:50])
 

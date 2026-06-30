@@ -27,7 +27,7 @@ class Reranker:
         self.strategy_type = strategy_type
         self.strategy_params = strategy_params or {"top_n": 3}
         self.llm_client = llm_client
-        self.log = get_logger(generate_trace_id())
+        self.log = get_logger("rag_reranker")
 
         self._strategy: Optional[RerankerStrategy] = None
 

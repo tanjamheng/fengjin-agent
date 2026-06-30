@@ -24,7 +24,7 @@ class SkillRegistry:
     def register(self, skill: SkillBase) -> None:
         """注册 Skill"""
         trace_id = generate_trace_id()
-        log = get_logger(trace_id)
+        log = get_logger("skill_registry", trace_id=trace_id)
 
         name = skill.meta.name
         if name in self._skills:
@@ -62,7 +62,7 @@ class SkillRegistry:
     def initialize_all(self) -> None:
         """初始化所有 Skill"""
         trace_id = generate_trace_id()
-        log = get_logger(trace_id)
+        log = get_logger("skill_registry", trace_id=trace_id)
 
         for name, skill in self._skills.items():
             try:
@@ -74,7 +74,7 @@ class SkillRegistry:
     def cleanup_all(self) -> None:
         """清理所有 Skill"""
         trace_id = generate_trace_id()
-        log = get_logger(trace_id)
+        log = get_logger("skill_registry", trace_id=trace_id)
 
         for name, skill in self._skills.items():
             try:
@@ -88,7 +88,7 @@ class SkillRegistry:
         from ..capabilities.skill import SkillResult
 
         trace_id = generate_trace_id()
-        log = get_logger(trace_id)
+        log = get_logger("skill_registry", trace_id=trace_id)
 
         skill = self.get(name)
         if skill is None:

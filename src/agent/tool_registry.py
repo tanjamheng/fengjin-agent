@@ -16,7 +16,7 @@ class ToolRegistry:
         self._local_tools: Dict[str, ToolBase] = {}
         # tool_name -> (mcp_server, tool_definition)
         self._mcp_tools: Dict[str, Tuple[MCPServerBase, dict]] = {}
-        self.log = get_logger()
+        self.log = get_logger("tool_registry")
 
     def register_tool(self, tool: ToolBase) -> None:
         """注册本地 Tool"""

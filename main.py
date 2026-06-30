@@ -312,7 +312,7 @@ def main():
     console = Console()
 
     # 初始化日志系统
-    log_config = LogConfig(log_level="INFO", json_format=False)
+    log_config = LogConfig(log_level="DEBUG", json_format=False)
     setup_logger(log_config)
 
     # 检查并下载模型（需要网络，完成后切离线）

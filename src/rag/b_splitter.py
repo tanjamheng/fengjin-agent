@@ -27,7 +27,7 @@ class TextSplitter:
             "chunk_size": 512,
             "chunk_overlap": 50
         }
-        self.log = get_logger(generate_trace_id())
+        self.log = get_logger("rag_splitter")
 
         self._strategy: Optional[SplitterStrategy] = None
 

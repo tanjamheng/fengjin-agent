@@ -32,7 +32,7 @@ class RAGService:
         self.query_enhancer: Optional[QueryEnhancer] = None
         self.reranker: Optional[Reranker] = None
 
-        self.log = get_logger()
+        self.log = get_logger("rag_service")
         self._initialized = False
         self._init_lock = threading.Lock()
 

@@ -30,7 +30,7 @@ class DocumentLoader:
     def __init__(self, supported_formats: List[str] = None, max_file_size_mb: int = 50):
         self.supported_formats = supported_formats or ["pdf", "md", "txt", "docx"]
         self.max_file_size_mb = max_file_size_mb
-        self.log = get_logger(generate_trace_id())
+        self.log = get_logger("rag_loader")
 
     def load(self, file_path: str, category: str = "") -> Document:
         """加载单个文档
