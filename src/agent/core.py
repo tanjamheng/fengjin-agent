@@ -180,8 +180,7 @@ class Agent:
             t_safety_start = time.monotonic()
             result = self.safety.check(message_content, trace_id=self.trace_id)
             t_safety = (time.monotonic() - t_safety_start) * 1000
-            logger.info("安全检测完成 ({:.0f}ms) → {}",
-                        t_safety, result.action.value)
+            # 安全检测详情由 SafetyManager 内部日志输出（P0/P1 各自耗时）
 
             if result.action == SafetyAction.BLOCK:
                 blocked_msg = result.user_message or DEFAULT_BLOCKED_MESSAGE
@@ -284,18 +283,18 @@ class Agent:
                 t_build = (time.monotonic() - t_build_start) * 1000
                 if trimmed > 0:
                     logger.info(
-                        "上下文组装: {} 条消息 (裁剪 {} 条, {}→{}), "
-                        "估算 {}→{} tokens, 耗时 {:.0f}ms",
-                        len(api_messages), trimmed, pre_trim_count, post_trim_count,
+                        "调用 LLM: {} ({} 条消息, 裁剪 {}→{}, "
+                        "~{}→{} tk, 组装 {:.0f}ms)",
+                        self.config.model, len(api_messages),
+                        pre_trim_count, post_trim_count,
                         pre_trim_tokens, post_trim_tokens, t_build,
                     )
                 else:
                     logger.info(
-                        "上下文组装: {} 条消息, 估算 {} tokens, 耗时 {:.0f}ms",
-                        len(api_messages), pre_trim_tokens, t_build,
+                        "调用 LLM: {} ({} 条消息, ~{} tk, 组装 {:.0f}ms)",
+                        self.config.model, len(api_messages),
+                        pre_trim_tokens, t_build,
                     )
-                logger.info("调用 LLM: {} (消息数={})",
-                            self.config.model, len(api_messages))
 
                 # 5b. 流式调用 LLM
                 t_llm_start = time.monotonic()

@@ -33,25 +33,20 @@ class MemoryRetriever:
         t_core = (time.monotonic() - t0) * 1000
         if core_text:
             sections.append(f"[核心记忆]\n{core_text}")
-            log.debug("core_memory 命中 ({:.0f}ms, {} chars)", t_core, len(core_text))
-        else:
-            log.debug("core_memory 无内容 ({:.0f}ms)", t_core)
 
         t1 = time.monotonic()
         db_text = self._search_db(user_input)
         t_db = (time.monotonic() - t1) * 1000
         if db_text:
-            entry_count = db_text.count("\n- ")
             sections.append(f"[相关记忆]\n{db_text}")
-            log.debug("ChromaDB 命中 ({:.0f}ms, {} 条)", t_db, entry_count)
-        else:
-            log.debug("ChromaDB 无命中 ({:.0f}ms)", t_db)
 
         t_total = (time.monotonic() - t_start) * 1000
         result = "\n\n".join(sections)
         if result:
-            log.info("记忆检索完成: core={:.0f}ms db={:.0f}ms 总计={:.0f}ms → {} 条记忆",
+            log.info("记忆检索: core={:.0f}ms db={:.0f}ms 总计={:.0f}ms → {} 条记忆",
                      t_core, t_db, t_total, len(sections))
+        else:
+            log.debug("记忆检索: 无命中 (core={:.0f}ms, db={:.0f}ms)", t_core, t_db)
         return result
 
     def _load_core(self) -> str:

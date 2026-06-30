@@ -34,11 +34,9 @@ class ContextManager:
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         t_start = time.monotonic()
         if not self.config.memory.enabled:
-            log.debug("记忆系统未启用，使用原始输入")
             return user_input
 
         if not self.memory_retriever:
-            log.debug("无记忆检索器，使用原始输入")
             return user_input
 
         try:
@@ -47,7 +45,6 @@ class ContextManager:
             log.error("记忆检索失败（不阻塞对话）: {}", e)
             return user_input
         if not memory_text:
-            log.debug("记忆检索结果为空，使用原始输入")
             return user_input
 
         result = self.config.memory.template.format(
