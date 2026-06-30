@@ -15,8 +15,8 @@
   --color-input-border-focus: #8AAAF0;
   --color-send-btn-bg: #FFFFFF;
   --color-send-btn-border: #BACCFE;
-  --color-titlebar-start: #FFD1DC;
-  --color-titlebar-end: #A7C7F5;
+  --color-titlebar-start: #FFBACC;
+  --color-titlebar-end: #9AC2FF;
   --color-char-bg-start: #FFE4EC;
   --color-char-bg-end: #FFFFFF;
   --color-char-bg-mid: #FFF5F8;
@@ -30,7 +30,7 @@
   --color-text-secondary: #5E5E6E;
   --color-hover-bg: #EEEEEE;
   --color-sidebar-active: #F0F6FF;
-  --color-sidebar-active-bar: #A7C7F5;
+  --color-sidebar-active-bar: #9AC2FF;
   --color-sidebar-bg: #FAFAFA;
   --color-placeholder: #A0B0C0;
   --color-disabled-bg: #E8E8E8;
@@ -85,7 +85,7 @@ html, body {
   justify-content: space-between;
   height: 32px;
   padding: 0 0 0 12px;
-  background: linear-gradient(90deg, var(--color-titlebar-start) 0%, var(--color-titlebar-end) 100%);
+  background: linear-gradient(90deg, var(--color-titlebar-start) 0%, var(--color-titlebar-start) 30%, var(--color-titlebar-end) 70%, var(--color-titlebar-end) 100%);
   -webkit-app-region: drag;
 }
 
@@ -774,7 +774,7 @@ html, body {
 
 .dialog-topbar {
   height: 4px;
-  background: linear-gradient(90deg, var(--color-titlebar-start), var(--color-titlebar-end));
+  background: linear-gradient(90deg, var(--color-titlebar-start) 0%, var(--color-titlebar-start) 30%, var(--color-titlebar-end) 70%, var(--color-titlebar-end) 100%);
 }
 
 .dialog-title {
@@ -798,7 +798,7 @@ html, body {
   justify-content: flex-end;
   gap: 8px;
   padding: 14px 20px;
-  background: linear-gradient(180deg, rgba(255, 209, 220, 0.08) 0%, rgba(167, 199, 245, 0.06) 100%);
+  background: linear-gradient(180deg, rgba(255, 186, 204, 0.08) 0%, rgba(154, 194, 255, 0.06) 100%);
   border-top: 1px solid rgba(180, 160, 200, 0.15);
 }
 
@@ -821,7 +821,7 @@ html, body {
   color: #6A5A7A;
 }
 .dialog-btn--confirm {
-  background: linear-gradient(135deg, #FFD1DC, #A7C7F5);
+  background: linear-gradient(135deg, var(--color-titlebar-start) 0%, var(--color-titlebar-start) 30%, var(--color-titlebar-end) 70%, var(--color-titlebar-end) 100%);
   color: #5A4A6A;
   box-shadow: 0 2px 8px rgba(180, 150, 190, 0.25);
 }
@@ -1030,7 +1030,7 @@ html, body {
   flex-shrink: 0;
 }
 .toggle-switch--on {
-  background: linear-gradient(135deg, #FFD1DC, #A7C7F5);
+  background: linear-gradient(135deg, var(--color-titlebar-start) 0%, var(--color-titlebar-start) 30%, var(--color-titlebar-end) 70%, var(--color-titlebar-end) 100%);
 }
 .toggle-switch__knob {
   position: absolute;
@@ -1085,6 +1085,6 @@ html, body {
   justify-content: flex-end;
   gap: 8px;
   padding: 14px 20px;
-  background: linear-gradient(180deg, rgba(255, 209, 220, 0.08) 0%, rgba(167, 199, 245, 0.06) 100%);
+  background: linear-gradient(180deg, rgba(255, 186, 204, 0.08) 0%, rgba(154, 194, 255, 0.06) 100%);
   border-top: 1px solid rgba(180, 160, 200, 0.15);
 }
