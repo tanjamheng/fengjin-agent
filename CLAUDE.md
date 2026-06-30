@@ -50,7 +50,7 @@
 
 ## 核心链路
 
-用户输入 → 小伊卡安全检测（P0规则 + P1 Llama Guard）→ 多轮上下文组装（记忆注入 + 滑动窗口裁剪）→ LLM 流式生成（支持 Tool Calling 自主检索知识库，最多 5 轮）→ 流式输出 → 异步记忆提取 → 会话持久化
+用户输入 → Agent.chat() 统一管线（CLI/WS 共用）→ 小伊卡安全检测（P0规则 + P1 Llama Guard）→ 多轮上下文组装（记忆注入 + 滑动窗口裁剪）→ LLM 流式生成（stream_llm，支持 Tool Calling 自主检索知识库，最多 5 轮）→ 流式输出 → 异步记忆提取（Writer WAL 崩溃恢复）→ 会话持久化
 
 ## 后端已有能力
 
@@ -173,8 +173,9 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | ChromaDB | 向量数据库——RAG 和 Memory 各一个 PersistentClient |
 | Tool Calling | LLM 自主决定调用工具的能力——本项目上限 5 轮 |
 | StreamController | 流式取消机制——协作式 cancel flag + task.cancel() 兜底 |
+| StreamInterrupted | 流式中断异常——客户端断连时 on_token 回调抛出，Agent.chat() 保留部分回复不回滚 |
 | Core Memory | 核心记忆——从对话中提取的用户长期信息，存储在 core_memory.md + ChromaDB |
-| BlockedError | WS 层拦截异常——安全检测非 PASS 时抛出，由 connection.py 捕获并发送 blocked 报文 |
+| BlockedError | 安全拦截异常——安全检测 BLOCK 时由 Agent.chat() 抛出，CLI/WS 各自捕获展示 |
 
 ---
 
@@ -209,8 +210,8 @@ AI风堇_治愈晨昏/
 │   ├── config.py                    # Pydantic 配置模型（Config, RAGSettings, ContextSettings 等）
 │   │
 │   ├── agent/                       # Agent 核心（业务/对话编排层）
-│   │   ├── core.py                  # Agent.chat() — 同步流式调用 + tool calling 循环（CLI）
-│   │   ├── streaming.py             # stream_reply() — 流式对话 service 层（安全→上下文→LLM→取消），WS/CLI 共用
+│   │   ├── core.py                  # Agent.chat() — 异步完整对话管线（安全→记忆→上下文→LLM→Tool→落盘），CLI/WS 唯一入口
+│   │   ├── streaming.py             # stream_llm() — 纯 LLM 流式调用工具（零业务逻辑），CLI/WS 共用
 │   │   ├── stream_controller.py     # StreamController — 流式取消标志 + 部分文本追踪
 │   │   ├── context_manager.py       # ContextManager — 记忆注入 + 滑动窗口裁剪
 │   │   ├── message_builder.py       # 共享消息组装（system_prompt + 回滚），CLI/WS 共用
@@ -260,7 +261,7 @@ AI风堇_治愈晨昏/
 │   │   └── server.py                # uvicorn 启动入口（python -m src.server.server）
 │   │
 │   ├── ws/                          # WebSocket 传输适配层（瘦：只做协议，不含业务）
-│   │   ├── connection.py            # /ws 端点 + 消息路由 + 报文映射，委托 agent/streaming
+│   │   ├── connection.py            # /ws 端点 + 消息路由 + 报文映射，委托 Agent.chat()
 │   │   └── schemas.py               # WS 协议 Pydantic 模型（ServerMessage/ClientMessage）
 │   │
 │   └── utils/
@@ -377,7 +378,7 @@ AI风堇_治愈晨昏/
 - **知识库内容限定翁法罗斯世界观**，不包含现实世界专属知识
 - **记忆注入到用户消息中（非 system_prompt）**，增强版仅当轮使用不入历史
 - **Skill 执行优先于记忆注入**——`chat()` 先 Skill 后记忆
-- **安全检测在 Agent 外部**——`SafetyManager.check()` 在 `Agent.chat()` 之前
+- **安全检测在 Agent.chat() 内部**——`SafetyManager.check()` 是管线第一步（BLOCK→BlockedError / COMFORT→安抚注入 / PASS→继续）
 
 ## 清理链
 

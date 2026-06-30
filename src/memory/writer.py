@@ -48,15 +48,21 @@ class MemoryWriter:
             )
 
         self._queue: queue.Queue = queue.Queue(maxsize=300)
+        self._dump_path = Path(config.chroma.persist_directory) / "pending_facts.json"
         self._running = True
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
         self._replay_pending()
 
     def write(self, facts: list[dict]) -> None:
-        """将过滤后的事实加入写入队列（非阻塞）"""
+        """将过滤后的事实加入写入队列（非阻塞），并立即持久化队列快照
+
+        入队后立即写 pending_facts.json，保证 LLM 已决定的 facts 不因崩溃丢失。
+        ChromaDB 向量去重保证重放幂等。
+        """
         for fact in facts:
             self._queue.put(fact)
+        self._checkpoint()
 
     def stop(self) -> None:
         """停止写入线程，持久化剩余任务以防数据丢失"""
@@ -81,8 +87,35 @@ class MemoryWriter:
             finally:
                 self._queue.task_done()
 
+    def _checkpoint(self) -> None:
+        """非破坏性快照：将队列当前内容原子写入 pending_facts.json
+
+        和 _dump_pending() 不同，不排空队列——writer 线程正在并行处理。
+        用 queue.mutex 安全读取内部 deque 快照。
+        """
+        import json
+        with self._queue.mutex:
+            items = list(self._queue.queue)
+        if not items:
+            # 队列已空，清理残留文件
+            if self._dump_path.exists():
+                try:
+                    self._dump_path.unlink()
+                except OSError:
+                    pass
+            return
+
+        self._dump_path.parent.mkdir(parents=True, exist_ok=True)
+        # 原子写入：先写 .tmp 再 os.replace()（红线7）
+        tmp_path = str(self._dump_path) + ".tmp"
+        Path(tmp_path).write_text(
+            json.dumps(items, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, str(self._dump_path))
+
     def _process_fact(self, fact: dict) -> None:
-        """处理单条事实：路由到 insert 或 merge"""
+        """处理单条事实：路由到 insert 或 merge，成功后更新快照"""
         is_core = fact["importance"] == "high"
         conflict_distance = self.config.thresholds.conflict_distance
 
@@ -96,17 +129,19 @@ class MemoryWriter:
             self._insert(fact, is_core)
             if is_core:
                 self._refresh_core_file()
-            return
-
-        distance = results["distances"][0][0]
-        if distance >= conflict_distance:
-            self._insert(fact, is_core)
         else:
-            old_id = results["ids"][0][0]
-            self._resolve_conflict(old_id, fact, is_core)
+            distance = results["distances"][0][0]
+            if distance >= conflict_distance:
+                self._insert(fact, is_core)
+            else:
+                old_id = results["ids"][0][0]
+                self._resolve_conflict(old_id, fact, is_core)
 
-        if is_core:
-            self._refresh_core_file()
+            if is_core:
+                self._refresh_core_file()
+
+        # 处理完成后更新快照，从文件中移除已处理的事实
+        self._checkpoint()
 
     def _insert(self, fact: dict, is_core: bool) -> None:
         """插入新记忆"""

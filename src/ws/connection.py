@@ -1,7 +1,7 @@
 """WebSocket 端点 — 消息路由 + 报文映射（瘦传输层）
 
 只负责：协议消息路由、报文收发、会话 CRUD 路由、对话事件→报文映射。
-对话业务逻辑（安全检测 / 上下文组装 / LLM 流式 / 取消）在 agent/streaming.py。
+对话业务逻辑（安全 / 上下文 / LLM / Tool / 落盘）在 Agent.chat()（core.py）。
 """
 
 import json
@@ -10,21 +10,17 @@ import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from openai import AsyncOpenAI
 
 from ..session import SessionManager
-from ..safety import SafetyManager
 from ..config import Config
 from ..agent.context_manager import ContextManager
-from ..agent.streaming import stream_reply, BlockedError
-from ..agent.stream_controller import StreamController
+from ..agent.core import Agent, BlockedError, MAX_INPUT_LENGTH
 from ..utils.logger import get_logger, generate_trace_id
 
 router = APIRouter()
 log = get_logger("ws")
 
 HEARTBEAT_TIMEOUT = 45       # 秒，必须大于前端 ping 间隔(30s) + pong 超时(10s)
-MAX_INPUT_LENGTH = 10000     # 超长输入拒绝（对齐 CLI / CLAUDE.md 技术约束）
 
 
 @router.websocket("/ws")
@@ -37,16 +33,7 @@ async def websocket_endpoint(websocket: WebSocket):
     client = websocket.app.state.client
     safety = websocket.app.state.safety
 
-    # Tool Calling 能力（可选：RAG 知识库未加载时降级为纯对话）
-    tool_definitions = getattr(websocket.app.state, "tool_definitions", None)
-    tool_registry = getattr(websocket.app.state, "tool_registry", None)
-
-    # execute_tool_async 闭包：同步 ToolRegistry.execute_tool 转为 async
-    async def _execute_tool(name: str, args: dict) -> str:
-        # 使用线程池执行同步 tool，避免阻塞事件循环
-        return await asyncio.to_thread(tool_registry.execute_tool, name, args) if tool_registry else "工具系统未加载"
-
-    # 每连接独立：会话管理器（per-user 状态）+ 上下文管理器
+    # 每连接独立：会话管理器 + 上下文管理器 + Agent
     from pathlib import Path
     _sessions_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "sessions")
     session_mgr = SessionManager(data_dir=_sessions_dir)
@@ -55,8 +42,20 @@ async def websocket_endpoint(websocket: WebSocket):
         websocket.app.state.context_config,
         memory_retriever=memory_mgr.retriever if memory_mgr else None,
     )
+    tool_registry = getattr(websocket.app.state, "tool_registry", None)
 
-    # 不预先创建会话——等用户发送第一条消息时才创建（对齐主流 LLM 产品行为）
+    # Agent — CLI/WS 共用的对话入口（chat() 内部处理安全/记忆/上下文/LLM/Tool/落盘）
+    agent = Agent(
+        config=config,
+        session_mgr=session_mgr,
+        safety=safety,
+        client=client,
+        context_manager=context_mgr,
+        memory_manager=memory_mgr,
+        tool_registry=tool_registry,
+    )
+
+    # 不预先创建会话——等用户发送第一条消息时才创建
     await websocket.send_json({
         "type": "connected",
         "session_id": "",
@@ -64,7 +63,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # 流任务状态
     current_stream: Optional[asyncio.Task] = None
-    current_controller: Optional[StreamController] = None
 
     # 心跳追踪
     last_pong = asyncio.get_event_loop().time()
@@ -104,9 +102,15 @@ async def websocket_endpoint(websocket: WebSocket):
             # ── user_msg ──
             elif msg_type == "user_msg":
                 if current_stream and not current_stream.done():
-                    current_controller.cancel()
+                    agent.cancel()
                     try:
-                        await current_stream
+                        await asyncio.wait_for(current_stream, timeout=30)
+                    except asyncio.TimeoutError:
+                        current_stream.cancel()
+                        try:
+                            await current_stream
+                        except (asyncio.CancelledError, Exception):
+                            pass
                     except asyncio.CancelledError:
                         pass
                     except BlockedError:
@@ -119,19 +123,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json({"type": "error", "message": "会话不存在"})
                     continue
 
-                current_controller = StreamController()
                 current_stream = asyncio.create_task(
-                    _handle_user_msg(
-                        websocket, data, session_mgr, safety,
-                        current_controller, client, config, context_mgr, memory_mgr,
-                        tool_definitions, _execute_tool,
-                    )
+                    _handle_user_msg(websocket, data, agent, session_mgr)
                 )
 
             # ── cancel ──
             elif msg_type == "cancel":
-                if current_controller:
-                    current_controller.cancel()
+                agent.cancel()
                 if current_stream and not current_stream.done():
                     try:
                         await current_stream
@@ -241,7 +239,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     continue
 
-                # 成功后：写 .env（持久化）+ 更新局部引用
+                # 成功后：写 .env（持久化）+ 更新局部引用 + 更新已有 Agent
                 env_persisted = ConfigManager.update_env_file(main_cfg, memory_cfg, memory_enabled)
                 client = websocket.app.state.client
                 memory_mgr = getattr(websocket.app.state, "memory_manager", None)
@@ -249,6 +247,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     websocket.app.state.context_config,
                     memory_retriever=memory_mgr.retriever if memory_mgr else None,
                 )
+                # 更新当前连接已有 Agent 的引用（后续消息使用新配置）
+                agent.client = client
+                agent.context_manager = context_mgr
+                agent.memory_manager = memory_mgr
 
                 # 持久化失败：运行时已生效，但重启后回滚——必须告知用户（红线8：静默失败零容忍）
                 if not env_persisted:
@@ -276,8 +278,7 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
 
         if current_stream and not current_stream.done():
-            if current_controller:
-                current_controller.cancel()  # 协作式旗标：让 stream_reply 优雅停生
+            agent.cancel()  # 协作式旗标：让 Agent.chat() 优雅停止
             try:
                 # 给流任务 5 秒时间自然结束（保存部分文字）
                 await asyncio.wait_for(current_stream, timeout=5)
@@ -301,20 +302,13 @@ async def websocket_endpoint(websocket: WebSocket):
 async def _handle_user_msg(
     websocket: WebSocket,
     data: dict,
+    agent: Agent,
     session_mgr: SessionManager,
-    safety: SafetyManager,
-    controller: StreamController,
-    client: AsyncOpenAI,
-    config: Config,
-    context_mgr: ContextManager,
-    memory_mgr=None,
-    tool_definitions: list | None = None,
-    execute_tool_async=None,
 ):
-    """消费 stream_reply() 的 token，映射为 WS 报文"""
+    """消费 Agent.chat() 的 token，映射为 WS 报文"""
     user_content = data.get("content", "")
 
-    # 输入校验（对齐 CLI / CLAUDE.md 技术约束）
+    # 输入校验
     if not isinstance(user_content, str) or not user_content.strip():
         await websocket.send_json({"type": "error", "message": "消息不能为空"})
         return
@@ -326,41 +320,41 @@ async def _handle_user_msg(
     logger = log.bind(trace_id=trace_id)
     logger.info("处理 user_msg: {}", user_content[:50])
 
-    # 首次发送消息时会在 _ensure_session 中创建会话，此处获取 session_id 传回前端
     current_sid = session_mgr.get_current_session_id() or ""
+
+    # WS on_token 回调：流式推送（断连时转 StreamInterrupted 保留部分回复）
+    from ..agent.core import StreamInterrupted
+
+    async def _send_token(token: str):
+        try:
+            await websocket.send_json({"type": "stream", "text": token})
+        except WebSocketDisconnect:
+            raise StreamInterrupted()
 
     try:
         await websocket.send_json({"type": "thinking", "session_id": current_sid})
-        full_text = ""
-        try:
-            async for token in stream_reply(
-                user_content, session_mgr, safety, controller, client, config, context_mgr,
-                trace_id=trace_id,
-                tool_definitions=tool_definitions,
-                execute_tool_async=execute_tool_async,
-            ):
-                full_text += token
-                await websocket.send_json({"type": "stream", "text": token})
-        except WebSocketDisconnect:
-            # 客户端断开（关闭窗口/退出程序）：保存已生成的部分文字到会话
-            logger.info("客户端断开，保存部分回复 ({} 字符)", len(full_text))
-            if full_text:
-                # streaming 层已将 user 消息入历史，直接追加 assistant 回复
-                session_mgr.append_message("assistant", full_text)
-                session_mgr.flush()
-                if memory_mgr:
-                    memory_mgr.extract_async(user_content, full_text, trace_id=trace_id)
-            return  # 不继续，前端已不在
 
-        # 生成器正常结束（含协作式取消），service 层已落盘
-        if memory_mgr and full_text:
-            memory_mgr.extract_async(user_content, full_text, trace_id=trace_id)
+        full_text = await agent.chat(
+            user_content,
+            trace_id=trace_id,
+            on_token=_send_token,
+        )
+
         await websocket.send_json({
             "type": "end",
             "full_text": full_text,
             "action": "idle",
             "session_id": current_sid,
         })
+
+    except StreamInterrupted:
+        # on_token 内部 catch → raise StreamInterrupted
+        # Agent.chat() 已保存部分回复，无需额外处理
+        logger.info("客户端断开，部分回复已由 Agent 保存")
+
+    except WebSocketDisconnect:
+        # thinking/end 报文发送时客户端断开（token 流式未受影响）
+        logger.info("客户端断开（非流式阶段）")
 
     except BlockedError as e:
         await websocket.send_json({
@@ -371,7 +365,6 @@ async def _handle_user_msg(
         })
 
     except asyncio.CancelledError:
-        # task.cancel() 强制中断：streaming 层已回滚 user 消息，不补存 partial_text
         raise
 
     except Exception as e:

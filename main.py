@@ -1,5 +1,6 @@
 """CLI 入口"""
 
+import asyncio
 import logging
 import os
 import sys
@@ -40,9 +41,10 @@ from src.mcp_servers.rag_server import RAGMCPServer
 from src.memory.config import MemorySettings
 from src.memory.manager import MemoryManager
 from src.agent.context_manager import ContextManager
+from src.agent.core import BlockedError, MAX_INPUT_LENGTH
 from src.safety import SafetyManager
-from src.safety.rule_engine import RuleEngine, Action
-from src.session import SessionManager, ContextRestorer
+from src.safety.rule_engine import RuleEngine
+from src.session import SessionManager
 from src.utils import setup_logger, LogConfig, get_logger
 from src.utils.logger import generate_trace_id
 
@@ -57,9 +59,8 @@ MODELS = [
     ("Llama-Guard-3-1B", "LLM-Research/Llama-Guard-3-1B"),
 ]
 
-# ── 路径与限制常量 ──
+# ── 路径常量 ──
 SESSIONS_DIR = PROJECT_ROOT / "data" / "sessions"
-MAX_INPUT_LENGTH = 10000
 
 
 def ensure_models(console: Console) -> None:
@@ -165,7 +166,7 @@ def _safe_cleanup(agent, memory_manager, rag_service, safety_engine):
 
 
 def _handle_command(cmd: str, args: str, console: Console,
-                    session_mgr: SessionManager, context_restorer: ContextRestorer,
+                    session_mgr: SessionManager,
                     agent: Agent, memory_manager: MemoryManager,
                     rag_service, safety_engine,
                     max_turns: int) -> bool:
@@ -234,9 +235,7 @@ def _handle_command(cmd: str, args: str, console: Console,
             console.print("[red]加载会话失败[/red]")
             return True
 
-        # 恢复 Agent 对话历史（裁剪到滑动窗口限制）
-        agent.messages = context_restorer.restore_llm_context(session)
-
+        # stream_reply() 内部调用 trim_messages()，无需手动恢复上下文
         console.print(f"[green]已加载会话: {session.title}[/green]")
         _print_recent_messages(console, session_mgr, n=max_turns)
         return True
@@ -349,36 +348,14 @@ def main():
         memory_retriever=memory_manager
     )
 
-    # 创建 Agent（传入上下文管理器和记忆管理器）
-    try:
-        agent = Agent(
-            config=config,
-            context_manager=context_manager,
-            memory_manager=memory_manager
-        )
-    except Exception as e:
-        console.print(f"[red]Agent 初始化失败（环境变量缺失或配置错误）: {e}[/red]")
-        get_logger("main").opt(exception=True).error("Agent 初始化失败")
-        return
-
-    # 创建 RAG 服务（纯功能层）并装配到 Agent（可选：初始化失败降级为纯对话）
-    rag_service = None
-    try:
-        rag_service = RAGService(rag_config, llm_client=agent.client)
-        rag_server = RAGMCPServer(rag_service)
-        agent.register_mcp(rag_server)
-    except Exception as e:
-        console.print(f"[yellow]⚠ RAG 知识库加载失败，知识检索不可用: {e}[/yellow]")
-        get_logger("main").warning("RAG 初始化失败（ChromaDB/模型问题？），降级为纯对话模式: {}", e)
-
-    # 初始化安全护栏（P0 规则引擎 + P1 Llama Guard）
+    # 初始化安全护栏（P0 规则引擎 + P1 Llama Guard）—— 必须在 Agent 之前
     try:
         safety_engine = SafetyManager(
             config_path=str(PROJECT_ROOT / "config" / "safety.yaml")
         )
     except Exception as e:
         console.print(f"[yellow]安全护栏 P1 模型加载失败，仅规则引擎可用: {e}[/yellow]")
-        # 降级：创建仅含 P0 规则引擎的 SafetyManager（不依赖 __new__）
+        # 降级：创建仅含 P0 规则引擎的 SafetyManager
         safety_engine = type('_FallbackSafety', (), {
             'rule_engine': RuleEngine(str(PROJECT_ROOT / "config" / "safety.yaml")),
             'guard_model': None,
@@ -386,20 +363,46 @@ def main():
             'cleanup': lambda self: setattr(self, 'rule_engine', None),
         })()
 
-    # 初始化会话管理
+    # 初始化会话管理 —— 必须在 Agent 之前
     session_mgr = SessionManager(str(SESSIONS_DIR))
-    context_restorer = ContextRestorer(
-        context_manager=context_manager,
-        memory_retriever=memory_manager,
-    )
 
-    # 尝试恢复上次会话
+    # 创建 Agent（AsyncOpenAI，CLI/WS 统一异步路径）
+    try:
+        agent = Agent(
+            config=config,
+            session_mgr=session_mgr,
+            safety=safety_engine,
+            context_manager=context_manager,
+            memory_manager=memory_manager,
+        )
+    except Exception as e:
+        console.print(f"[red]Agent 初始化失败（环境变量缺失或配置错误）: {e}[/red]")
+        get_logger("main").opt(exception=True).error("Agent 初始化失败")
+        return
+
+    # 创建 RAG 服务（使用独立同步 OpenAI 客户端，不影响 Agent 的异步路径）
+    rag_service = None
+    try:
+        from openai import OpenAI as SyncOpenAI
+        _sync_client = SyncOpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            timeout=60.0,
+            max_retries=2,
+        )
+        rag_service = RAGService(rag_config, llm_client=_sync_client)
+        rag_server = RAGMCPServer(rag_service)
+        agent.register_mcp(rag_server)
+    except Exception as e:
+        console.print(f"[yellow]⚠ RAG 知识库加载失败，知识检索不可用: {e}[/yellow]")
+        get_logger("main").warning("RAG 初始化失败（ChromaDB/模型问题？），降级为纯对话模式: {}", e)
+
+    # 尝试恢复上次会话（stream_reply 内部自动 trim，无需手动恢复上下文）
     sessions = session_mgr.list_sessions()
     if sessions:
         last = sessions[0]
         session = session_mgr.load_session(last["session_id"])
         if session:
-            agent.messages = context_restorer.restore_llm_context(session)
             console.print(f"[dim]已恢复上次会话: {session.title}[/dim]")
 
     # 显示欢迎信息
@@ -431,206 +434,176 @@ def main():
     user_input = ""
     while True:
         try:
-            # 异常兜底变量（命令处理器中异常时不触发回滚，仅在聊天路径中赋值有效值）
-            in_chat = False
-            trace_id = ""
-            msg_count_before = 0
-            session_count_before = 0
+            user_input = console.input("[bold blue]你:[/bold blue] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[yellow]再见！[/yellow]")
+            session_mgr.flush()
+            _safe_cleanup(agent, memory_manager, rag_service, safety_engine)
+            from loguru import logger
+            logger.complete()
+            break
 
-            try:
-                user_input = console.input("[bold blue]你:[/bold blue] ").strip()
-            except (EOFError, KeyboardInterrupt):
-                console.print("\n[yellow]再见！[/yellow]")
-                session_mgr.flush()
-                _safe_cleanup(agent, memory_manager, rag_service, safety_engine)
-                from loguru import logger
-                logger.complete()
-                break
+        # 会话管理命令
+        if user_input.startswith("/"):
+            parts = user_input.split(maxsplit=1)
+            cmd = parts[0].lower()
+            args = parts[1].strip() if len(parts) > 1 else ""
 
             # 会话管理命令
-            if user_input.startswith("/"):
-                parts = user_input.split(maxsplit=1)
-                cmd = parts[0].lower()
-                args = parts[1].strip() if len(parts) > 1 else ""
-
-                # 会话管理命令
-                if cmd in ("/quit", "/new", "/list", "/switch", "/history", "/rename", "/delete"):
-                    should_continue = _handle_command(
-                        cmd, args, console, session_mgr, context_restorer,
-                        agent, memory_manager, rag_service, safety_engine,
-                        max_turns=context_settings.context.sliding_window.max_turns,
-                    )
-                    if not should_continue:
-                        break
-                    continue
-
-                # RAG/工具命令
-                if cmd == "/clear":
-                    session_mgr.flush()
-                    agent.clear_history()
-                    session_mgr.create_session()
-                    console.print("[green]对话历史已清空，新会话已创建[/green]")
-                    continue
-
-                elif cmd == "/ingest_dir":
-                    if not args:
-                        console.print("[yellow]用法: /ingest_dir <目录路径> — 批量导入目录中的文档[/yellow]")
-                        continue
-                    if rag_service is None:
-                        console.print("[red]RAG 知识库未初始化，无法导入[/red]")
-                        continue
-                    try:
-                        if not _validate_ingest_path(args):
-                            console.print("[red]无效路径：请提供项目目录下的合法路径[/red]")
-                            continue
-                        result = rag_service.ingest_directory(args, recursive=True)
-                        console.print(f"[green]成功导入 {result['document_count']} 个文档，共 {result['total_chunks']} 个文本块[/green]")
-                    except Exception as e:
-                        console.print(f"[red]导入失败: {e}[/red]")
-                    continue
-
-                elif cmd == "/ingest":
-                    if not args:
-                        console.print("[yellow]用法: /ingest <文件路径> — 导入单个文档到知识库[/yellow]")
-                        continue
-                    if rag_service is None:
-                        console.print("[red]RAG 知识库未初始化，无法导入[/red]")
-                        continue
-                    try:
-                        if not _validate_ingest_path(args):
-                            console.print("[red]无效路径：请提供项目目录下的合法路径[/red]")
-                            continue
-                        result = rag_service.ingest_document(args)
-                        console.print(f"[green]成功导入文档，生成 {result['chunk_count']} 个文本块[/green]")
-                    except Exception as e:
-                        console.print(f"[red]导入失败: {e}[/red]")
-                    continue
-
-                elif cmd == "/stats":
-                    if not rag_service:
-                        console.print("[yellow]知识库不可用（RAG 初始化失败）[/yellow]")
-                        continue
-                    stats = rag_service.get_stats()
-                    table = Table(title="知识库状态")
-                    table.add_column("属性", style="cyan")
-                    table.add_column("值", style="green")
-                    for key, value in stats.items():
-                        table.add_row(str(key), str(value))
-                    console.print(table)
-                    continue
-
-                elif cmd == "/tools":
-                    tools = agent.list_tools()
-                    if not tools:
-                        console.print("[dim]暂无已装配的工具[/dim]")
-                    else:
-                        table = Table(title="可用 Tools")
-                        table.add_column("名称", style="cyan")
-                        table.add_column("类型", style="yellow")
-                        table.add_column("来源", style="magenta")
-                        table.add_column("描述", style="white")
-                        for tool in tools:
-                            table.add_row(
-                                tool["name"],
-                                tool.get("type", ""),
-                                tool.get("source", ""),
-                                tool.get("description", "")
-                            )
-                        console.print(table)
-                    continue
-
-                elif cmd == "/skills":
-                    skills = agent.list_skills()
-                    if not skills:
-                        console.print("[dim]暂无已装配的技能[/dim]")
-                    else:
-                        table = Table(title="已装配 Skills")
-                        table.add_column("名称", style="cyan")
-                        table.add_column("描述", style="white")
-                        table.add_column("版本", style="yellow")
-                        for skill in skills:
-                            table.add_row(skill["name"], skill["description"], skill["version"])
-                        console.print(table)
-                    continue
-
-                elif cmd == "/mcp":
-                    servers = agent.list_mcp_servers()
-                    if not servers:
-                        console.print("[dim]暂无 MCP 服务器[/dim]")
-                    else:
-                        table = Table(title="MCP 服务器")
-                        table.add_column("名称", style="cyan")
-                        table.add_column("描述", style="white")
-                        table.add_column("已初始化", style="green")
-                        table.add_column("工具数", style="yellow")
-                        for server in servers:
-                            table.add_row(
-                                server["name"],
-                                server["description"],
-                                str(server["initialized"]),
-                                str(server["tool_count"])
-                            )
-                        console.print(table)
-                    continue
-
-                else:
-                    console.print(f"[red]未知命令: {cmd}[/red]")
-                    continue
-
-            elif not user_input:
+            if cmd in ("/quit", "/new", "/list", "/switch", "/history", "/rename", "/delete"):
+                should_continue = _handle_command(
+                    cmd, args, console, session_mgr,
+                    agent, memory_manager, rag_service, safety_engine,
+                    max_turns=context_settings.context.sliding_window.max_turns,
+                )
+                if not should_continue:
+                    break
                 continue
 
-            # 输入长度检查
-            if len(user_input) > MAX_INPUT_LENGTH:
-                console.print(f"[red]输入过长（{len(user_input)}字符），请限制在 {MAX_INPUT_LENGTH} 字符以内[/red]")
-                continue
-
-            # 确保有当前会话
-            if not session_mgr.current_session:
+            # RAG/工具命令
+            if cmd == "/clear":
+                session_mgr.flush()
+                agent.clear_history()
                 session_mgr.create_session()
-
-            trace_id = generate_trace_id()
-
-            # 安全护栏检查（核心1 §2.5：被拦截消息仍记录到会话，但不送入AI）
-            result = safety_engine.check(user_input, trace_id=trace_id)
-            if result.blocked:
-                session_mgr.append_message("user", user_input)
-                from src.agent.message_builder import DEFAULT_BLOCKED_MESSAGE
-                msg = result.user_message or DEFAULT_BLOCKED_MESSAGE
-                console.print(f"[yellow]小伊卡：{msg}[/yellow]")
-                session_mgr.append_message("assistant", f"[小伊卡拦截] {msg}")
-                session_mgr.flush()
+                console.print("[green]对话历史已清空，新会话已创建[/green]")
                 continue
 
-            # 发送消息（chat() 内部已流式输出）
-            console.print("[bold green]风堇:[/bold green]")
-            # 标记进入聊天路径（异常处理器仅在此路径下才执行回滚，命令/Block路径不触发回滚）
-            in_chat = True
-            # 记录回滚基准（用于 ToolCalling 同步 + 异常兜底；在 append 之前记录）
-            msg_count_before = len(agent.messages)
-            session_count_before = len(session_mgr.current_session.messages) if session_mgr.current_session else 0
-            session_mgr.append_message("user", user_input)
-            if result.action == Action.COMFORT:
-                reply = agent.chat(user_input, safety_context=result.comfort_prompt, trace_id=trace_id)
+            elif cmd == "/ingest_dir":
+                if not args:
+                    console.print("[yellow]用法: /ingest_dir <目录路径> — 批量导入目录中的文档[/yellow]")
+                    continue
+                if rag_service is None:
+                    console.print("[red]RAG 知识库未初始化，无法导入[/red]")
+                    continue
+                try:
+                    if not _validate_ingest_path(args):
+                        console.print("[red]无效路径：请提供项目目录下的合法路径[/red]")
+                        continue
+                    result = rag_service.ingest_directory(args, recursive=True)
+                    console.print(f"[green]成功导入 {result['document_count']} 个文档，共 {result['total_chunks']} 个文本块[/green]")
+                except Exception as e:
+                    console.print(f"[red]导入失败: {e}[/red]")
+                continue
+
+            elif cmd == "/ingest":
+                if not args:
+                    console.print("[yellow]用法: /ingest <文件路径> — 导入单个文档到知识库[/yellow]")
+                    continue
+                if rag_service is None:
+                    console.print("[red]RAG 知识库未初始化，无法导入[/red]")
+                    continue
+                try:
+                    if not _validate_ingest_path(args):
+                        console.print("[red]无效路径：请提供项目目录下的合法路径[/red]")
+                        continue
+                    result = rag_service.ingest_document(args)
+                    console.print(f"[green]成功导入文档，生成 {result['chunk_count']} 个文本块[/green]")
+                except Exception as e:
+                    console.print(f"[red]导入失败: {e}[/red]")
+                continue
+
+            elif cmd == "/stats":
+                if not rag_service:
+                    console.print("[yellow]知识库不可用（RAG 初始化失败）[/yellow]")
+                    continue
+                stats = rag_service.get_stats()
+                table = Table(title="知识库状态")
+                table.add_column("属性", style="cyan")
+                table.add_column("值", style="green")
+                for key, value in stats.items():
+                    table.add_row(str(key), str(value))
+                console.print(table)
+                continue
+
+            elif cmd == "/tools":
+                tools = agent.list_tools()
+                if not tools:
+                    console.print("[dim]暂无已装配的工具[/dim]")
+                else:
+                    table = Table(title="可用 Tools")
+                    table.add_column("名称", style="cyan")
+                    table.add_column("类型", style="yellow")
+                    table.add_column("来源", style="magenta")
+                    table.add_column("描述", style="white")
+                    for tool in tools:
+                        table.add_row(
+                            tool["name"],
+                            tool.get("type", ""),
+                            tool.get("source", ""),
+                            tool.get("description", "")
+                        )
+                    console.print(table)
+                continue
+
+            elif cmd == "/skills":
+                skills = agent.list_skills()
+                if not skills:
+                    console.print("[dim]暂无已装配的技能[/dim]")
+                else:
+                    table = Table(title="已装配 Skills")
+                    table.add_column("名称", style="cyan")
+                    table.add_column("描述", style="white")
+                    table.add_column("版本", style="yellow")
+                    for skill in skills:
+                        table.add_row(skill["name"], skill["description"], skill["version"])
+                    console.print(table)
+                continue
+
+            elif cmd == "/mcp":
+                servers = agent.list_mcp_servers()
+                if not servers:
+                    console.print("[dim]暂无 MCP 服务器[/dim]")
+                else:
+                    table = Table(title="MCP 服务器")
+                    table.add_column("名称", style="cyan")
+                    table.add_column("描述", style="white")
+                    table.add_column("已初始化", style="green")
+                    table.add_column("工具数", style="yellow")
+                    for server in servers:
+                        table.add_row(
+                            server["name"],
+                            server["description"],
+                            str(server["initialized"]),
+                            str(server["tool_count"])
+                        )
+                    console.print(table)
+                continue
+
             else:
-                reply = agent.chat(user_input, trace_id=trace_id)
+                console.print(f"[red]未知命令: {cmd}[/red]")
+                continue
 
-            # 同步 Tool calling 中间消息到会话（保证会话恢复时上下文完整）
-            for msg in agent.messages[msg_count_before:]:
-                if msg.get("role") == "tool":
-                    session_mgr.append_message("tool", msg["content"])
+        elif not user_input:
+            continue
 
-            # 记录助手回复到会话（与用户消息配对写入）
-            session_mgr.append_message("assistant", reply)
-            session_mgr.flush()
+        # 输入长度检查
+        if len(user_input) > MAX_INPUT_LENGTH:
+            console.print(f"[red]输入过长（{len(user_input)}字符），请限制在 {MAX_INPUT_LENGTH} 字符以内[/red]")
+            continue
 
+        # 确保有当前会话
+        if not session_mgr.current_session:
+            session_mgr.create_session()
+
+        trace_id = generate_trace_id()
+
+        # stream_reply() 内部处理安全检测 + 会话管理 + Tool Calling + 落盘
+        # CLI 只负责渲染 token
+        console.print("[bold green]风堇:[/bold green] ")
+        try:
+            reply = asyncio.run(agent.chat(
+                user_input,
+                trace_id=trace_id,
+                on_token=lambda t: console.print(t, end="", highlight=False),
+            ))
+            console.print()  # 流式结束换行
             console.print(f"[dim]对话轮数: {agent.history_count}[/dim]\n")
-
+        except BlockedError as e:
+            console.print()
+            console.print(f"[yellow]小伊卡：{e.message}[/yellow]\n")
         except KeyboardInterrupt:
-            if in_chat:
-                from src.agent.message_builder import rollback_last_user
-                rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before, session_count_before)
-                session_mgr.flush()
+            # Ctrl+C — stream_reply 内部已通过 CancelledError 完成回滚
+            console.print()
             _safe_cleanup(agent, memory_manager, rag_service, safety_engine)
             from loguru import logger
             logger.complete()
@@ -639,11 +612,8 @@ def main():
         except Exception as e:
             _log = get_logger("main", trace_id=trace_id)
             _log.opt(exception=True).error("对话循环异常 [input={}]: {}", user_input[:50], e)
-            if in_chat:
-                from src.agent.message_builder import rollback_last_user
-                rollback_last_user(session_mgr, user_input, agent.messages, msg_count_before, session_count_before)
-                session_mgr.flush()
-            console.print("[red]对话处理出错，请重试。详情见日志文件。[/red]")
+            console.print()
+            console.print("[red]对话处理出错，请重试。详情见日志文件。[/red]\n")
 
 
 if __name__ == "__main__":

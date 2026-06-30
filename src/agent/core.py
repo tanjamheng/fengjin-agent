@@ -1,43 +1,85 @@
-"""Agent 核心模块
+"""Agent 核心 — CLI/WS 唯一对话入口
 
-纯净的Agent胚子，支持：
-- Skill 装配和调用（提示词模版，系统决定注入时机）
-- Tool 装配和调用（函数调用，LLM 自主决定）
-- MCP 服务器管理（标准化工具协议）
-- 上下文管理（记忆合并 + 滑动窗口）
-- 对话历史管理
-- 日志追踪
+Agent.chat() = 完整管线（安全→记忆→上下文→LLM→Tool→落盘）
+CLI 和 WS 只是 token 的消费方式不同（print vs send_json）。
 """
 
+import asyncio
 import json
-from openai import OpenAI
-from typing import Optional, List, Dict, Any
+import time
+from typing import Optional, Callable
+
+from openai import AsyncOpenAI
+
 from ..config import Config
-from ..capabilities.skill import SkillBase, SkillContext, SkillResult
+from ..session import SessionManager
+from ..safety import SafetyManager, Action as SafetyAction
+from ..capabilities.skill import SkillBase, SkillContext
 from ..capabilities.tool import ToolBase
 from ..capabilities.mcp_server import MCPServerBase
 from .skill_registry import SkillRegistry, get_registry
 from .tool_registry import ToolRegistry
 from .mcp_manager import MCPManager
 from .context_manager import ContextManager
-from .message_builder import assemble_system_prompt
+from .stream_controller import StreamController
+from .streaming import stream_llm
+from .message_builder import (
+    assemble_system_prompt,
+    rollback_last_user,
+    DEFAULT_BLOCKED_MESSAGE,
+)
 from ..utils.logger import get_logger, generate_trace_id
 
 
-class Agent:
-    """Agent 核心类（纯净胚子）
+# ── 常量 ──────────────────────────────────────────────────
 
-    三种能力：
-    - Skill（提示词模版）：通过 SkillRegistry 管理
-    - Tool（函数调用）：通过 ToolRegistry 管理
-    - MCP（标准化工具）：通过 MCPManager 管理，工具注册到 ToolRegistry
+MAX_INPUT_LENGTH = 10000  # 超长输入拒绝（对齐 CLAUDE.md 技术约束）
+
+
+# ── 异常 ──────────────────────────────────────────────────
+
+class BlockedError(Exception):
+    """安全拦截（消息已入历史，caller 负责展示拦截话术）"""
+
+    def __init__(self, message: str, category: str):
+        super().__init__(message)
+        self.message = message
+        self.category = category
+
+
+class StreamInterrupted(Exception):
+    """Token 流式输出被中断（客户端断开）。不回滚 user 消息，保留部分回复。"""
+    pass
+
+
+# ── Agent ─────────────────────────────────────────────────
+
+class Agent:
+    """Agent 核心类
+
+    持有配置、客户端、工具/技能/MCP 注册表。
+    chat() 是唯一对话入口——CLI 和 WS 共用同一管线。
     """
 
-    def __init__(self, config: Config, context_manager: ContextManager = None, memory_manager=None):
+    def __init__(
+        self,
+        config: Config,
+        session_mgr: SessionManager,
+        safety: SafetyManager,
+        *,
+        client: Optional[AsyncOpenAI] = None,
+        context_manager: Optional[ContextManager] = None,
+        memory_manager=None,
+        tool_registry: Optional[ToolRegistry] = None,
+    ):
         self.config = config
+        self.session_mgr = session_mgr
+        self.safety = safety
+        self.context_manager = context_manager
+        self.memory_manager = memory_manager
 
-        # 初始化 API Client
-        self.client = OpenAI(
+        # AsyncOpenAI — 可注入（WS 从 app.state 共享）或自动创建（CLI）
+        self.client = client or AsyncOpenAI(
             api_key=config.api_key,
             base_url=config.base_url,
             timeout=120.0,
@@ -46,36 +88,26 @@ class Agent:
 
         # 三大能力管理器
         self.registry = get_registry()
-        self.tool_registry = ToolRegistry()
+        self.tool_registry = tool_registry or ToolRegistry()
         self.mcp_manager = MCPManager()
 
-        # 上下文管理 + 记忆管理
-        self.context_manager = context_manager
-        self.memory_manager = memory_manager
-
-        # 对话历史
-        self.messages: List[Dict] = []
-
-        # 当前 trace_id
+        # 当前 trace_id + 流控制
         self.trace_id = generate_trace_id()
+        self._current_controller: Optional[StreamController] = None
         self.log = get_logger("core", trace_id=self.trace_id)
 
-        self.log.info("Agent 初始化: {}", config.agent.name)
+        self.log.info("Agent 初始化: {} (AsyncOpenAI)", config.agent.name)
 
-    # ── Skill ──────────────────────────────────────────────
+    # ── Skill / Tool / MCP 注册 ────────────────────────────
 
     def register_skill(self, skill: SkillBase) -> None:
         """注册 Skill（提示词模版）"""
         self.registry.register(skill)
         self.log.info("注册 Skill: {}", skill.meta.name)
 
-    # ── Tool ───────────────────────────────────────────────
-
     def register_tool(self, tool: ToolBase) -> None:
         """注册 Tool（函数调用）"""
         self.tool_registry.register_tool(tool)
-
-    # ── MCP ────────────────────────────────────────────────
 
     def register_mcp(self, server: MCPServerBase) -> None:
         """注册 MCP 服务器"""
@@ -83,335 +115,318 @@ class Agent:
         self.tool_registry.register_mcp_server(server)
         self.log.info("注册 MCP 服务器: {}", server.name)
 
-    # ── 对话 ───────────────────────────────────────────────
+    # ── 取消 ────────────────────────────────────────────────
 
-    def chat(self, user_input: str, skills: Optional[List[str]] = None,
-             safety_context: Optional[str] = None, trace_id: str = "") -> str:
-        """发送消息并获取回复
+    def cancel(self) -> None:
+        """协作式取消当前对话（保留已生成文本）"""
+        if self._current_controller:
+            self._current_controller.cancel()
+
+    # ── chat() — 唯一对话入口（CLI/WS 共用）─────────────────
+
+    async def chat(
+        self,
+        user_input: str,
+        *,
+        trace_id: str = "",
+        on_token: Optional[Callable] = None,
+        skills: Optional[list[str]] = None,
+    ) -> str:
+        """完整对话管线
+
+        安全检测 → 记忆检索 → 上下文组装 → LLM 流式 → Tool Calling → 落盘
 
         Args:
             user_input: 用户输入
-            skills: 要激活的Skill列表（可选）
-            safety_context: 安全疏导指令（comfort 模式时注入）
-            trace_id: 请求追踪ID（不传则自动生成）
+            trace_id: 请求追踪 ID（不传则自动生成）
+            on_token: 流式 token 回调（可 sync 或 async）
+            skills: 要激活的 Skill 名称列表（可选）
 
         Returns:
-            Agent回复
+            AI 完整回复文本
+
+        Raises:
+            BlockedError: 安全拦截（消息已入历史）
         """
-        # 输入防御性校验
         if not user_input or not user_input.strip():
             return ""
 
         self.trace_id = trace_id or generate_trace_id()
-        self.log = get_logger("core", trace_id=self.trace_id)
+        logger = get_logger("core", trace_id=self.trace_id)
+        t_total_start = time.monotonic()
 
-        self.log.info("用户输入: {}...", user_input[:50])
+        logger.info("用户输入: {}...", user_input[:50])
 
-        # 1. Skills 注入提示词（如有）
+        # 1. Skill 注入（如有）
         message_content = user_input
         if skills:
             message_content = self._execute_skills(user_input, skills)
 
-        # 2. 上下文管理：记忆合并到当前输入
-        api_input = message_content
-        if self.context_manager:
-            api_input = self.context_manager.build_input(message_content, trace_id=self.trace_id)
+        # 2. 用户消息入历史（无论安全判定如何，核心1 2.5）
+        self.session_mgr.append_message("user", message_content)
 
-        # 3. 存入历史的是原始输入（不含记忆注入）
-        self.messages.append({
-            "role": "user",
-            "content": message_content
-        })
+        # 提前创建 controller + 赋值，消除 cancel 信号丢失窗口
+        controller = StreamController()
+        self._current_controller = controller
 
-        # 4. 获取所有 tool 定义
-        tool_definitions = self.tool_registry.get_all_definitions()
-
-        # 5. 构建 API 参数（system prompt 置顶于 messages）
-        system_prompt = assemble_system_prompt(self.config, safety_context)
-
-        api_messages = [{"role": "system", "content": system_prompt}]
-        api_messages.extend(self._build_api_messages(api_input))
-
-        api_params = {
-            "model": self.config.model,
-            "max_tokens": self.config.agent.max_tokens,
-            "temperature": self.config.agent.temperature,
-            "messages": api_messages,
-            "tools": tool_definitions if tool_definitions else None,
-        }
-
-        # 6. 流式调用 API
-        self.log.info("调用 API: {}", self.config.model)
-        response = self._stream_call(api_params)
-
-        # 7. Tool calling 循环
-        tool_rounds = 0
-        while self._has_tool_use(response) and tool_rounds < self.config.agent.max_tool_rounds:
-            tool_rounds += 1
-            tool_calls, tool_messages = self._process_tool_calls(response)
-
-            # assistant 消息（含 tool_calls）
-            self.messages.append({
-                "role": "assistant",
-                "content": response.choices[0].message.content or "",
-                "tool_calls": tool_calls,
-            })
-            # tool 结果消息（每条独立）
-            self.messages.extend(tool_messages)
-
-            self.log.info("Tool calling 第 {} 轮", tool_rounds)
-            api_params["messages"] = self._build_api_messages_with_system(system_prompt, api_input)
-            response = self._stream_call(api_params)
-
-        if tool_rounds >= self.config.agent.max_tool_rounds and self._has_tool_use(response):
-            self.log.warning("Tool calling 达到 {} 轮上限，强制终止", self.config.agent.max_tool_rounds)
-
-        # 8. 提取最终文本回复
-        assistant_message = self._extract_text(response)
-
-        # 9. 添加助手回复到历史（跳过空消息，如Tool Calling达上限时仅有tool_calls无text）
-        if assistant_message:
-            self.messages.append({
-                "role": "assistant",
-                "content": assistant_message
-            })
-
-        # 10. 滑动窗口裁剪
-        if self.context_manager:
-            self.context_manager.trim_messages(self.messages, trace_id=self.trace_id)
-
-        # 11. 异步提取记忆
-        if self.memory_manager:
-            self.memory_manager.extract_async(user_input, assistant_message,
-                                              trace_id=self.trace_id)
-
-        self.log.info("回复完成，长度: {}", len(assistant_message))
-        return assistant_message
-
-    # ── 内部方法 ────────────────────────────────────────────
-
-    def _build_api_messages(self, current_input: str) -> list:
-        """构建首次 API 调用的 messages（不含 system）
-
-        = 历史消息（self.messages[:-1]）+ 当前输入（合并了记忆）
-        self.messages 里存的是原始输入，这里用合并后的版本替换最后一条
-        """
-        api_messages = [m.copy() for m in self.messages[:-1]]
-        api_messages.append({"role": "user", "content": current_input})
-        return api_messages
-
-    def _build_api_messages_from_history(self, enhanced_input: str = None) -> list:
-        """构建 tool calling 后续轮次的 messages（不含 system）
-
-        若提供 enhanced_input，替换最后一条 user 消息为记忆增强版本。
-        """
-        messages = [m.copy() for m in self.messages]
-        if enhanced_input is not None:
-            for i in range(len(messages) - 1, -1, -1):
-                if messages[i]["role"] == "user":
-                    messages[i] = {"role": "user", "content": enhanced_input}
-                    break
-        return messages
-
-    def _build_api_messages_with_system(self, system_prompt: str, enhanced_input: str = None) -> list:
-        """构建带 system prompt 的完整 messages"""
-        messages = [{"role": "system", "content": system_prompt}]
-        messages.extend(self._build_api_messages_from_history(enhanced_input))
-        return messages
-
-    def _stream_call(self, api_params: dict):
-        """流式调用 API，实时输出文本，返回模拟的统一响应对象"""
-        import sys
-        safe_stdout = getattr(sys.stdout, 'reconfigure', None)
-        if safe_stdout:
-            sys.stdout.reconfigure(errors='replace')
-
-        stream = None
         try:
-            stream = self.client.chat.completions.create(**api_params, stream=True)
+            # 3. 安全检测（三态分流：P0 规则引擎 → P1 Llama Guard）
+            t_safety_start = time.monotonic()
+            result = self.safety.check(message_content, trace_id=self.trace_id)
+            t_safety = (time.monotonic() - t_safety_start) * 1000
+            logger.info("安全检测完成 ({:.0f}ms) → {}",
+                        t_safety, result.action.value)
 
-            full_text = ""
-            tool_calls_data = {}  # index -> {id, name, arguments}
+            if result.action == SafetyAction.BLOCK:
+                blocked_msg = result.user_message or DEFAULT_BLOCKED_MESSAGE
+                self.session_mgr.append_message(
+                    "assistant",
+                    f"[小伊卡拦截] {blocked_msg}",
+                )
+                self.session_mgr.flush()
+                logger.info("对话已拦截 (category={})，总耗时 {:.0f}ms",
+                            result.category,
+                            (time.monotonic() - t_total_start) * 1000)
+                raise BlockedError(blocked_msg, result.category)
 
-            for chunk in stream:
-                delta = chunk.choices[0].delta if chunk.choices else None
-                if not delta:
-                    continue
+            # COMFORT：放行，安抚指令注入 system_prompt（红线10）
+            comfort_prompt = (
+                result.comfort_prompt
+                if result.action == SafetyAction.COMFORT
+                else None
+            )
 
-                # 文本内容
-                if delta.content:
-                    full_text += delta.content
-                    print(delta.content, end="", flush=True)
-
-                # tool_calls 增量
-                if delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in tool_calls_data:
-                            tool_calls_data[idx] = {
-                                "id": tc_delta.id or "",
-                                "name": "",
-                                "arguments": "",
-                            }
-                        if tc_delta.id:
-                            tool_calls_data[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                tool_calls_data[idx]["name"] = tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
-
-            print()  # 流式结束后换行
-
-            return self._build_response(full_text, tool_calls_data)
-
-        except Exception as e:
-            self.log.opt(exception=True).error("API调用失败: {}", e)
+            # 4. 记忆检索 + 上下文组装
+            t_memory_start = time.monotonic()
+            api_input = message_content
+            if self.context_manager:
+                api_input = self.context_manager.build_input(
+                    message_content, trace_id=self.trace_id
+                )
+            t_memory = (time.monotonic() - t_memory_start) * 1000
+            logger.info("记忆检索+上下文组装完成 ({:.0f}ms)", t_memory)
+        except BlockedError:
             raise
-        finally:
-            if stream is not None:
-                try:
-                    stream.close()
-                except Exception as e:
-                    self.log.debug("流关闭异常: {}", e)
+        except Exception:
+            rollback_last_user(self.session_mgr, message_content)
+            raise
 
-    def _build_response(self, text: str, tool_calls_data: dict):
-        """构造统一的响应对象，兼容 _has_tool_use / _process_tool_calls / _extract_text"""
-
-        class FunctionCall:
-            def __init__(self, name, arguments):
-                self.name = name
-                self.arguments = arguments
-
-        class ToolCall:
-            def __init__(self, id, function):
-                self.id = id
-                self.type = "function"
-                self.function = function
-
-        class Message:
-            def __init__(self, content, tool_calls):
-                self.content = content
-                self.tool_calls = tool_calls
-
-        class Choice:
-            def __init__(self, message):
-                self.message = message
-
-        class Response:
-            def __init__(self, choices):
-                self.choices = choices
-
-        tool_calls = []
-        for idx in sorted(tool_calls_data.keys()):
-            data = tool_calls_data[idx]
-            tool_calls.append(ToolCall(
-                id=data["id"],
-                function=FunctionCall(data["name"], data["arguments"])
-            ))
-
-        message = Message(content=text, tool_calls=tool_calls if tool_calls else None)
-        return Response(choices=[Choice(message=message)])
-
-    def _has_tool_use(self, response) -> bool:
-        """检查响应是否包含 tool_calls"""
-        msg = response.choices[0].message
-        return msg.tool_calls is not None and len(msg.tool_calls) > 0
-
-    def _process_tool_calls(self, response) -> tuple:
-        """处理 tool_calls，返回 (tool_calls_list, tool_messages_list)
-
-        tool_calls_list: assistant 消息中的 tool_calls 字段
-        tool_messages_list: 每条 tool 结果的独立消息
-        """
-        msg = response.choices[0].message
-        tool_calls_list = []
-        tool_messages = []
-
-        for tc in msg.tool_calls:
-            tool_name = tc.function.name
-            tool_use_id = tc.id
-            try:
-                tool_input = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
-                self.log.warning("Tool {} 参数 JSON 解析失败: {}", tool_name,
-                                 tc.function.arguments[:100])
-                tool_input = {}
-
-            self.log.info("调用 Tool: {}, 参数: {}", tool_name, str(tool_input)[:200])
-
-            tool_calls_list.append({
-                "id": tool_use_id,
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "arguments": tc.function.arguments,
-                },
-            })
-
-            try:
-                result_text = self.tool_registry.execute_tool(tool_name, tool_input)
-                tool_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_use_id,
-                    "content": result_text,
-                })
-            except Exception as e:
-                self.log.error("Tool {} 执行失败: {}", tool_name, e)
-                tool_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_use_id,
-                    "content": "工具调用失败，请稍后重试",
-                })
-
-        return tool_calls_list, tool_messages
-
-    def _extract_text(self, response) -> str:
-        """从响应中提取文本内容"""
-        msg = response.choices[0].message
-        return (msg.content or "").strip()
-
-    def _execute_skills(self, user_input: str, skill_names: List[str]) -> str:
-        """执行Skills并返回处理后的prompt"""
-        context = SkillContext(
-            trace_id=self.trace_id,
-            user_input=user_input,
-            conversation_history=self.messages,
-            config={}
+        # 5. Tool Calling 流水线
+        full_text = ""
+        tool_loop_messages: list[dict] = []
+        tool_rounds = 0
+        total_tokens = 0
+        tool_definitions = self.tool_registry.get_all_definitions()
+        max_tool_rounds = (
+            self.config.agent.max_tool_rounds if tool_definitions else 0
         )
 
-        current_prompt = user_input
+        async def _execute_tool(name: str, args: dict) -> str:
+            return await asyncio.to_thread(
+                self.tool_registry.execute_tool, name, args
+            )
 
-        for skill_name in skill_names:
-            result = self.registry.execute(skill_name, context)
-            if result.success and result.data:
-                if "prompt" in result.data:
-                    current_prompt = result.data["prompt"]
-                    self.log.info("Skill {} 已注入prompt", skill_name)
+        try:
+            while True:
+                # 5a. 组装上下文 + 滑动窗口
+                t_build_start = time.monotonic()
+                system_content = assemble_system_prompt(
+                    self.config, comfort_prompt
+                )
+                api_messages = _build_api_messages(
+                    self.session_mgr,
+                    api_input,
+                    system_content,
+                    tool_loop_messages,
+                )
+                # 剥离 system 再裁剪
+                system_msg = (
+                    api_messages[0]
+                    if api_messages and api_messages[0].get("role") == "system"
+                    else None
+                )
+                trim_target = (
+                    api_messages[1:] if system_msg else api_messages
+                )
+                if self.context_manager:
+                    trim_target = self.context_manager.trim_messages(
+                        trim_target, trace_id=self.trace_id
+                    )
+                api_messages = (
+                    [system_msg] + trim_target if system_msg else trim_target
+                )
+                t_build = (time.monotonic() - t_build_start) * 1000
+                logger.info("调用 LLM: {} (消息数={}, 裁剪耗时 {:.0f}ms)",
+                            self.config.model, len(api_messages), t_build)
 
-        return current_prompt
+                # 5b. 流式调用 LLM
+                t_llm_start = time.monotonic()
+                first_token = False
+                tool_calls_data: dict[int, dict] = {}
 
-    # ── 管理 ────────────────────────────────────────────────
+                async for text_delta, tc_delta in stream_llm(
+                    client=self.client,
+                    model=self.config.model,
+                    messages=api_messages,
+                    controller=controller,
+                    tools=tool_definitions if tool_definitions else None,
+                    temperature=self.config.agent.temperature,
+                    max_tokens=self.config.agent.max_tokens,
+                ):
+                    # 文本 token
+                    if text_delta:
+                        if not first_token:
+                            t_ttft = (
+                                time.monotonic() - t_llm_start
+                            ) * 1000
+                            logger.info("LLM 首 token (TTFT): {:.0f}ms",
+                                        t_ttft)
+                            first_token = True
+                        total_tokens += 1
+                        full_text += text_delta
+                        if on_token is not None:
+                            result_cb = on_token(text_delta)
+                            if asyncio.iscoroutine(result_cb):
+                                await result_cb
+
+                    # tool_calls 增量累积
+                    if tc_delta:
+                        _accumulate_tool_calls(tool_calls_data, tc_delta)
+
+                t_llm = (time.monotonic() - t_llm_start) * 1000
+                tps = total_tokens / (t_llm / 1000) if t_llm > 0 else 0
+                logger.info("LLM 流式完成: {} tokens, {:.0f}ms ({:.1f} tok/s)",
+                            total_tokens, t_llm, tps)
+
+                if controller.cancel_requested:
+                    break
+
+                # 5c. Tool Calling
+                if not tool_calls_data or tool_rounds >= max_tool_rounds:
+                    break
+
+                tool_rounds += 1
+                logger.info("Tool calling 第 {} 轮，{} 个工具调用",
+                            tool_rounds, len(tool_calls_data))
+
+                tool_calls_serialized = _serialize_tool_calls(
+                    tool_calls_data
+                )
+                tool_loop_messages.append({
+                    "role": "assistant",
+                    "content": full_text or "",
+                    "tool_calls": tool_calls_serialized,
+                })
+
+                t_tools_start = time.monotonic()
+                for idx in sorted(tool_calls_data.keys()):
+                    tc = tool_calls_data[idx]
+                    tool_name = tc["name"]
+                    try:
+                        tool_input = json.loads(tc["arguments"])
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Tool {} 参数 JSON 解析失败: {}",
+                            tool_name, tc["arguments"][:100],
+                        )
+                        tool_input = {}
+
+                    try:
+                        t_tool_start = time.monotonic()
+                        result_text = await _execute_tool(
+                            tool_name, tool_input
+                        )
+                        t_tool = (
+                            time.monotonic() - t_tool_start
+                        ) * 1000
+                        logger.info("Tool {} 执行成功 ({:.0f}ms)",
+                                    tool_name, t_tool)
+                    except Exception as e:
+                        logger.error("Tool {} 执行失败: {}",
+                                     tool_name, e)
+                        result_text = "工具调用失败，请稍后重试"
+
+                    tool_loop_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result_text,
+                    })
+                t_tools_total = (time.monotonic() - t_tools_start) * 1000
+                logger.info("Tool calling 第 {} 轮完成 ({:.0f}ms)",
+                            tool_rounds, t_tools_total)
+
+                full_text = ""
+                total_tokens = 0
+
+        except StreamInterrupted:
+            # 流式输出中断（客户端断开）：保留 user 消息 + 部分回复 + 记忆提取
+            if full_text:
+                self.session_mgr.append_message("assistant", full_text)
+                self.session_mgr.flush()
+                if self.memory_manager:
+                    self.memory_manager.extract_async(
+                        user_input, full_text, trace_id=self.trace_id
+                    )
+            raise
+        except asyncio.CancelledError:
+            rollback_last_user(self.session_mgr, message_content)
+            raise
+        except Exception:
+            rollback_last_user(self.session_mgr, message_content)
+            raise
+        finally:
+            self._current_controller = None
+
+        # 6. 落盘
+        if full_text:
+            self.session_mgr.append_message("assistant", full_text)
+            self.session_mgr.flush()
+        elif controller.cancel_requested:
+            rollback_last_user(self.session_mgr, message_content)
+        else:
+            self.session_mgr.append_message("assistant", "")
+            self.session_mgr.flush()
+
+        # 7. 异步记忆提取（不阻塞回复）
+        if self.memory_manager and full_text:
+            self.memory_manager.extract_async(
+                user_input, full_text, trace_id=self.trace_id
+            )
+
+        t_total = (time.monotonic() - t_total_start) * 1000
+        logger.info("对话完成: {} chars, {} tokens, {:.0f}ms 总耗时",
+                    len(full_text), total_tokens, t_total)
+        return full_text
+
+    # ── 管理方法 ────────────────────────────────────────────
 
     def clear_history(self) -> None:
-        """清空对话历史"""
-        self.messages = []
+        """清空对话历史（创建新会话）"""
+        self.session_mgr.flush()
+        self.session_mgr.create_session()
         self.log.info("对话历史已清空")
 
     @property
     def history_count(self) -> int:
-        return len(self.messages) // 2
+        return len(self.session_mgr.get_current_messages()) // 2
 
-    def list_skills(self) -> List[dict]:
+    def list_skills(self) -> list[dict]:
         """列出已注册的 Skills"""
         skills = self.registry.list_skills()
-        return [{"name": s.name, "description": s.description, "version": s.version} for s in skills]
+        return [
+            {
+                "name": s.name,
+                "description": s.description,
+                "version": s.version,
+            }
+            for s in skills
+        ]
 
-    def list_tools(self) -> List[dict]:
+    def list_tools(self) -> list[dict]:
         """列出已注册的 Tools"""
         return self.tool_registry.list_tools()
 
-    def list_mcp_servers(self) -> List[dict]:
+    def list_mcp_servers(self) -> list[dict]:
         """列出已注册的 MCP 服务器"""
         return self.mcp_manager.list_servers()
 
@@ -421,7 +436,95 @@ class Agent:
         self.mcp_manager.cleanup_all()
         self.tool_registry.clear()
         try:
-            self.client.close()
+            asyncio.run(self.client.close())
+        except RuntimeError:
+            # Event loop 已在运行（如 WS 路径调用 cleanup），跳过
+            pass
         except Exception as e:
-            self.log.warning("OpenAI client 关闭异常: {}", e)
+            self.log.warning("AsyncOpenAI client 关闭异常: {}", e)
         self.log.info("Agent 资源已清理")
+
+    # ── 内部方法 ────────────────────────────────────────────
+
+    def _execute_skills(self, user_input: str, skill_names: list[str]) -> str:
+        """执行 Skills 并返回处理后的 prompt（链式执行）"""
+        conversation_history = self.session_mgr.get_current_messages()
+        context = SkillContext(
+            trace_id=self.trace_id,
+            user_input=user_input,
+            conversation_history=conversation_history,
+            config={},
+        )
+        current_prompt = user_input
+        for skill_name in skill_names:
+            result = self.registry.execute(skill_name, context)
+            if result.success and result.data:
+                if "prompt" in result.data:
+                    current_prompt = result.data["prompt"]
+                    self.log.info("Skill {} 已注入 prompt", skill_name)
+        return current_prompt
+
+
+# ── 模块级工具函数 ──────────────────────────────────────────
+
+def _build_api_messages(
+    session_mgr: SessionManager,
+    current_input: str,
+    system_content: str,
+    tool_loop_messages: Optional[list[dict]] = None,
+) -> list[dict]:
+    """组装 API messages：system + 历史 + tool calling 中间消息"""
+    messages = [{"role": "system", "content": system_content}]
+    history = [
+        m for m in session_mgr.get_current_messages()
+        if m.get("role") != "tool"
+    ]
+    messages.extend(history)
+    # 替换最后一条 user 消息为记忆增强版
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] == "user":
+            messages[i] = {"role": "user", "content": current_input}
+            break
+    if tool_loop_messages:
+        messages.extend(tool_loop_messages)
+    return messages
+
+
+def _accumulate_tool_calls(
+    tool_calls_data: dict[int, dict],
+    tc_delta_list: list,
+) -> None:
+    """增量累积流式 tool_calls delta"""
+    for tc_delta in tc_delta_list:
+        idx = tc_delta.index
+        if idx not in tool_calls_data:
+            tool_calls_data[idx] = {
+                "id": tc_delta.id or "",
+                "name": "",
+                "arguments": "",
+            }
+        if tc_delta.id:
+            tool_calls_data[idx]["id"] = tc_delta.id
+        if tc_delta.function:
+            if tc_delta.function.name:
+                tool_calls_data[idx]["name"] = tc_delta.function.name
+            if tc_delta.function.arguments:
+                tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
+
+
+def _serialize_tool_calls(tool_calls_data: dict[int, dict]) -> list[dict]:
+    """将流式累积的 tool_calls_data 转为 OpenAI API 格式"""
+    import uuid
+    result = []
+    for idx in sorted(tool_calls_data.keys()):
+        data = tool_calls_data[idx]
+        tc_id = data["id"] or f"tc_{uuid.uuid4().hex[:8]}"
+        result.append({
+            "id": tc_id,
+            "type": "function",
+            "function": {
+                "name": data["name"],
+                "arguments": data["arguments"],
+            },
+        })
+    return result
