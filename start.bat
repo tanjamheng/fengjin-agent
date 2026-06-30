@@ -1,74 +1,139 @@
 @echo off
 cd /d "%~dp0"
+setlocal enabledelayedexpansion
+title Fengjin AI - Starting...
 
 echo.
-echo   =*= Fengjin AI - Cure the Twilight =*=
-echo   ======================================
+echo     =*= Fengjin AI - Cure the Twilight =*=
 echo.
 
-REM ==== 1. venv ====
-echo [1/4] Checking Python venv...
+REM ============================================================
+REM  0. Restart: kill old backend if already running
+REM ============================================================
+echo  [0/5] Checking for running instances...
+
+powershell -Command ^
+  "$conns = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
+  "if ($conns) {" ^
+  "  foreach ($line in $conns) {" ^
+  "    $parts = $line.ToString().Trim() -split '\s+';" ^
+  "    $pid = $parts[-1];" ^
+  "    if ($pid -ne '0' -and $pid -ne '4') {" ^
+  "      try {" ^
+  "        $proc = Get-Process -Id $pid -ErrorAction Stop;" ^
+  "        $name = $proc.ProcessName;" ^
+  "        Write-Host ('  Found old backend: ' + $name + ' (PID: ' + $pid + ')');" ^
+  "        Stop-Process -Id $pid -Force -ErrorAction Stop;" ^
+  "        Write-Host ('  Stopped.');" ^
+  "        Start-Sleep -Milliseconds 500;" ^
+  "      } catch {" ^
+  "        Write-Host ('  WARNING: Port 8765 in use (PID:' + $pid + '), unable to stop');" ^
+  "      }" ^
+  "    }" ^
+  "  }" ^
+  "} else {" ^
+  "  Write-Host '  No existing instance found';" ^
+  "}"
+
+echo.
+
+REM ============================================================
+REM  1. Python venv
+REM ============================================================
+echo  [1/5] Python virtual environment...
 if not exist "venv\Scripts\python.exe" (
-    echo   Creating venv...
+    echo    Creating venv...
     python -m venv venv
     if errorlevel 1 (
-        echo   ERROR: Failed to create venv. Python 3.10+ required.
+        echo    ERROR: Failed to create venv. Python 3.10+ required.
         pause
         exit /b 1
     )
 )
-echo   venv ready.
+call venv\Scripts\python.exe --version 2>&1 >nul
+echo    OK
 
-REM ==== 2. pip deps ====
-echo [2/4] Checking Python dependencies...
+REM ============================================================
+REM  2. Python dependencies
+REM ============================================================
+echo  [2/5] Python dependencies...
 call venv\Scripts\python.exe -m pip install -r requirements.txt -q >nul 2>&1
 if errorlevel 1 (
-    echo   WARNING: Some deps failed to install, continuing...
+    echo    WARNING: Some dependencies failed to install, continuing...
 )
-echo   deps ready.
+echo    OK
 
-REM ==== 3. frontend deps ====
-echo [3/4] Checking frontend dependencies...
+REM ============================================================
+REM  3. Frontend dependencies
+REM ============================================================
+echo  [3/5] Frontend dependencies...
 if not exist "frontend\node_modules\" (
-    echo   Installing frontend deps...
+    echo    Installing...
     cd frontend
-    call npm install
-    cd ..
+    call npm install >nul 2>&1
     if errorlevel 1 (
-        echo   ERROR: Failed to install frontend deps.
+        echo    ERROR: npm install failed
+        cd ..
         pause
         exit /b 1
     )
+    cd ..
 )
-echo   frontend deps ready.
+echo    OK
 
-REM ==== 4. launch ====
-echo [4/4] Launching services...
-echo.
+REM ============================================================
+REM  4. Start backend (silent, logs -> logs\app.log)
+REM ============================================================
+echo  [4/5] Starting backend...
+start "" /B venv\Scripts\python.exe -m src.server.server >nul 2>&1
 
-echo   -^> Starting backend...
-start "Fengjin AI - Backend" cmd /c "cd /d "%CD%" && venv\Scripts\python.exe -m src.server.server && pause"
+echo    Waiting for models to load (~30s first run)...
+powershell -Command ^
+  "for ($i=1; $i -le 120; $i++) {" ^
+  "  try {" ^
+  "    $r = Invoke-RestMethod http://127.0.0.1:8765/health -TimeoutSec 2;" ^
+  "    if ($r.status -eq 'ready') { Write-Host ('   Backend ready (' + $i + 's)'); exit 0 }" ^
+  "  } catch {}" ^
+  "  Start-Sleep 1" ^
+  "}; Write-Host '   ERROR: Backend timeout (120s)'; exit 1"
 
-echo   -^> Waiting for backend to be fully ready...
-powershell -Command "for($i=0;$i -lt 120;$i++){try{$r=irm http://127.0.0.1:8765/health -TimeoutSec 2;if($r.status -eq 'ready'){exit 0}}catch{};Start-Sleep 1};exit 1"
 if errorlevel 1 (
-    echo   ERROR: Backend failed to start within 120s.
+    echo.
+    echo    ERROR: Backend failed to start. Check logs\app.log
     pause
     exit /b 1
 )
-echo   Backend ready - all models loaded.
 
-echo   -^> Starting frontend...
-start "Fengjin AI - Frontend" cmd /c "cd /d "%CD%\frontend" && npm run dev && pause"
+REM ============================================================
+REM  5. Start frontend (Electron opens its own window)
+REM ============================================================
+echo  [5/5] Starting frontend...
+start "" /B cmd /c "cd /d "%CD%\frontend" && npm run dev >nul 2>&1"
 
+REM ============================================================
+REM  Done
+REM ============================================================
+title Fengjin AI - Running
 echo.
-echo   ======================================
-echo   Launch complete!
+echo    ====================================
+echo    Fengjin AI is running!
 echo.
-echo   Backend:  http://127.0.0.1:8765
-echo   Frontend: Electron window will open
+echo    Backend:  http://127.0.0.1:8765
+echo    Logs:     logs\app.log
 echo.
-echo   Close this window anytime.
-echo   ======================================
+echo    Close this window to stop all services.
+echo    ====================================
 echo.
 pause
+
+REM Cleanup: kill backend when user closes this window
+powershell -Command ^
+  "$conns = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
+  "if ($conns) {" ^
+  "  foreach ($line in $conns) {" ^
+  "    $parts = $line.ToString().Trim() -split '\s+';" ^
+  "    try { Stop-Process -Id $parts[-1] -Force -ErrorAction Stop } catch {}" ^
+  "  }" ^
+  "}"
+
+echo   Goodbye~
