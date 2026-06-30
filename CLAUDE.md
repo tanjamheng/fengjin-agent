@@ -79,8 +79,8 @@ Windows 桌面客户端，Electron ≥ 28.x + TypeScript + 原生 HTML/CSS，Web
 - **不引入状态管理库** — 全局状态极少，用中心状态对象 + 回调
 - **TypeScript 禁止滥用 `any`** — 所有后端通信数据必须有 Interface 定义
 - **前后端通信只走 WebSocket** — `ws://127.0.0.1:8765/ws`，不引入 REST API
-- **布局比例固定** — 左 38%（角色展示）+ 中 42%（对话区）+ 右 20%（历史侧边栏），V2 不变
-- **窗口** — 默认 960×680，最小 800×520，自定义粉蓝渐变标题栏（`#FFD1DC → #A7C7F5`）
+- **布局比例固定** — 左 38%（角色展示）+ 中 45%（对话区）+ 右 17%（历史侧边栏），V2 不变
+- **窗口** — 默认 960×680，最小 800×520，自定义粉蓝渐变标题栏（`#FFBACC → #9AC2FF`）
 - **单实例锁** — `app.requestSingleInstanceLock()`，防止多窗口 WebSocket 冲突
 
 ### 安全策略（Electron 固定值，不可改）
@@ -121,7 +121,7 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 
 ### 配色（CSS 变量速查）
 
-`--color-bg-chat: #F8F8F8` / `--color-bubble-ai: #FFE6F2` / `--color-bubble-user: #F9F2EB` / `--color-input-bg: #D0E4FE` / `--color-input-border: #BACCFE` / `--color-titlebar-start: #FFD1DC` / `--color-titlebar-end: #A7C7F5` / `--color-star: #F5C842` / `--color-blocked: #E8A050` / `--color-status-online: #50C878` / `--color-status-offline: #E05555`
+`--color-bg-chat: #F8F8F8` / `--color-bubble-ai: #FFE6F2` / `--color-bubble-user: #F9F2EB` / `--color-input-bg: #D0E4FE` / `--color-input-border: #BACCFE` / `--color-titlebar-start: #FFBACC` / `--color-titlebar-end: #9AC2FF` / `--color-star: #F5C842` / `--color-blocked: #E8A050` / `--color-status-online: #50C878` / `--color-status-offline: #E05555`
 
 ### 字体
 
