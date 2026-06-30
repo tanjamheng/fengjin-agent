@@ -1,4 +1,7 @@
+import { Logger } from "../../utils/logger";
 import type { ServerMessage } from "../../types/protocol";
+
+const log = new Logger("MessageParser");
 
 /**
  * MessageParser — 解析后端 JSON 报文为类型化对象
@@ -24,8 +27,9 @@ export class MessageParser {
       }
       this._consecutiveErrors = 0;
       return obj as ServerMessage;
-    } catch {
+    } catch (e) {
       this._consecutiveErrors++;
+      log.warn("JSON parse failed: {}", e);
       return null;
     }
   }

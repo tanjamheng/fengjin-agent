@@ -61,7 +61,7 @@ class MemoryStorage:
                 try:
                     self.client.delete_collection(name)
                 except Exception:
-                    pass
+                    self.log.debug("删除旧集合失败（将尝试重建）")
                 return self.client.get_or_create_collection(
                     name=name,
                     embedding_function=ef,

@@ -222,7 +222,7 @@ class MemoryWriter:
             try:
                 existing = json.loads(dump_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
-                pass
+                self.log.warning("pending_facts.json 损坏，将丢弃并重建")
 
         for fact in facts:
             fact["_dumped_at"] = datetime.now().isoformat()
