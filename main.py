@@ -49,7 +49,7 @@ from src.utils import setup_logger, LogConfig, get_logger
 from src.utils.logger import generate_trace_id
 
 # ── 模型目录 ──
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 MODELS_DIR = PROJECT_ROOT / "models"
 
 # 模型清单：(本地子目录, ModelScope model_id)
@@ -182,9 +182,9 @@ def _handle_command(cmd: str, args: str, console: Console,
 
     elif cmd == "/new":
         session_mgr.flush()
-        session = session_mgr.create_session()
         agent.clear_history()
-        console.print(f"[green]新会话已创建: {session.title}[/green]")
+        session = session_mgr.current_session
+        console.print(f"[green]新会话已创建: {session.title if session else '新会话'}[/green]")
         console.print("[bold green]风堇:[/bold green] 灰宝~今天想聊什么呢？\n")
         return True
 

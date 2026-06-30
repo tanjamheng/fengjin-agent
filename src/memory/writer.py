@@ -50,6 +50,7 @@ class MemoryWriter:
         self._queue: queue.Queue = queue.Queue(maxsize=300)
         self._dump_path = Path(config.chroma.persist_directory) / "pending_facts.json"
         self._running = True
+        self._stopping = False  # stop() 已调用标志，防止 _checkpoint 覆盖 _dump_pending
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
         self._replay_pending()
@@ -67,6 +68,7 @@ class MemoryWriter:
     def stop(self) -> None:
         """停止写入线程，持久化剩余任务以防数据丢失"""
         self._running = False
+        self._stopping = True
         self._thread.join(timeout=10)
         if self._thread.is_alive():
             self.log.warning("写入线程超时未退出，剩余队列任务将被持久化")
@@ -98,7 +100,8 @@ class MemoryWriter:
             items = list(self._queue.queue)
         if not items:
             # 队列已空，清理残留文件
-            if self._dump_path.exists():
+            # 但如果正在停止，_dump_pending 已经写了文件，不能删除
+            if self._dump_path.exists() and not self._stopping:
                 try:
                     self._dump_path.unlink()
                 except OSError:
