@@ -12,7 +12,10 @@ import { WSClient } from "./modules/ws/WSClient";
 import { ChatUI } from "./modules/chat/ChatUI";
 import { HistorySidebar } from "./modules/sidebar/HistorySidebar";
 import { SettingsPanel, type SettingsData } from "./modules/settings/SettingsPanel";
+import { Logger } from "./utils/logger";
 import type { SessionMeta, ChatMessage } from "./types/protocol";
+
+const log = new Logger("Main");
 
 // ===== 会话加载保护 =====
 let _loadingSession = false;
@@ -26,10 +29,12 @@ const charContainer = document.getElementById("character-container");
 if (!charContainer) throw new Error("Missing #character-container");
 const character = new CharacterDisplay(charContainer);
 character.onLoadComplete = () => {
+  log.info("Character image loaded");
   appState.isModelLoaded = true;
 };
 character.onLoadError = () => {
   // 渐变背景兜底，不影响聊天
+  log.warn("Character image load failed, using gradient fallback");
   appState.isModelLoaded = true;
 };
 character.loadImage(CONFIG.character.imagePath);
@@ -127,6 +132,7 @@ ws.onConnected = (sessionId: string) => {
   _loadingSessionId = null;
   _settingsPanelClose?.(); _settingsPanelClose = null; // 重连时清理残留设置面板句柄
   _settingsPanelVisible = false;
+  log.info("Backend connected (session={})", sessionId || "(new)");
   appState.currentSessionId = sessionId;
   appState.isReplying = false;
   chat.clearMessages();
@@ -153,6 +159,7 @@ ws.onConfigUpdated = (result) => {
   if (!_settingsPanelVisible) return;
   const actions = document.querySelector(".settings-actions");
   if (!actions) { _settingsPanelVisible = false; return; }
+  log.info("Config update result: {}", result.success ? "success" : "failed");
   // 清除旧提示
   actions.querySelector(".settings-saved-hint")?.remove();
   const hint = document.createElement("span");
@@ -189,6 +196,7 @@ ws.onStatusChange = (status) => {
   appState.wsStatus = status;
   chat.updateConnectionStatus(status);
   if (status === "disconnected") {
+    log.warn("WS disconnected — resetting UI state");
     // 断线时恢复 UI 状态，防止 isReplying 死锁
     // 同时清除会话加载保护状态，防止跨连接残留
     if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
@@ -226,6 +234,7 @@ const sidebarContainer = document.getElementById("sidebar-container");
 if (!sidebarContainer) throw new Error("Missing #sidebar-container");
 const sidebar = new HistorySidebar(sidebarContainer);
 sidebar.onNewChat = () => {
+  log.info("New chat requested");
   // 清除会话加载保护状态 + 取消进行中的回复
   if (_loadTimer !== null) { clearTimeout(_loadTimer); _loadTimer = null; }
   _loadingSession = false;
@@ -241,6 +250,7 @@ sidebar.onNewChat = () => {
 };
 sidebar.onSelectSession = (sessionId: string) => {
   if (_loadingSession) return; // 防止快速点击发送多个 loadSession 请求
+  log.info("Loading session {}", sessionId);
   ws.sendCancel(); // 取消进行中的回复，防止幽灵消息渲染到新会话
   _loadingSession = true; // 防止废弃回复的事件重置状态
   _loadingSessionId = sessionId; // 跟踪正在加载的会话ID
@@ -277,6 +287,7 @@ sidebar.onClearAll = () => {
 sidebar.onOpenSettings = async () => {
   if (_settingsPanelVisible) return;
   _settingsPanelVisible = true;
+  log.info("Settings panel opened");
 
   // 请求最新配置并等待返回，用新鲜数据初始化面板（消除 updateData 异步重渲染竞态）
   const freshConfig = await new Promise<SettingsData | null>((resolve) => {

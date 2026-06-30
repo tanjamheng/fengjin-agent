@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
-import { join } from "path";
+import { join, resolve } from "path";
+import { createWriteStream, existsSync, mkdirSync, statSync, renameSync } from "fs";
+import type { WriteStream } from "fs";
 
 // DPI 缩放适配（在 app.whenReady() 之前）
 app.commandLine.appendSwitch("high-dpi-support", "1");
@@ -38,6 +40,35 @@ function createWindow(): void {
       preload: join(__dirname, "../preload/index.js"),
     },
   });
+
+  // 日志：捕获渲染进程 console 输出 → logs/renderer.log
+  const logsDir = resolve(__dirname, '../../../logs');
+  if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true });
+  const logPath = join(logsDir, 'renderer.log');
+
+  // 启动时简单轮转：超过 5MB 则重命名
+  if (existsSync(logPath)) {
+    try {
+      if (statSync(logPath).size > 5 * 1024 * 1024) {
+        const bak = logPath.replace('.log', '.old.log');
+        if (existsSync(bak)) renameSync(bak, logPath.replace('.log', '.2.log'));
+        renameSync(logPath, bak);
+      }
+    } catch { /* 轮转失败不阻塞启动 */ }
+  }
+
+  let logStream: WriteStream | null = null;
+  try {
+    logStream = createWriteStream(logPath, { flags: 'a' });
+  } catch { /* 日志文件不可用时静默降级 */ }
+
+  if (logStream) {
+    win.webContents.on('console-message', (_event, _level, message) => {
+      try {
+        logStream!.write(message + '\n');
+      } catch { /* 写失败不阻塞渲染 */ }
+    });
+  }
 
   // 开发模式加载 dev server，生产模式加载文件
   if (process.env.ELECTRON_RENDERER_URL) {

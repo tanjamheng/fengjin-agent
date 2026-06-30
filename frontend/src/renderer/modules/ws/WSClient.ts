@@ -1,5 +1,6 @@
 import { CONFIG } from "../../config";
 import { MessageParser } from "./MessageParser";
+import { Logger } from "../../utils/logger";
 import type {
   ClientMessage,
   ConnectionStatus,
@@ -8,6 +9,8 @@ import type {
   ChatMessage,
   ServerCurrentConfig,
 } from "../../types/protocol";
+
+const log = new Logger("WSClient");
 
 /**
  * WSClient — WebSocket 连接管理 + 心跳 + 消息收发
@@ -76,6 +79,7 @@ export class WSClient {
     this._retryCount = 0;
     this._setStatus("connecting");
     this._parser.resetErrors();
+    log.info("Connecting to {}", url);
 
     try {
       this._ws = new WebSocket(url);
@@ -92,6 +96,7 @@ export class WSClient {
   }
 
   disconnect(): void {
+    log.info("Disconnecting");
     this._stopHeartbeat();
     this._clearReplyTimer();
     this._cancelled = false;
@@ -184,13 +189,16 @@ export class WSClient {
   private _send(msg: ClientMessage): boolean {
     if (this._ws?.readyState !== WebSocket.OPEN) {
       // 连接已断开时立即反馈，不让用户等 60s 超时
+      log.warn("Send failed: not connected (type={})", msg.type);
       this._clearReplyTimer();
       this.onError?.("WebSocket 连接已断开，请重连");
       return false;
     }
     try {
       this._ws.send(JSON.stringify(msg));
+      log.debug("→ {}", msg.type);
     } catch {
+      log.warn("Send failed: socket error (type={})", msg.type);
       this._clearReplyTimer();
       this.onError?.("消息发送失败，请重试");
       return false;
@@ -209,6 +217,7 @@ export class WSClient {
 
   private _onOpen(): void {
     if (!this._ws) return; // 防止 disconnect() 后的异步 onopen 竞态
+    log.info("WebSocket open, heartbeat started");
     this._startHeartbeat();
   }
 
@@ -245,6 +254,7 @@ export class WSClient {
     if (!wasConnected && this._retryCount < this._maxRetries) {
       // 初始连接失败，自动重试（后端可能还在加载模型）
       this._retryCount++;
+      log.debug("Connection retry {}/{}", this._retryCount, this._maxRetries);
       if (this._retryTimer !== null) clearTimeout(this._retryTimer);
       this._retryTimer = setTimeout(() => {
         this._retryTimer = null;
@@ -255,12 +265,14 @@ export class WSClient {
 
     this._setStatus("disconnected");
     if (wasConnected) {
+      log.warn("Connection lost (was connected)");
       this.onError?.("WebSocket 连接已断开，请检查后端服务");
     }
   }
 
   private _onError(_event: Event): void {
     // onerror 之后通常会触发 onclose，由 onclose 统一处理
+    log.warn("WebSocket error (will be followed by onclose)");
   }
 
   // ---- 消息分发 ----
@@ -281,6 +293,7 @@ export class WSClient {
         this._sessionId = msg.session_id;
         this._connectedBefore = true;
         this._setStatus("connected");
+        log.info("Connected (session={})", msg.session_id || "(new)");
         this.onConnected?.(msg.session_id);
         break;
 
@@ -302,6 +315,7 @@ export class WSClient {
         this._cancelled = true; // 防止后续幽灵 stream/end
         this._replyActive = false;
         this._clearReplyTimer();
+        log.info("Blocked by safety (category={})", msg.category ?? "unknown");
         this.onBlocked?.(msg.message ?? "小伊卡提醒：暂无法处理该消息", msg.category);
         break;
 
@@ -349,6 +363,7 @@ export class WSClient {
         this._replyActive = false;
         this._cancelledEndPending = false; // 错误兜底：清除残留标记
         this._clearReplyTimer();
+        log.error("Server error: {}", msg.message ?? "unknown");
         this.onError?.(msg.message ?? "AI 服务异常，请稍后重试");
         break;
 
@@ -379,6 +394,7 @@ export class WSClient {
       }
       this._pongTimer = setTimeout(() => {
         // 10s 未收到 pong，判定断线
+        log.warn("Heartbeat timeout, disconnecting");
         this.disconnect();
       }, this._pongTimeout);
     }, this._pingInterval);
@@ -407,6 +423,7 @@ export class WSClient {
   private _startReplyTimer(): void {
     this._clearReplyTimer();
     this._replyTimer = setTimeout(() => {
+      log.warn("Reply timeout ({}s)", this._replyTimeout / 1000);
       this.sendCancel(); // 通知后端停止处理，避免残留 stream/end 幽灵消息
       this.onError?.("回复超时，请重试");
       this._replyTimer = null;

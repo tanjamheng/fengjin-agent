@@ -80,12 +80,13 @@ def setup_logger(config: Optional[LogConfig] = None) -> None:
     # 文件输出（详细格式，带轮转；分两个 handler 避免无 trace_id 时格式串 KeyError）
     # Handler 1：有 trace_id 的正常日志
     logger.add(
-        f"{config.log_dir}/agent_{config.log_level.lower()}.log",
+        f"{config.log_dir}/app.log",
         level=config.log_level,
         format="{time:YYYY-MM-DD HH:mm:ss.SSS} | "
                "{level: <8} | "
                "{extra[trace_id]} | "
-               "{name}:{function}:{line} | "
+               "{name: <20} | "
+               "{function}:{line} | "
                "{message}",
         rotation=config.rotation_size,
         retention=config.retention_days,
@@ -95,12 +96,13 @@ def setup_logger(config: Optional[LogConfig] = None) -> None:
     )
     # Handler 2：无 trace_id 的 WARNING+ 日志（初始化阶段的关键告警）
     logger.add(
-        f"{config.log_dir}/agent_{config.log_level.lower()}.log",
+        f"{config.log_dir}/app.log",
         level="WARNING",
         format="{time:YYYY-MM-DD HH:mm:ss.SSS} | "
                "{level: <8} | "
                "- | "
-               "{name}:{function}:{line} | "
+               "{name: <20} | "
+               "{function}:{line} | "
                "{message}",
         rotation=config.rotation_size,
         retention=config.retention_days,
