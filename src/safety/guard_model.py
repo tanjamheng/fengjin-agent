@@ -32,10 +32,13 @@ GUARD_TO_USER_CATEGORY: dict[str, tuple[str, str, Action]] = {
 
 
 class GuardModelConfig(BaseModel):
-    """P1 模型配置"""
+    """P1 模型配置
+
+    开关由环境变量 FENGJIN_GUARD_MODEL_ENABLED 控制（默认 true）。
+    本配置类不含 enabled 字段，避免与 env var 冲突。
+    """
     model_config = {"protected_namespaces": ()}
 
-    enabled: bool = False
     model_id: str = "LLM-Research/Llama-Guard-3-1B"
     source: str = "modelscope"  # modelscope / huggingface
     device: str = "auto"
@@ -57,10 +60,12 @@ class GuardModel:
 
         raw = _safety.get("guard_model", {})
         self.config = GuardModelConfig(**raw)
-        self.enabled = self.config.enabled
+
+        # P1 开关由环境变量 FENGJIN_GUARD_MODEL_ENABLED 唯一控制（默认 true）
+        self.enabled = os.getenv("FENGJIN_GUARD_MODEL_ENABLED", "false").lower() not in ("false", "0")
 
         if not self.enabled:
-            self.log.info("P1 Llama Guard 已禁用")
+            self.log.info("P1 Llama Guard 已禁用 (FENGJIN_GUARD_MODEL_ENABLED=false)")
             return
 
         # 从已缓存的 _safety dict 提取各配置段

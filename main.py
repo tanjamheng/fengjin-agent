@@ -64,13 +64,22 @@ SESSIONS_DIR = PROJECT_ROOT / "data" / "sessions"
 
 
 def ensure_models(console: Console) -> None:
-    """检查本地模型是否存在，缺失则通过 ModelScope 自动下载"""
+    """检查本地模型是否存在，缺失则通过 ModelScope 自动下载
+
+    FENGJIN_GUARD_MODEL_ENABLED=false 时跳过 Llama Guard 模型。
+    """
     from modelscope.hub.snapshot_download import snapshot_download
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
+    # P1 安全模型开关：环境变量优先，默认启用
+    guard_enabled = os.getenv("FENGJIN_GUARD_MODEL_ENABLED", "false").lower() not in ("false", "0")
+
     missing = []
     for local_name, ms_id in MODELS:
+        if local_name == "Llama-Guard-3-1B" and not guard_enabled:
+            console.print(f"[dim]模型 {local_name} 已禁用 (FENGJIN_GUARD_MODEL_ENABLED=false)，跳过[/dim]")
+            continue
         local_path = MODELS_DIR / local_name
         if not local_path.exists() or not any(local_path.iterdir()):
             missing.append((local_name, ms_id))

@@ -3,10 +3,13 @@
 支持 Windows / macOS / Linux。
 模型来源：ModelScope（国内下载速度快）。
 
+FENGJIN_GUARD_MODEL_ENABLED=false 时跳过 Llama Guard 模型。
+
 用法：
     python scripts/download_models.py
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -30,11 +33,17 @@ def main():
         print("  pip install modelscope")
         sys.exit(1)
 
+    # P1 安全模型开关
+    guard_enabled = os.getenv("FENGJIN_GUARD_MODEL_ENABLED", "false").lower() not in ("false", "0")
+
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"模型目录: {MODELS_DIR}\n")
 
     for name, ms_id in MODELS:
+        if name == "Llama-Guard-3-1B" and not guard_enabled:
+            print(f"[跳过] {name} (FENGJIN_GUARD_MODEL_ENABLED=false)")
+            continue
         local_path = MODELS_DIR / name
         if local_path.exists() and any(local_path.iterdir()):
             print(f"[跳过] {name} 已存在")
