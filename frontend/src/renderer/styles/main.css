@@ -362,6 +362,46 @@ html, body {
   padding: 8px 0;
 }
 
+/* ===== 右键菜单 ===== */
+.context-menu {
+  position: fixed;
+  z-index: 9999;
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 0.12s ease-out, transform 0.12s ease-out;
+  pointer-events: none;
+  background: #FFFFFF;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  padding: 4px;
+  min-width: 72px;
+}
+
+.context-menu--visible {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+.context-menu__btn {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-ai);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.context-menu__btn:hover {
+  background: var(--color-bubble-ai);
+}
+
 /* 快捷回复 */
 .chat-quick-replies {
   display: flex;

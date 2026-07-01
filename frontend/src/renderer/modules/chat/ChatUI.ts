@@ -1,6 +1,7 @@
 import { CONFIG } from "../../config";
 import { MessageRenderer } from "./MessageRenderer";
 import { InputController } from "./InputController";
+import { show as showContextMenu } from "./ContextMenu";
 import type { ChatMessage, ConnectionStatus } from "../../types/protocol";
 
 /**
@@ -38,6 +39,15 @@ export class ChatUI {
       const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       this._autoScroll = distFromBottom <= CONFIG.chat.autoScrollThreshold;
       this._toggleScrollHint(!this._autoScroll);
+    });
+
+    // 右键菜单：事件委托，捕获 .chat-message--ai / .chat-message--user 的文字
+    messagesEl.addEventListener("contextmenu", (e) => {
+      const target = e.target as HTMLElement;
+      const bubble = target.closest<HTMLElement>(".chat-message--ai, .chat-message--user");
+      if (!bubble || !bubble.textContent?.trim()) return;
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, bubble.textContent.trim());
     });
 
     // 输入区
