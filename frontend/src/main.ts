@@ -32,6 +32,7 @@ function createWindow(): void {
     resizable: true,
     frame: false, // 自定义标题栏
     titleBarStyle: "hidden", // 跨平台兼容
+    icon: join(app.getAppPath(), "src/renderer/assets/avatar-fengjin.png"),
     webPreferences: {
       // 安全策略固定值，不可修改
       contextIsolation: true,
