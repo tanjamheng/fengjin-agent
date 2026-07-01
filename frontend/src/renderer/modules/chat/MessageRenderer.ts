@@ -18,6 +18,11 @@ export class MessageRenderer {
   private _lastMessageTime: number = 0; // 上一条消息时间戳
   private _avatars: AvatarConfig;
 
+  // loading 动画缓冲状态机
+  private _loadingDone: boolean = true;       // 渐入动画是否已播完
+  private _streamBuffer: string = "";          // 动画期间的 token 缓冲区
+  private _loadingTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(container: HTMLElement, avatars: AvatarConfig) {
     this._container = container;
     this._avatars = avatars;
@@ -36,33 +41,79 @@ export class MessageRenderer {
     this._updateLastTime();
   }
 
-  /** 流式追加 AI 文字分片（无则创建新气泡） */
+  /** 立即显示 AI loading 气泡（用户发送后、首 token 到达前） */
+  showAILoading(): void {
+    this._finalizeAIBubble();
+    const wrapper = this._createWrapper("ai");
+    wrapper.classList.add("chat-message-wrapper--delayed"); // 等用户气泡 0.1s 渐入完成后再出现
+    this._aiBubble = document.createElement("div");
+    this._aiBubble.className = "chat-message--ai chat-message--ai-loading";
+    this._aiBubble.textContent = "● ● ●";
+    wrapper.appendChild(this._aiBubble);
+    this._container.appendChild(wrapper);
+    this._updateLastTime();
+
+    // 启动缓冲状态机：0.2s 内 token 静默缓冲，动画播完再决定展示文字还是黑点
+    this._loadingDone = false;
+    this._streamBuffer = "";
+    this._loadingTimer = setTimeout(() => {
+      this._loadingTimer = null;
+      this._loadingDone = true;
+      // 动画播完：如果期间有 token 到达，立刻显示缓冲文字
+      if (this._streamBuffer && this._aiBubble) {
+        const bubble = this._aiBubble;
+        bubble.classList.remove("chat-message--ai-loading");
+        bubble.textContent = this._streamBuffer;
+        // 清除延迟动画类，确保立即可见
+        const w = bubble.parentElement;
+        if (w) w.classList.remove("chat-message-wrapper--delayed");
+      }
+    }, 200);
+  }
+
+  /** 流式追加 AI 文字分片 */
   appendAIStreamChunk(text: string): void {
     if (!this._aiBubble) {
-      const wrapper = this._createWrapper("ai");
-      this._aiBubble = document.createElement("div");
-      this._aiBubble.className = "chat-message--ai";
-      wrapper.appendChild(this._aiBubble);
-      this._container.appendChild(wrapper);
-      this._updateLastTime();
+      // 首 chunk 到达但 loading 未创建（竞态兜底）
+      this.showAILoading();
     }
-    this._aiBubble.textContent += text;
+
+    // 动画未播完 → 静默缓冲 token，不修改 DOM
+    if (!this._loadingDone) {
+      this._streamBuffer += text;
+      return;
+    }
+
+    // 动画已播完 → 正常流式显示
+    const bubble = this._aiBubble!;
+    if (bubble.classList.contains("chat-message--ai-loading")) {
+      bubble.classList.remove("chat-message--ai-loading");
+      // 清除延迟渐入类（timer 中可能已清，此处防御）
+      const wrapper = bubble.parentElement;
+      if (wrapper) wrapper.classList.remove("chat-message-wrapper--delayed");
+      bubble.textContent = "";
+    }
+    bubble.textContent += text;
   }
 
   /** 固化流式 AI 消息 */
   finalizeAIMessage(fullText: string): void {
+    this._cancelLoadingTimer();
     if (this._aiBubble) {
-      // fullText 为空时回退到已拼接的流式内容
-      const text = fullText || this._aiBubble.textContent || "";
+      const isLoading = this._aiBubble.classList.contains("chat-message--ai-loading");
+      // loading 气泡（仅含黑点/缓冲，无最终文本）视为无内容，直接移除
+      const text = fullText || (isLoading ? "" : this._aiBubble.textContent || "");
       if (!text) {
-        // 没有任何文本内容，移除幽灵气泡
         const wrapper = this._aiBubble.parentElement;
         if (wrapper) wrapper.remove();
         this._aiBubble = null;
+        this._loadingDone = true;
         return;
       }
+      this._aiBubble.classList.remove("chat-message--ai-loading");
       this._aiBubble.textContent = text;
       this._aiBubble = null;
+      this._loadingDone = true;
     }
   }
 
@@ -107,7 +158,10 @@ export class MessageRenderer {
 
   /** 清空所有消息 */
   clear(): void {
+    this._cancelLoadingTimer();
     this._aiBubble = null;
+    this._loadingDone = true;
+    this._streamBuffer = "";
     this._lastMessageTime = 0;
     this._container.innerHTML = "";
   }
@@ -121,10 +175,20 @@ export class MessageRenderer {
 
   private _finalizeAIBubble(): void {
     // 若流式气泡未收到 end 包但新消息到来，移除 DOM 元素避免"幽灵气泡"
+    this._cancelLoadingTimer();
+    this._loadingDone = true;
+    this._streamBuffer = "";
     if (this._aiBubble) {
       const wrapper = this._aiBubble.parentElement;
       if (wrapper) wrapper.remove();
       this._aiBubble = null;
+    }
+  }
+
+  private _cancelLoadingTimer(): void {
+    if (this._loadingTimer !== null) {
+      clearTimeout(this._loadingTimer);
+      this._loadingTimer = null;
     }
   }
 

@@ -227,9 +227,27 @@ html, body {
   position: relative; /* 滚动提示浮动定位锚点 */
 }
 
+/* 消息渐入动画（0.1s 快速淡入 + 微上浮） */
+@keyframes messageFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* AI loading ● ● ● 呼吸 */
+@keyframes loadingPulse {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 1; }
+}
+
 .chat-message-wrapper {
   display: flex;
   margin-bottom: 14px;
+  animation: messageFadeIn 0.1s ease-out;
+}
+
+/* AI 气泡延迟渐入：等用户气泡 0.1s 完成后才出现 */
+.chat-message-wrapper--delayed {
+  animation: messageFadeIn 0.1s ease-out 0.1s both;
 }
 
 .chat-message-wrapper--user {
@@ -277,6 +295,14 @@ html, body {
   font-size: 14px;
   line-height: 1.6;
   word-break: break-word;
+}
+
+/* AI loading 气泡：黑点呼吸，碰撞箱与中文字 14px/1.6 对齐 */
+.chat-message--ai-loading {
+  animation: loadingPulse 0.8s ease-in-out infinite;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 10px 16px;
 }
 
 /* 用户消息气泡 */

@@ -219,6 +219,7 @@ chat.onSend = (text) => {
   if (appState.isReplying || appState.wsStatus !== "connected") return;
   chat.appendUserMessage(text);
   chat.setReplyMode(); // 锁定输入 + 显示停止按钮
+  chat.showAILoading(); // 立即显示 AI ··· loading 气泡
   appState.isReplying = true;
   sidebar.setDisabled(true);
   ws.sendUserMessage(text);

@@ -136,6 +136,13 @@ export class ChatUI {
     this._input.showStopButton();
   }
 
+  /** 立即显示 AI loading 气泡（不等后端 thinking 报文） */
+  showAILoading(): void {
+    if (this._renderer.isStreaming) return;
+    this._renderer.showAILoading();
+    this._scrollIfAuto();
+  }
+
   /** AI 回复结束（含中断）：解锁输入 + 恢复发送按钮 */
   endReplyMode(): void {
     // 如果有未固化的流式气泡，丢弃
