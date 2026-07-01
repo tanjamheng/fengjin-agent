@@ -239,7 +239,7 @@ html, body {
 .chat-message-wrapper--ai,
 .chat-message-wrapper--assistant {
   justify-content: flex-start;
-  align-items: flex-end;
+  align-items: flex-start;
 }
 
 /* ===== 对话头像 ===== */

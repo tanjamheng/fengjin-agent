@@ -83,6 +83,8 @@ class DenseIndex(IndexStrategy):
                     "hnsw:search_ef": 20,
                 },
             )
+            # 预热：触发 ChromaDB HNSW 索引加载，避免首次检索 ~500ms 冷启动
+            self._collection.count()
         except ImportError:
             raise ImportError("请安装 chromadb: pip install chromadb")
 

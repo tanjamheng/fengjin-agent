@@ -82,6 +82,13 @@ class MemoryRetriever:
 
     def _search_db(self, user_input: str) -> str:
         """从 ChromaDB 检索相关记忆"""
+        # 空 collection 跳过：避免无意义的嵌入计算 + 向量搜索
+        if self.storage.count() == 0:
+            return ""
+        # 极短输入跳过：单字或空输入不太可能匹配到有意义的记忆
+        if len(user_input.strip()) < 2:
+            return ""
+
         top_k = self.config.retrieval.top_k
 
         results = self.storage.query(

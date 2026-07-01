@@ -39,6 +39,7 @@ async def stream_llm(
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": True,
+        "extra_body": {"thinking": {"type": "disabled"}},
     }
     if tools:
         params["tools"] = tools

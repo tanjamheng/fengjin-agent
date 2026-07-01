@@ -50,6 +50,8 @@ class MemoryStorage:
             config.chroma.collection_name,
             self._embedding_fn,
         )
+        # 预热：触发 ChromaDB HNSW 索引加载，避免首次检索 ~500ms 冷启动
+        self.collection.count()
 
     def _get_or_create_collection(self, name: str, ef):
         """创建或获取集合，自动处理 embedding function 冲突（如模型升级导致的签名变化）"""
