@@ -450,11 +450,7 @@ class Agent:
             full_text = re.sub(r"<!--mood:.*?-->", "", full_text).rstrip() or full_text
 
         # 7. 落盘
-        if full_text:
-            self.session_mgr.append_message("assistant", full_text)
-            self.session_mgr.flush()
-            logger.info("会话已落盘 (回复 {} chars)", len(full_text))
-        elif controller.cancel_requested:
+        if controller.cancel_requested:
             # 保留已完成轮次的 all_text + 当前轮 partial full_text（"停止保留已收文字"）
             combined = all_text + full_text
             if combined:
@@ -466,6 +462,10 @@ class Agent:
             else:
                 rollback_last_user(self.session_mgr, message_content)
                 logger.info("用户取消: 无内容，用户消息已回滚")
+        elif full_text:
+            self.session_mgr.append_message("assistant", full_text)
+            self.session_mgr.flush()
+            logger.info("会话已落盘 (回复 {} chars)", len(full_text))
         else:
             self.session_mgr.append_message("assistant", "")
             self.session_mgr.flush()
