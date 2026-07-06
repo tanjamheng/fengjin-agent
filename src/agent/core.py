@@ -416,9 +416,9 @@ class Agent:
                         combined = self.mood_engine.extract_and_update(combined)
                     except Exception as e:
                         logger.warning("情绪标记提取失败（中断路径）: {}", e)
-                    # 兜底剥离：防非标标记静默泄漏
-                    import re
-                    combined = re.sub(r"<!--mood:.*?-->", "", combined).rstrip() or combined
+                # 兜底剥离：防非标标记泄漏
+                import re
+                combined = re.sub(r"<!--mood:.*?-->", "", combined).rstrip() or combined
                 logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
@@ -438,13 +438,14 @@ class Agent:
         finally:
             self._current_controller = None
 
-        # 6. 情绪标记提取与更新（异常不影响落盘，保留原始文本）
+        # 6. 情绪标记提取与更新
         if self.mood_engine and full_text:
             try:
                 full_text = self.mood_engine.extract_and_update(full_text)
             except Exception:
                 logger.error("情绪标记提取失败，保留原始文本")
-            # 兜底剥离：防 _MOOD_TAG_RE 不匹配或静默放行的标记泄漏到 session
+        # 兜底剥离：无论 mood_engine 是否可用，确保标记不泄漏到 session
+        if full_text:
             import re
             full_text = re.sub(r"<!--mood:.*?-->", "", full_text).rstrip() or full_text
 
@@ -454,8 +455,17 @@ class Agent:
             self.session_mgr.flush()
             logger.info("会话已落盘 (回复 {} chars)", len(full_text))
         elif controller.cancel_requested:
-            rollback_last_user(self.session_mgr, message_content)
-            logger.info("用户取消: 用户消息已回滚, 不保存")
+            # 保留已完成轮次的 all_text + 当前轮 partial full_text（"停止保留已收文字"）
+            combined = all_text + full_text
+            if combined:
+                import re
+                combined = re.sub(r"<!--mood:.*?-->", "", combined).rstrip() or combined
+                self.session_mgr.append_message("assistant", combined)
+                self.session_mgr.flush()
+                logger.info("用户取消: 保留已生成内容 ({} chars)", len(combined))
+            else:
+                rollback_last_user(self.session_mgr, message_content)
+                logger.info("用户取消: 无内容，用户消息已回滚")
         else:
             self.session_mgr.append_message("assistant", "")
             self.session_mgr.flush()
