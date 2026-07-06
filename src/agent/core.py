@@ -7,6 +7,7 @@ CLI 和 WS 只是 token 的消费方式不同（print vs send_json）。
 import asyncio
 import json
 import time
+import uuid
 from typing import Optional, Callable
 
 from openai import AsyncOpenAI
@@ -35,6 +36,19 @@ from ..utils.logger import get_logger, generate_trace_id
 # ── 常量 ──────────────────────────────────────────────────
 
 MAX_INPUT_LENGTH = 10000  # 超长输入拒绝（对齐 CLAUDE.md 技术约束）
+
+# 兜底剥离正则（引擎 extract_and_update 之后的第二道防线）
+import re
+_MOOD_TAG_RE_STRIP = re.compile(r"<!--mood:.*?-->")
+_BOND_TAG_RE_STRIP = re.compile(r"<!--bond:.*?-->")
+
+
+def _strip_all_tags(text: str) -> str:
+    """移除 mood + bond 标记；剥离后为空时保留原文（防 LLM 只输出标记）"""
+    stripped = _MOOD_TAG_RE_STRIP.sub("", text)
+    stripped = _BOND_TAG_RE_STRIP.sub("", stripped)
+    stripped = stripped.rstrip()
+    return stripped if stripped else text
 
 
 # ── 异常 ──────────────────────────────────────────────────
@@ -152,6 +166,7 @@ class Agent:
 
         Raises:
             BlockedError: 安全拦截（消息已入历史）
+            ValueError: 输入超过 {} 字符限制
         """
         if not user_input or not user_input.strip():
             return ""
@@ -398,7 +413,7 @@ class Agent:
 
                     tool_loop_messages.append({
                         "role": "tool",
-                        "tool_call_id": tc["id"],
+                        "tool_call_id": tc["id"] or f"tc_{uuid.uuid4().hex[:8]}",
                         "content": result_text,
                     })
                 t_tools_total = (time.monotonic() - t_tools_start) * 1000
@@ -426,12 +441,7 @@ class Agent:
                     except Exception as e:
                         logger.warning("羁绊标记提取失败（中断路径）: {}", e)
                 # 兜底剥离：防非标标记泄漏
-                import re
-                stripped = combined
-                stripped = re.sub(r"<!--mood:.*?-->", "", stripped)
-                stripped = re.sub(r"<!--bond:.*?-->", "", stripped)
-                stripped = stripped.rstrip()
-                combined = stripped if stripped else combined
+                combined = _strip_all_tags(combined)
                 logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
@@ -465,24 +475,14 @@ class Agent:
                 logger.error("羁绊标记提取失败，保留原始文本")
         # 兜底剥离：无论引擎是否可用，确保标记不泄漏到 session
         if full_text:
-            import re
-            stripped = full_text
-            stripped = re.sub(r"<!--mood:.*?-->", "", stripped)
-            stripped = re.sub(r"<!--bond:.*?-->", "", stripped)
-            stripped = stripped.rstrip()
-            full_text = stripped if stripped else full_text
+            full_text = _strip_all_tags(full_text)
 
         # 7. 落盘
         if controller.cancel_requested:
             # 保留已完成轮次的 all_text + 当前轮 partial full_text（"停止保留已收文字"）
             combined = all_text + full_text
             if combined:
-                import re
-                stripped = combined
-                stripped = re.sub(r"<!--mood:.*?-->", "", stripped)
-                stripped = re.sub(r"<!--bond:.*?-->", "", stripped)
-                stripped = stripped.rstrip()
-                combined = stripped if stripped else combined
+                combined = _strip_all_tags(combined)
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
                 logger.info("用户取消: 保留已生成内容 ({} chars)", len(combined))
@@ -643,7 +643,6 @@ def _accumulate_tool_calls(
 
 def _serialize_tool_calls(tool_calls_data: dict[int, dict]) -> list[dict]:
     """将流式累积的 tool_calls_data 转为 OpenAI API 格式"""
-    import uuid
     result = []
     for idx in sorted(tool_calls_data.keys()):
         data = tool_calls_data[idx]
