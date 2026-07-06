@@ -454,6 +454,7 @@ def main():
                     cmd, args, console, session_mgr,
                     agent, memory_manager, rag_service, safety_engine,
                     max_turns=context_settings.context.sliding_window.max_turns,
+                    mood_engine=mood_engine,
                 )
                 if not should_continue:
                     break

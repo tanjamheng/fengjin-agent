@@ -95,7 +95,10 @@ class MoodSettings:
             import yaml
             with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-        except Exception:
+        except Exception as e:
+            # 类方法无 self.log，用模块级 logger（红线8：静默失败零容忍）
+            from ..utils.logger import get_logger
+            get_logger("mood").warning("mood.yaml 加载失败，回退默认值: {}", e)
             return cls()
         if not data:
             return cls()
@@ -170,6 +173,7 @@ class MoodEngine:
         """加载状态（先衰减，再返回）。首次调用或文件缺失时使用默认值。"""
         if self._cleaned:
             self.log.warning("load() 在 cleanup() 后调用，将重新加载")
+            self._cleaned = False  # 红线18：支持 cleanup→reinit→cleanup 序列
         self._state = self._read_file() or self._default_state()
         self._decay()
         return self._state
@@ -250,6 +254,7 @@ class MoodEngine:
 
         返回剥离标记后的纯文本（用于存 session 和发前端）。
         LLM 忘记输出标记时跳过更新，静默 log。
+        剥离后文本为空时返回原文（防 LLM 只输出标记的极端情况）。
         """
         match = _MOOD_TAG_RE.search(full_text)
         if not match:
@@ -268,6 +273,9 @@ class MoodEngine:
 
         # 剥离标记——用户永远看不到，不进入会话历史
         clean = _MOOD_TAG_RE.sub("", full_text).rstrip()
+        if not clean:
+            self.log.warning("剥离情绪标记后文本为空，保留原文")
+            return full_text
         return clean
 
     def inject(self, user_input: str) -> str:
@@ -275,6 +283,7 @@ class MoodEngine:
 
         格式: [P+0.71 A+0.30 D+0.54 平静温暖]\n[提醒] ...\n\n用户输入
         """
+        self.load()  # 确保状态最新（含衰减），首轮也能读到持久化状态
         parts = [self.describe()]
 
         # 阈值提醒拼在情绪行之后
@@ -367,15 +376,21 @@ class MoodEngine:
             return None
         try:
             data = json.loads(self._state_path.read_text(encoding="utf-8"))
+            # 结构性校验：确保所有必需键存在（防手动编辑/崩溃写入导致的 KeyError）
+            required_keys = {"pleasure", "arousal", "dominance", "updated_at_ts"}
+            if not isinstance(data, dict) or not required_keys.issubset(data.keys()):
+                self.log.warning("mood_state.json 结构不完整（缺键），回退默认值")
+                return None
             # 恢复连续低落计数（从状态中推断，保守清零）
             self._consecutive_low = 0
-            return data if isinstance(data, dict) else None
+            return data
         except Exception as e:
             self.log.warning("mood_state.json 读取失败，回退默认: {}", e)
             return None
 
     def _write_file(self, state: dict) -> None:
         """原子写入：.tmp → os.replace，防崩溃损坏。"""
+        tmp_path = None
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
@@ -385,5 +400,12 @@ class MoodEngine:
                 json.dump(state, tf, ensure_ascii=False, indent=2)
                 tmp_path = tf.name
             os.replace(tmp_path, str(self._state_path))
-        except OSError as e:
+        except Exception as e:
             self.log.error("mood_state.json 写入失败: {}", e)
+        finally:
+            # 清理残留临时文件（os.replace 成功后 tmp_path 已不存在，unlink 安全失败）
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass

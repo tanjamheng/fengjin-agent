@@ -74,18 +74,10 @@ mood:
     # 高唤醒
     high_arousal_threshold: 0.7       # A > 此值 → 追加"不要太兴奋"提醒
 
-  # ── 注入格式 ──────────────────────────────────────────────
-  injection:
-    position: "user_message_start"    # 注入到 user message 开头
-                                      # 可选: "user_message_end"
-    format: "numeric_label"           # 数字 + 一句话标签
-    template: "[P{p:+.2f} A{a:.2f} D{d:+.2f} {label}]"
-                                      # 示例: [P+0.62 A+0.26 D+0.52 平静]
-
-  # ── 持久化 ─────────────────────────────────────────────────
-  persistence:
-    path: "data/mood_state.json"      # 相对于项目根目录
-    atomic_write: true                # 临时文件 + os.replace，防崩溃损坏
+  # ── 注入格式（由代码硬编码，此处为文档参考）────────────────
+  # 注入位置: user message 开头
+  # 注入格式: [P+0.62 A+0.26 D+0.52 平静] —— 数字 + 一句话标签
+  # 持久化路径: data/mood_state.json（项目根相对路径），原子写入（.tmp → os.replace）
 
   # ── 标签映射（PAD → 风堇风格的情绪标签）─────────────────────
   # 标签不是给 LLM 做数学用的，是给它做文学用的——在"理解数字"

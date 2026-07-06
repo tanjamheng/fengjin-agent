@@ -406,6 +406,12 @@ class Agent:
             logger.info("流式输出中断 (客户端断开), 已生成 {} chars", len(all_text + full_text))
             combined = all_text + full_text
             if combined:
+                # 剥离情绪标记再落盘（与正常路径一致）
+                if self.mood_engine:
+                    try:
+                        combined = self.mood_engine.extract_and_update(combined)
+                    except Exception:
+                        pass  # 提取失败不阻塞中断保存
                 logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
@@ -425,9 +431,13 @@ class Agent:
         finally:
             self._current_controller = None
 
-        # 6. 情绪标记提取与更新
+        # 6. 情绪标记提取与更新（异常不影响落盘，保留原始文本）
         if self.mood_engine and full_text:
-            full_text = self.mood_engine.extract_and_update(full_text)
+            try:
+                full_text = self.mood_engine.extract_and_update(full_text)
+            except Exception:
+                logger.error("情绪标记提取失败，保留原始文本")
+                # full_text 不变，继续落盘
 
         # 7. 落盘
         if full_text:
