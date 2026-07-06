@@ -126,12 +126,13 @@ def _print_recent_messages(console: Console, session_mgr: SessionManager, n: int
     console.print("")
 
 
-def _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine=None):
+def _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine=None, bond_tracker=None):
     """逐组件安全清理：每个组件独立 try/except，单点失败不阻塞其余清理"""
     for name, cleanup_fn in [
         ("Agent", lambda: agent.cleanup()),
         ("Memory", lambda: memory_manager.cleanup() if memory_manager else None),
         ("Mood", lambda: mood_engine.cleanup() if mood_engine else None),
+        ("Bond", lambda: bond_tracker.cleanup() if bond_tracker else None),
         ("RAG", lambda: rag_service.cleanup() if rag_service else None),
         ("Safety", lambda: safety_engine.cleanup() if safety_engine else None),
     ]:
@@ -146,12 +147,12 @@ def _handle_command(cmd: str, args: str, console: Console,
                     session_mgr: SessionManager,
                     agent: Agent, memory_manager: MemoryManager,
                     rag_service, safety_engine,
-                    max_turns: int, mood_engine=None) -> bool:
+                    max_turns: int, mood_engine=None, bond_tracker=None) -> bool:
     """处理会话命令。返回 True 表示继续循环，False 表示退出。"""
 
     if cmd == "/quit":
         session_mgr.flush()
-        _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine)
+        _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine, bond_tracker)
         from loguru import logger
         logger.complete()
         console.print("[yellow]再见！[/yellow]")
@@ -278,6 +279,13 @@ def _handle_command(cmd: str, args: str, console: Console,
             console.print("[dim]当前会话已清空，请用 /new 创建新会话[/dim]")
         return True
 
+    elif cmd == "/bond":
+        if not bond_tracker:
+            console.print("[yellow]羁绊系统未启用[/yellow]")
+            return True
+        console.print(bond_tracker.get_cli_display())
+        return True
+
     # 未知命令
     console.print(f"[red]未知命令: {cmd}[/red]")
     return True
@@ -336,6 +344,17 @@ def main():
         get_logger("main").warning("情绪引擎加载失败，情绪功能将不可用: {}", e)
         console.print("[yellow]⚠ 情绪引擎暂不可用，对话将无情绪追踪[/yellow]")
 
+    # 初始化羁绊状态机（对齐情绪引擎，无上游依赖，无 GPU，总是成功）
+    bond_tracker = None
+    try:
+        from src.bond.tracker import BondSettings, BondTracker
+        bond_config = BondSettings.load(str(PROJECT_ROOT / "config" / "bond.yaml"))
+        bond_tracker = BondTracker(bond_config, data_dir=PROJECT_ROOT / "data")
+        console.print("[dim]羁绊引擎已加载[/dim]")
+    except Exception as e:
+        get_logger("main").warning("羁绊引擎加载失败，羁绊功能将不可用: {}", e)
+        console.print("[yellow]⚠ 羁绊引擎暂不可用，对话将无羁绊追踪[/yellow]")
+
     # 初始化安全护栏（P0 规则引擎 + P1 Llama Guard）—— 必须在 Agent 之前
     try:
         safety_engine = SafetyManager(
@@ -363,11 +382,12 @@ def main():
             context_manager=context_manager,
             memory_manager=memory_manager,
             mood_engine=mood_engine,
+            bond_tracker=bond_tracker,
         )
     except Exception as e:
         console.print(f"[red]Agent 初始化失败（环境变量缺失或配置错误）: {e}[/red]")
         get_logger("main").opt(exception=True).error("Agent 初始化失败")
-        # 清理已初始化的上游组件（memory_manager + mood_engine + safety_engine）
+        # 清理已初始化的上游组件（memory_manager + mood_engine + bond_tracker + safety_engine）
         if memory_manager:
             try:
                 memory_manager.cleanup()
@@ -378,6 +398,11 @@ def main():
                 mood_engine.cleanup()
             except Exception as cleanup_ex:
                 get_logger("main").warning("MoodEngine 清理异常: {}", cleanup_ex)
+        if bond_tracker:
+            try:
+                bond_tracker.cleanup()
+            except Exception as cleanup_ex:
+                get_logger("main").warning("BondTracker 清理异常: {}", cleanup_ex)
         try:
             safety_engine.cleanup()
         except Exception as cleanup_ex:
@@ -430,7 +455,8 @@ def main():
         "输入 [bold white]/stats[/bold white] 查看知识库状态\n"
         "输入 [bold cyan]/tools[/bold cyan] 查看可用工具\n"
         "输入 [bold cyan]/skills[/bold cyan] 查看已装配技能\n"
-        "输入 [bold cyan]/mcp[/bold cyan] 查看 MCP 服务器",
+        "输入 [bold cyan]/mcp[/bold cyan] 查看 MCP 服务器\n"
+        "输入 [bold magenta]/bond[/bold magenta] 查看羁绊状态",
         title="[Agent 启动]"
     ))
 
@@ -442,7 +468,7 @@ def main():
         except (EOFError, KeyboardInterrupt):
             console.print("\n[yellow]再见！[/yellow]")
             session_mgr.flush()
-            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine)
+            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine, bond_tracker)
             from loguru import logger
             logger.complete()
             break
@@ -460,6 +486,7 @@ def main():
                     agent, memory_manager, rag_service, safety_engine,
                     max_turns=context_settings.context.sliding_window.max_turns,
                     mood_engine=mood_engine,
+                    bond_tracker=bond_tracker,
                 )
                 if not should_continue:
                     break
@@ -609,7 +636,7 @@ def main():
             # Ctrl+C — stream_reply 内部已通过 CancelledError 完成回滚
             console.print()
             session_mgr.flush()
-            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine)
+            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine, bond_tracker)
             from loguru import logger
             logger.complete()
             console.print("\n[yellow]再见！[/yellow]")

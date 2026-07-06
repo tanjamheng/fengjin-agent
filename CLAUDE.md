@@ -243,8 +243,9 @@ AI风堇_治愈晨昏/
 │   │   └── config.py                # MemorySettings
 │   │
 │   ├── mood/                        # 情绪状态机
+│   │   └── engine.py                # MoodEngine — PAD+EMA+衰减+注入+持久化 (~290行)
 │   ├── bond/                        # 羁绊状态机
-│   │   └── engine.py                # MoodEngine — PAD+EMA+衰减+注入+持久化 (~120行)
+│   │   └── tracker.py               # BondTracker — 4D+change clamp+接近度衰减+指数衰减+JSON持久化 (~310行)
 │   │
 │   ├── safety/                      # 安全护栏
 │   │   ├── __init__.py              # SafetyManager — check(text) → SafetyResult
@@ -394,9 +395,9 @@ AI风堇_治愈晨昏/
 
 ## 清理链
 
-启动：Mood → Memory → Context → Agent → RAG → MCP → Safety → Session
+启动：Mood → Bond → Memory → Context → Agent → RAG → MCP → Safety → Session
 
-退出：Session.flush() → Agent.cleanup()（含 Skill+MCP+Tool）→ Memory.cleanup()（含 writer.stop()+storage）→ Mood.cleanup() → RAG.cleanup()（reranker→query_enhancer→retriever→indexer→splitter→loader）→ Safety.cleanup() → logger.complete()
+退出：Session.flush() → Agent.cleanup()（含 Skill+MCP+Tool）→ Memory.cleanup()（含 writer.stop()+storage）→ Mood.cleanup() → Bond.cleanup() → RAG.cleanup()（reranker→query_enhancer→retriever→indexer→splitter→loader）→ Safety.cleanup() → logger.complete()
 
 ---
 

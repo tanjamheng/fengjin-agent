@@ -73,6 +73,7 @@ class Agent:
         memory_manager=None,
         tool_registry: Optional[ToolRegistry] = None,
         mood_engine=None,
+        bond_tracker=None,
     ):
         self.config = config
         self.session_mgr = session_mgr
@@ -80,6 +81,7 @@ class Agent:
         self.context_manager = context_manager
         self.memory_manager = memory_manager
         self.mood_engine = mood_engine
+        self.bond_tracker = bond_tracker
 
         # AsyncOpenAI — 可注入（WS 从 app.state 共享）或自动创建（CLI）
         self.client = client or AsyncOpenAI(
@@ -214,6 +216,8 @@ class Agent:
             api_input = message_content
             if self.mood_engine:
                 api_input = self.mood_engine.inject(api_input)
+            if self.bond_tracker:
+                api_input = self.bond_tracker.inject(api_input)
             if self.context_manager:
                 api_input = self.context_manager.build_input(
                     api_input, trace_id=self.trace_id
@@ -416,9 +420,15 @@ class Agent:
                         combined = self.mood_engine.extract_and_update(combined)
                     except Exception as e:
                         logger.warning("情绪标记提取失败（中断路径）: {}", e)
+                if self.bond_tracker:
+                    try:
+                        combined = self.bond_tracker.extract_and_update(combined)
+                    except Exception as e:
+                        logger.warning("羁绊标记提取失败（中断路径）: {}", e)
                 # 兜底剥离：防非标标记泄漏
                 import re
                 combined = re.sub(r"<!--mood:.*?-->", "", combined).rstrip() or combined
+                combined = re.sub(r"<!--bond:.*?-->", "", combined).rstrip() or combined
                 logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
@@ -444,10 +454,17 @@ class Agent:
                 full_text = self.mood_engine.extract_and_update(full_text)
             except Exception:
                 logger.error("情绪标记提取失败，保留原始文本")
-        # 兜底剥离：无论 mood_engine 是否可用，确保标记不泄漏到 session
+        # 羁绊标记提取与更新（在情绪之后，各自独立提取）
+        if self.bond_tracker and full_text:
+            try:
+                full_text = self.bond_tracker.extract_and_update(full_text)
+            except Exception:
+                logger.error("羁绊标记提取失败，保留原始文本")
+        # 兜底剥离：无论引擎是否可用，确保标记不泄漏到 session
         if full_text:
             import re
             full_text = re.sub(r"<!--mood:.*?-->", "", full_text).rstrip() or full_text
+            full_text = re.sub(r"<!--bond:.*?-->", "", full_text).rstrip() or full_text
 
         # 7. 落盘
         if controller.cancel_requested:
@@ -456,6 +473,7 @@ class Agent:
             if combined:
                 import re
                 combined = re.sub(r"<!--mood:.*?-->", "", combined).rstrip() or combined
+                combined = re.sub(r"<!--bond:.*?-->", "", combined).rstrip() or combined
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
                 logger.info("用户取消: 保留已生成内容 ({} chars)", len(combined))

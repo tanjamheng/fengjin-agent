@@ -44,6 +44,7 @@ async def websocket_endpoint(websocket: WebSocket):
     )
     tool_registry = getattr(websocket.app.state, "tool_registry", None)
     mood_engine = getattr(websocket.app.state, "mood_engine", None)
+    bond_tracker = getattr(websocket.app.state, "bond_tracker", None)
 
     # Agent — CLI/WS 共用的对话入口（chat() 内部处理安全/记忆/上下文/LLM/Tool/落盘）
     agent = Agent(
@@ -55,6 +56,7 @@ async def websocket_endpoint(websocket: WebSocket):
         memory_manager=memory_mgr,
         tool_registry=tool_registry,
         mood_engine=mood_engine,
+        bond_tracker=bond_tracker,
     )
 
     # 不预先创建会话——等用户发送第一条消息时才创建

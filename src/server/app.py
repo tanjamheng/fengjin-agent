@@ -74,6 +74,19 @@ async def lifespan(app: FastAPI):
             log.warning("情绪引擎加载失败: {}", e)
             app.state.mood_engine = None
 
+        # 羁绊状态机（对齐情绪引擎，无上游依赖，无 GPU，总是成功）
+        try:
+            from ..bond.tracker import BondSettings, BondTracker
+            bond_config = BondSettings.load(
+                str(_project_root / "config" / "bond.yaml")
+            )
+            bond_tracker = BondTracker(bond_config, data_dir=_project_root / "data")
+            app.state.bond_tracker = bond_tracker
+            log.info("羁绊引擎已加载")
+        except Exception as e:
+            log.warning("羁绊引擎加载失败: {}", e)
+            app.state.bond_tracker = None
+
         # RAG 知识库 + 工具注册表（可选：知识库为空时仍可正常对话）
         try:
             from ..rag.rag_service import RAGService
@@ -112,7 +125,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # 关闭：释放资源（对称释放，清理顺序：MCP→RAG→Tool→Memory→Mood→Safety）
+    # 关闭：释放资源（对称释放，清理顺序：MCP→RAG→Tool→Memory→Mood→Bond→Safety）
     try:
         await app.state.client.close()
     except Exception as e:
@@ -139,6 +152,11 @@ async def lifespan(app: FastAPI):
             app.state.mood_engine.cleanup()
         except Exception as e:
             log.warning("MoodEngine 清理异常: {}", e)
+    if getattr(app.state, "bond_tracker", None):
+        try:
+            app.state.bond_tracker.cleanup()
+        except Exception as e:
+            log.warning("BondTracker 清理异常: {}", e)
     app.state.safety.cleanup()
     log.info("应用资源已释放")
     from loguru import logger
