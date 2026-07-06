@@ -367,12 +367,17 @@ def main():
     except Exception as e:
         console.print(f"[red]Agent 初始化失败（环境变量缺失或配置错误）: {e}[/red]")
         get_logger("main").opt(exception=True).error("Agent 初始化失败")
-        # 清理已初始化的上游组件（memory_manager + safety_engine）
+        # 清理已初始化的上游组件（memory_manager + mood_engine + safety_engine）
         if memory_manager:
             try:
                 memory_manager.cleanup()
             except Exception as cleanup_ex:
                 get_logger("main").warning("MemoryManager 清理异常: {}", cleanup_ex)
+        if mood_engine:
+            try:
+                mood_engine.cleanup()
+            except Exception as cleanup_ex:
+                get_logger("main").warning("MoodEngine 清理异常: {}", cleanup_ex)
         try:
             safety_engine.cleanup()
         except Exception as cleanup_ex:
