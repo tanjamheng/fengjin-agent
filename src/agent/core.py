@@ -214,10 +214,10 @@ class Agent:
             # 4. 情绪注入 + 记忆检索 + 上下文组装
             t_memory_start = time.monotonic()
             api_input = message_content
-            if self.mood_engine:
-                api_input = self.mood_engine.inject(api_input)
             if self.bond_tracker:
                 api_input = self.bond_tracker.inject(api_input)
+            if self.mood_engine:
+                api_input = self.mood_engine.inject(api_input)
             if self.context_manager:
                 api_input = self.context_manager.build_input(
                     api_input, trace_id=self.trace_id

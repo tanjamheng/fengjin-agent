@@ -203,7 +203,8 @@ class BondTracker:
         self._session_cumulative: dict[str, float] = {}
         self._consecutive_same: dict[str, int] = {}
         self._last_sign: dict[str, int] = {}
-        self._session_warned: set[str] = set()
+        self._warned_cumulative: set[str] = set()
+        self._warned_consecutive: set[str] = set()
         self._session_braked: set[str] = set()
 
         self.log = get_logger("bond")
@@ -284,8 +285,8 @@ class BondTracker:
 
             # 累计告警
             if (abs(self._session_cumulative[dim]) > s.session_cumulative_warn
-                    and dim not in self._session_warned):
-                self._session_warned.add(dim)
+                    and dim not in self._warned_cumulative):
+                self._warned_cumulative.add(dim)
                 self.log.warning("会话累计漂移告警: {} 累计={:+.3f}", dim, self._session_cumulative[dim])
 
             # 累计硬刹车：后续同向 delta 强制降为 ±0.01
@@ -303,6 +304,10 @@ class BondTracker:
                         self._session_braked.add(dim)
                         self.log.warning("会话累计硬刹车: {} 累计={:+.3f}，本轮强制降为{:+.2f}",
                                         dim, self._session_cumulative[dim], capped_delta)
+                    # 重算 change——累计刹车已修改 cur[dim]，后续连续同向需用实际 delta
+                    change = cur[dim] - old_vals[dim]
+                    if change == 0:
+                        continue
 
             # 连续同向追踪
             self._consecutive_same.setdefault(dim, 0)
@@ -316,8 +321,8 @@ class BondTracker:
 
             # 连续同向告警
             if (self._consecutive_same[dim] >= s.consecutive_same_warn
-                    and dim not in self._session_warned):
-                self._session_warned.add(dim)
+                    and dim not in self._warned_consecutive):
+                self._warned_consecutive.add(dim)
                 self.log.warning("连续同向告警: {} 连续 {} 轮", dim, self._consecutive_same[dim])
 
             # 连续同向硬刹车
@@ -411,7 +416,8 @@ class BondTracker:
             self._session_cumulative = {}
             self._consecutive_same = {}
             self._last_sign = {}
-            self._session_warned = set()
+            self._warned_cumulative = set()
+            self._warned_consecutive = set()
             self._session_braked = set()
             self._cleaned = True
 
@@ -503,8 +509,8 @@ class BondTracker:
                 mode="w", encoding="utf-8",
                 dir=str(self._state_path.parent), suffix=".tmp", delete=False,
             ) as tf:
+                tmp_path = tf.name  # 取在 dump 前——dump 失败时 finally 也能清理
                 json.dump(state, tf, ensure_ascii=False, indent=2)
-                tmp_path = tf.name
             os.replace(tmp_path, str(self._state_path))
         except Exception as e:
             self.log.error("bond_state.json 写入失败: {}", e)

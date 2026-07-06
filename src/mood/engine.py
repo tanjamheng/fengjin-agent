@@ -471,8 +471,8 @@ class MoodEngine:
                 mode="w", encoding="utf-8",
                 dir=str(self._state_path.parent), suffix=".tmp", delete=False,
             ) as tf:
+                tmp_path = tf.name  # 取在 dump 前——dump 失败时 finally 也能清理
                 json.dump(state, tf, ensure_ascii=False, indent=2)
-                tmp_path = tf.name
             os.replace(tmp_path, str(self._state_path))
         except Exception as e:
             self.log.error("mood_state.json 写入失败: {}", e)
