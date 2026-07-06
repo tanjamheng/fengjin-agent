@@ -153,6 +153,10 @@ class Agent:
         """
         if not user_input or not user_input.strip():
             return ""
+        if len(user_input) > MAX_INPUT_LENGTH:
+            raise ValueError(
+                f"输入过长（{len(user_input)}字符），请限制在 {MAX_INPUT_LENGTH} 字符以内"
+            )
 
         self.trace_id = trace_id or generate_trace_id()
         logger = get_logger("core", trace_id=self.trace_id)
@@ -412,6 +416,9 @@ class Agent:
                         combined = self.mood_engine.extract_and_update(combined)
                     except Exception as e:
                         logger.warning("情绪标记提取失败（中断路径）: {}", e)
+                    # 兜底剥离：防非标标记静默泄漏
+                    import re
+                    combined = re.sub(r"<!--mood:.*?-->", "", combined).rstrip() or combined
                 logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
@@ -437,9 +444,9 @@ class Agent:
                 full_text = self.mood_engine.extract_and_update(full_text)
             except Exception:
                 logger.error("情绪标记提取失败，保留原始文本")
-                # 兜底剥离：防标记泄漏到 session（用户不可见）
-                import re
-                full_text = re.sub(r"<!--mood:.*?-->", "", full_text).rstrip() or full_text
+            # 兜底剥离：防 _MOOD_TAG_RE 不匹配或静默放行的标记泄漏到 session
+            import re
+            full_text = re.sub(r"<!--mood:.*?-->", "", full_text).rstrip() or full_text
 
         # 7. 落盘
         if full_text:

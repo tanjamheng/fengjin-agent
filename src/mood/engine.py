@@ -172,11 +172,16 @@ class MoodEngine:
     # ── 公开 API ────────────────────────────────────────────
 
     def load(self) -> dict:
-        """加载状态（先衰减，再返回）。首次调用或文件缺失时使用默认值。"""
+        """加载状态（先衰减，再返回）。首次调用或文件缺失时使用默认值。
+
+        同一进程内 _state 缓存始终是最新的（update() 每次都写盘），
+        因此已加载时跳过磁盘读取，避免 inject()+update() 双重复衰减。
+        """
         if self._cleaned:
             self.log.warning("load() 在 cleanup() 后调用，将重新加载")
             self._cleaned = False  # 红线18：支持 cleanup→reinit→cleanup 序列
-        self._state = self._read_file() or self._default_state()
+        if not self._state:
+            self._state = self._read_file() or self._default_state()
         self._decay()
         return self._state
 
@@ -284,7 +289,7 @@ class MoodEngine:
     def inject(self, user_input: str) -> str:
         """将情绪状态和阈值提醒注入到 user message 开头。
 
-        格式: [P+0.71 A+0.30 D+0.54 平静温暖]\n[提醒] ...\n\n用户输入
+        格式: [P+0.71 A+0.30 D+0.54 温暖]\n[提醒] ...\n\n用户输入
         """
         self.load()  # 确保状态最新（含衰减），首轮也能读到持久化状态
         parts = [self.describe()]
@@ -343,6 +348,9 @@ class MoodEngine:
             decay = math.exp(-lam * hours)
             self._state[key] = baseline + diff * decay
 
+        # 衰减后 pleasure 已回升 → 重置连续低落计数（防过期值残留）
+        if self._state.get("pleasure", 0) >= self._settings.low_pleasure_threshold:
+            self._consecutive_low = 0
         self._state["updated_at_ts"] = now
 
         self.log.debug(
@@ -384,7 +392,7 @@ class MoodEngine:
             if not isinstance(data, dict) or not required_keys.issubset(data.keys()):
                 self.log.warning("mood_state.json 结构不完整（缺键），回退默认值")
                 return None
-            for key in ("pleasure", "arousal", "dominance"):
+            for key in ("pleasure", "arousal", "dominance", "updated_at_ts"):
                 if not isinstance(data.get(key), (int, float)):
                     self.log.warning("mood_state.json 键 {} 非数字类型，回退默认值", key)
                     return None

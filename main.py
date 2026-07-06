@@ -603,6 +603,7 @@ def main():
         except KeyboardInterrupt:
             # Ctrl+C — stream_reply 内部已通过 CancelledError 完成回滚
             console.print()
+            session_mgr.flush()
             _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine)
             from loguru import logger
             logger.complete()
