@@ -61,7 +61,7 @@ def ensure_models(console: Console) -> None:
     from src.utils.models import ensure_models as _ensure
 
     console.print("[bold]检查模型...[/bold]")
-    ok = _ensure_models(msg=console.print)
+    ok = _ensure(msg=console.print)
     if ok:
         console.print("[green]所有模型就绪[/green]")
     else:
@@ -480,7 +480,7 @@ def main():
             args = parts[1].strip() if len(parts) > 1 else ""
 
             # 会话管理命令
-            if cmd in ("/quit", "/new", "/list", "/switch", "/history", "/rename", "/delete"):
+            if cmd in ("/quit", "/new", "/list", "/switch", "/history", "/rename", "/delete", "/bond"):
                 should_continue = _handle_command(
                     cmd, args, console, session_mgr,
                     agent, memory_manager, rag_service, safety_engine,

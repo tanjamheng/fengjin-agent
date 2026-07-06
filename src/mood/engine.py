@@ -52,8 +52,8 @@ _DEFAULT_HIGH_AROUSAL_THRESHOLD = 0.7
 
 # ── 标签默认 ────────────────────────────────────────────────
 
-_DEFAULT_PLEASURE_HIGH = 0.4
-_DEFAULT_PLEASURE_LOW = -0.4
+_DEFAULT_PLEASURE_HIGH = 0.50
+_DEFAULT_PLEASURE_LOW = -0.20
 _DEFAULT_AROUSAL_HIGH = 0.5
 _DEFAULT_AROUSAL_LOW = 0.2
 
@@ -190,8 +190,8 @@ class MoodEngine:
         self._session_cumulative: dict[str, float] = {}
         self._consecutive_same: dict[str, int] = {}
         self._last_sign: dict[str, int] = {}
-        self._session_warned: set[str] = set()
-        self._session_braked: set[str] = set()
+        self._warned_cumulative: set[str] = set()
+        self._warned_consecutive: set[str] = set()
 
         self.log = get_logger("mood")
 
@@ -249,8 +249,8 @@ class MoodEngine:
             self._session_cumulative.setdefault(dim, 0.0)
             self._session_cumulative[dim] += change
             if (abs(self._session_cumulative[dim]) > s.session_cumulative_warn
-                    and dim not in self._session_warned):
-                self._session_warned.add(dim)
+                    and dim not in self._warned_cumulative):
+                self._warned_cumulative.add(dim)
                 self.log.warning("会话累计漂移告警: {} 累计={:+.3f}", dim, self._session_cumulative[dim])
 
             self._consecutive_same.setdefault(dim, 0)
@@ -262,7 +262,9 @@ class MoodEngine:
                 else:
                     self._consecutive_same[dim] = 1
                 self._last_sign[dim] = sign
-            if self._consecutive_same[dim] >= s.consecutive_same_warn:
+            if (self._consecutive_same[dim] >= s.consecutive_same_warn
+                    and dim not in self._warned_consecutive):
+                self._warned_consecutive.add(dim)
                 self.log.warning("连续同向告警: {} 连续 {} 轮", dim, self._consecutive_same[dim])
 
         cur["updated_at_ts"] = time.time()
@@ -363,8 +365,8 @@ class MoodEngine:
             self._session_cumulative = {}
             self._consecutive_same = {}
             self._last_sign = {}
-            self._session_warned = set()
-            self._session_braked = set()
+            self._warned_cumulative = set()
+            self._warned_consecutive = set()
             self._cleaned = True
 
     # ── 私有 ────────────────────────────────────────────────

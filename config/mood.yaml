@@ -92,8 +92,8 @@ mood:
   # 和"感受情绪"之间架一座桥。
   labels:
     # P (愉悦度) 的标签区间
-    pleasure_high: 0.4       # P > 此值 → "温暖"
-    pleasure_low: -0.4       # P < 此值 → "低落"
+    pleasure_high: 0.50      # P > 此值 → "温暖"（对齐 prompt 参考表"日常温暖"下界）
+    pleasure_low: -0.20      # P < 此值 → "低落"（对齐 prompt 参考表"有些低落"上界）
                              # 中间 → "平静"
 
     # A (激活度) 叠加标签（可选，叠加到 P 标签上）

@@ -427,8 +427,11 @@ class Agent:
                         logger.warning("羁绊标记提取失败（中断路径）: {}", e)
                 # 兜底剥离：防非标标记泄漏
                 import re
-                combined = re.sub(r"<!--mood:.*?-->", "", combined).rstrip() or combined
-                combined = re.sub(r"<!--bond:.*?-->", "", combined).rstrip() or combined
+                stripped = combined
+                stripped = re.sub(r"<!--mood:.*?-->", "", stripped)
+                stripped = re.sub(r"<!--bond:.*?-->", "", stripped)
+                stripped = stripped.rstrip()
+                combined = stripped if stripped else combined
                 logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
@@ -463,8 +466,11 @@ class Agent:
         # 兜底剥离：无论引擎是否可用，确保标记不泄漏到 session
         if full_text:
             import re
-            full_text = re.sub(r"<!--mood:.*?-->", "", full_text).rstrip() or full_text
-            full_text = re.sub(r"<!--bond:.*?-->", "", full_text).rstrip() or full_text
+            stripped = full_text
+            stripped = re.sub(r"<!--mood:.*?-->", "", stripped)
+            stripped = re.sub(r"<!--bond:.*?-->", "", stripped)
+            stripped = stripped.rstrip()
+            full_text = stripped if stripped else full_text
 
         # 7. 落盘
         if controller.cancel_requested:
@@ -472,8 +478,11 @@ class Agent:
             combined = all_text + full_text
             if combined:
                 import re
-                combined = re.sub(r"<!--mood:.*?-->", "", combined).rstrip() or combined
-                combined = re.sub(r"<!--bond:.*?-->", "", combined).rstrip() or combined
+                stripped = combined
+                stripped = re.sub(r"<!--mood:.*?-->", "", stripped)
+                stripped = re.sub(r"<!--bond:.*?-->", "", stripped)
+                stripped = stripped.rstrip()
+                combined = stripped if stripped else combined
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
                 logger.info("用户取消: 保留已生成内容 ({} chars)", len(combined))
