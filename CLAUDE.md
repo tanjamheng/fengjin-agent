@@ -50,7 +50,7 @@
 
 ## 核心链路
 
-用户输入 → Agent.chat() 统一管线（CLI/WS 共用）→ 小伊卡安全检测（P0规则 + P1 Llama Guard）→ 多轮上下文组装（情绪注入 + 记忆注入 + 滑动窗口裁剪）→ LLM 流式生成（stream_llm，支持 Tool Calling 自主检索知识库，最多 5 轮）→ 流式输出 → LLM 回复末尾提取情绪标记 → EMA 平滑更新情绪状态 → 异步记忆提取（Writer WAL 崩溃恢复）→ 会话持久化
+用户输入 → Agent.chat() 统一管线（CLI/WS 共用）→ 小伊卡安全检测（P0规则 + P1 Llama Guard）→ 多轮上下文组装（情绪注入 + 羁绊注入 + 记忆注入 + 滑动窗口裁剪）→ LLM 流式生成（stream_llm，支持 Tool Calling 自主检索知识库，最多 5 轮）→ 流式输出 → LLM 回复末尾提取情绪标记 + 羁绊标记 → EMA 更新情绪 + change clamp 更新羁绊 → 异步记忆提取（Writer WAL 崩溃恢复）→ 会话持久化
 
 ## 后端已有能力
 
@@ -59,6 +59,7 @@
 | 对话引擎 | 流式对话 + Tool Calling 循环 + 停止/超时处理 |
 | 风堇角色系统 | 外部 system_prompt.md 定义人设，调角色不改代码 |
 | 情绪状态机 | PAD 三维情绪 + EMA 平滑 + 非对称指数衰减，LLM 输出隐藏标记，数字注入 user message |
+| 羁绊状态机 | 四维羁绊（Warmth/Trust/Formality/Humor）+ change clamp + 接近度衰减 + 非对称指数衰减，LLM 输出隐藏标记，数字注入 user message |
 | RAG 知识库 | 6 步管道检索风堇相关知识，LLM 自主决定调用时机 |
 | 记忆系统 | 跨会话记住用户信息，双存储（core_memory.md + ChromaDB），异步提取 |
 | 安全护栏 | 两级检测（规则引擎 + Llama Guard 3 1B），11 类拦截，Comfort 安抚模式 |
@@ -195,7 +196,8 @@ AI风堇_治愈晨昏/
 │   ├── memory.yaml                  # 记忆存储/提取/合并
 │   ├── safety.yaml                  # 安全检测配置
 │   ├── safety_words/                # 安全词库（8 TXT + ~89 regex）
-│   ├── mood.yaml                     # 情绪状态机配置（PAD/EMA/衰减/阈值/注入）
+│   ├── mood.yaml                     # 情绪状态机配置（PAD/EMA/衰减/漂移保护/阈值/注入）
+│   ├── bond.yaml                     # 羁绊状态机配置（4维/change clamp/接近度衰减/衰减/标签）
 │   ├── system_prompt.md             # 风堇主人设
 │   └── prompts/                     # Prompt 模板（core_memory / memory_extraction / memory_merge）
 │
@@ -241,6 +243,7 @@ AI风堇_治愈晨昏/
 │   │   └── config.py                # MemorySettings
 │   │
 │   ├── mood/                        # 情绪状态机
+│   ├── bond/                        # 羁绊状态机
 │   │   └── engine.py                # MoodEngine — PAD+EMA+衰减+注入+持久化 (~120行)
 │   │
 │   ├── safety/                      # 安全护栏

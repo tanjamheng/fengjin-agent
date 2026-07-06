@@ -36,6 +36,13 @@ _DEFAULT_HALF_LIFE_POSITIVE_H = 96.0
 _DEFAULT_HALF_LIFE_NEGATIVE_H = 48.0
 _DEFAULT_MIN_INTERVAL_SEC = 36
 
+# ── 漂移保护默认 ────────────────────────────────────────────
+
+_DEFAULT_SESSION_CUMULATIVE_WARN = 0.25
+_DEFAULT_SESSION_CUMULATIVE_BRAKE = 0.35
+_DEFAULT_CONSECUTIVE_SAME_WARN = 8
+_DEFAULT_CONSECUTIVE_SAME_BRAKE = 12
+
 # ── 阈值默认 ────────────────────────────────────────────────
 
 _DEFAULT_CONSECUTIVE_LOW = 3
@@ -87,6 +94,12 @@ class MoodSettings:
     arousal_high: float = _DEFAULT_AROUSAL_HIGH
     arousal_low: float = _DEFAULT_AROUSAL_LOW
 
+    # 漂移保护
+    session_cumulative_warn: float = _DEFAULT_SESSION_CUMULATIVE_WARN
+    session_cumulative_brake: float = _DEFAULT_SESSION_CUMULATIVE_BRAKE
+    consecutive_same_warn: int = _DEFAULT_CONSECUTIVE_SAME_WARN
+    consecutive_same_brake: int = _DEFAULT_CONSECUTIVE_SAME_BRAKE
+
     @classmethod
     def load(cls, config_path: str = "config/mood.yaml") -> "MoodSettings":
         """从 mood.yaml 加载配置，文件缺失或格式错误回退到默认值。"""
@@ -112,6 +125,7 @@ class MoodSettings:
         decay = mood.get("decay", {})
         threshold = mood.get("threshold", {})
         labels = mood.get("labels", {})
+        drift = mood.get("drift_guard", {})
 
         return cls(
             default_pleasure=float(defaults.get("pleasure", _DEFAULT_PLEASURE)),
@@ -132,6 +146,10 @@ class MoodSettings:
             pleasure_low=float(labels.get("pleasure_low", _DEFAULT_PLEASURE_LOW)),
             arousal_high=float(labels.get("arousal_high", _DEFAULT_AROUSAL_HIGH)),
             arousal_low=float(labels.get("arousal_low", _DEFAULT_AROUSAL_LOW)),
+            session_cumulative_warn=float(drift.get("session_cumulative_warn", _DEFAULT_SESSION_CUMULATIVE_WARN)),
+            session_cumulative_brake=float(drift.get("session_cumulative_brake", _DEFAULT_SESSION_CUMULATIVE_BRAKE)),
+            consecutive_same_warn=int(drift.get("consecutive_same_warn", _DEFAULT_CONSECUTIVE_SAME_WARN)),
+            consecutive_same_brake=int(drift.get("consecutive_same_brake", _DEFAULT_CONSECUTIVE_SAME_BRAKE)),
         )
 
 
@@ -167,6 +185,14 @@ class MoodEngine:
         self._state: dict = {}
         self._consecutive_low: int = 0
         self._cleaned = False
+
+        # 漂移保护（会话级计数，cleanup 时清零）
+        self._session_cumulative: dict[str, float] = {}
+        self._consecutive_same: dict[str, int] = {}
+        self._last_sign: dict[str, int] = {}
+        self._session_warned: set[str] = set()
+        self._session_braked: set[str] = set()
+
         self.log = get_logger("mood")
 
     # ── 公开 API ────────────────────────────────────────────
@@ -195,6 +221,9 @@ class MoodEngine:
         s = self._settings
         cur = self.load()  # 确保最新 + 含衰减
 
+        # 捕获更新前值（漂移保护需要计算本轮变化量）
+        old_vals = {k: cur[k] for k in ("pleasure", "arousal", "dominance")}
+
         if pleasure is not None:
             cur["pleasure"] = self._ema(cur["pleasure"], pleasure, s.ema_alpha)
         if arousal is not None:
@@ -212,6 +241,29 @@ class MoodEngine:
             self._consecutive_low += 1
         else:
             self._consecutive_low = 0
+
+        # ── 漂移保护：会话累计 + 连续同向（仅告警，不刹车）──
+        for dim in ("pleasure", "arousal", "dominance"):
+            change = cur[dim] - old_vals[dim]
+
+            self._session_cumulative.setdefault(dim, 0.0)
+            self._session_cumulative[dim] += change
+            if (abs(self._session_cumulative[dim]) > s.session_cumulative_warn
+                    and dim not in self._session_warned):
+                self._session_warned.add(dim)
+                self.log.warning("会话累计漂移告警: {} 累计={:+.3f}", dim, self._session_cumulative[dim])
+
+            self._consecutive_same.setdefault(dim, 0)
+            if change != 0:
+                sign = 1 if change > 0 else -1
+                prev = self._last_sign.get(dim, 0)
+                if (sign > 0 and prev > 0) or (sign < 0 and prev < 0):
+                    self._consecutive_same[dim] += 1
+                else:
+                    self._consecutive_same[dim] = 1
+                self._last_sign[dim] = sign
+            if self._consecutive_same[dim] >= s.consecutive_same_warn:
+                self.log.warning("连续同向告警: {} 连续 {} 轮", dim, self._consecutive_same[dim])
 
         cur["updated_at_ts"] = time.time()
         cur["consecutive_low"] = self._consecutive_low
@@ -308,6 +360,11 @@ class MoodEngine:
         if not self._cleaned:
             self._state = {}
             self._consecutive_low = 0
+            self._session_cumulative = {}
+            self._consecutive_same = {}
+            self._last_sign = {}
+            self._session_warned = set()
+            self._session_braked = set()
             self._cleaned = True
 
     # ── 私有 ────────────────────────────────────────────────

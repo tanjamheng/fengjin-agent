@@ -32,6 +32,14 @@ mood:
                             #
                             # α=0.3 时，一次事件的影响大致持续 3~5 轮
 
+  # ── 漂移保护（会话级告警，仅日志不刹车）────────────────────
+  # 绝对值 + EMA 方案本身已有强收敛性，漂移保护仅做可观测性补充。
+  drift_guard:
+    session_cumulative_warn: 0.25   # 单会话同维度累计变化超过此值 → warning
+    session_cumulative_brake: 0.35  # 保留字段，绝对值方案暂不启用硬刹车
+    consecutive_same_warn: 8        # 同维度连续同向轮数超过此值 → warning
+    consecutive_same_brake: 12      # 保留字段，绝对值方案暂不启用硬刹车
+
   # ── 时间衰减（情绪随时间向温暖底色回归）──────────────────────
   # 公式: E(t) = baseline + (E₀ − baseline) × e^(−λ × hours)
   # 衰减在每次 load/update 时自动计算，不需后台线程。
