@@ -391,8 +391,8 @@ class BondTracker:
 
         格式: [B W+0.65 T+0.42 F+0.35 H+0.22 亲近]\n用户输入
 
-        注意：调用方负责将情绪行和羁绊行合并——本方法只返回羁绊行+用户输入，
-        调用方应在调用 mood.inject() 之后调用本方法，将本方法的输出作为最终 api_input。
+        注意：调用方应在调用本方法之后再调用 mood.inject()——这样 mood 行在上、
+        羁绊行在下，与 system_prompt.md 文档顺序一致。
         """
         self.load()  # 确保状态最新（含衰减），首轮也能读到持久化状态
         return f"{self.describe()}\n{user_input}"
