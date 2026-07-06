@@ -306,8 +306,6 @@ class BondTracker:
                                         dim, self._session_cumulative[dim], capped_delta)
                     # 重算 change——累计刹车已修改 cur[dim]，后续连续同向需用实际 delta
                     change = cur[dim] - old_vals[dim]
-                    if change == 0:
-                        continue
 
             # 连续同向追踪
             self._consecutive_same.setdefault(dim, 0)
@@ -419,6 +417,7 @@ class BondTracker:
             self._warned_cumulative = set()
             self._warned_consecutive = set()
             self._session_braked = set()
+            self._settings = None
             self._cleaned = True
 
     # ── 私有 ────────────────────────────────────────────────
@@ -487,7 +486,7 @@ class BondTracker:
             return None
         try:
             data = json.loads(self._state_path.read_text(encoding="utf-8"))
-            required_keys = {"warmth", "trust", "formality", "humor", "updated_at_ts"}
+            required_keys = {"warmth", "trust", "formality", "humor", "updated_at_ts", "total_rounds"}
             if not isinstance(data, dict) or not required_keys.issubset(data.keys()):
                 self.log.warning("bond_state.json 结构不完整（缺键），回退默认值")
                 return None

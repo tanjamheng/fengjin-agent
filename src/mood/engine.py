@@ -367,6 +367,7 @@ class MoodEngine:
             self._last_sign = {}
             self._warned_cumulative = set()
             self._warned_consecutive = set()
+            self._settings = None
             self._cleaned = True
 
     # ── 私有 ────────────────────────────────────────────────
@@ -378,6 +379,7 @@ class MoodEngine:
             "arousal": s.default_arousal,
             "dominance": s.default_dominance,
             "updated_at_ts": time.time(),
+            "consecutive_low": 0,
         }
 
     def _decay(self) -> None:
@@ -455,9 +457,10 @@ class MoodEngine:
                 if not isinstance(data.get(key), (int, float)):
                     self.log.warning("mood_state.json 键 {} 非数字类型，回退默认值", key)
                     return None
-            # 恢复连续低落计数（持久化值，缺失时保守为 0）
-            self._consecutive_low = data.get("consecutive_low", 0)
-            if not isinstance(self._consecutive_low, int):
+            # 恢复连续低落计数（持久化值，缺失/异常时保守为 0）
+            try:
+                self._consecutive_low = int(data.get("consecutive_low", 0))
+            except (ValueError, TypeError):
                 self._consecutive_low = 0
             return data
         except Exception as e:

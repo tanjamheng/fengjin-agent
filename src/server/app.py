@@ -140,8 +140,9 @@ async def lifespan(app: FastAPI):
             rag_service.cleanup()
         except Exception as e:
             log.warning("RAGService 清理异常: {}", e)
-    if getattr(app.state, "tool_registry", None):
-        app.state.tool_registry.clear()
+    tool_registry = getattr(app.state, "tool_registry", None)
+    if tool_registry:
+        tool_registry.clear()
     if memory_manager:
         try:
             memory_manager.cleanup()
