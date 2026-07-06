@@ -50,6 +50,10 @@ _DEFAULT_PLEASURE_LOW = -0.4
 _DEFAULT_AROUSAL_HIGH = 0.5
 _DEFAULT_AROUSAL_LOW = 0.2
 
+# ── 持久化 ──────────────────────────────────────────────────
+
+_STATE_FILE = "mood_state.json"
+
 
 @dataclass
 class MoodSettings:
@@ -96,8 +100,6 @@ class MoodSettings:
             with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except Exception as e:
-            # 类方法无 self.log，用模块级 logger（红线8：静默失败零容忍）
-            from ..utils.logger import get_logger
             get_logger("mood").warning("mood.yaml 加载失败，回退默认值: {}", e)
             return cls()
         if not data:
@@ -159,7 +161,7 @@ class MoodEngine:
         if data_dir is None:
             _root = Path(__file__).resolve().parent.parent.parent
             data_dir = _root / "data"
-        self._state_path = data_dir / "mood_state.json"
+        self._state_path = data_dir / _STATE_FILE
 
         # 运行时状态
         self._state: dict = {}
@@ -207,6 +209,7 @@ class MoodEngine:
             self._consecutive_low = 0
 
         cur["updated_at_ts"] = time.time()
+        cur["consecutive_low"] = self._consecutive_low
         self._write_file(cur)
         self._state = cur
 
@@ -221,7 +224,7 @@ class MoodEngine:
         s = self._state or self._default_state()
         p, a, d = s["pleasure"], s["arousal"], s["dominance"]
         label = self._dominant_label(p, a, d)
-        return f"[P{p:+.2f} A{a:.2f} D{d:+.2f} {label}]"
+        return f"[P{p:+.2f} A{a:+.2f} D{d:+.2f} {label}]"
 
     def check_threshold(self) -> list[str]:
         """检测极端情绪状态，返回需要追加的提醒指令列表。"""
@@ -376,13 +379,19 @@ class MoodEngine:
             return None
         try:
             data = json.loads(self._state_path.read_text(encoding="utf-8"))
-            # 结构性校验：确保所有必需键存在（防手动编辑/崩溃写入导致的 KeyError）
+            # 结构性校验：确保所有必需键存在且为数字（防手动编辑/崩溃写入）
             required_keys = {"pleasure", "arousal", "dominance", "updated_at_ts"}
             if not isinstance(data, dict) or not required_keys.issubset(data.keys()):
                 self.log.warning("mood_state.json 结构不完整（缺键），回退默认值")
                 return None
-            # 恢复连续低落计数（从状态中推断，保守清零）
-            self._consecutive_low = 0
+            for key in ("pleasure", "arousal", "dominance"):
+                if not isinstance(data.get(key), (int, float)):
+                    self.log.warning("mood_state.json 键 {} 非数字类型，回退默认值", key)
+                    return None
+            # 恢复连续低落计数（持久化值，缺失时保守为 0）
+            self._consecutive_low = data.get("consecutive_low", 0)
+            if not isinstance(self._consecutive_low, int):
+                self._consecutive_low = 0
             return data
         except Exception as e:
             self.log.warning("mood_state.json 读取失败，回退默认: {}", e)

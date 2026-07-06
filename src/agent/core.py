@@ -410,8 +410,8 @@ class Agent:
                 if self.mood_engine:
                     try:
                         combined = self.mood_engine.extract_and_update(combined)
-                    except Exception:
-                        pass  # 提取失败不阻塞中断保存
+                    except Exception as e:
+                        logger.warning("情绪标记提取失败（中断路径）: {}", e)
                 logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
@@ -437,7 +437,9 @@ class Agent:
                 full_text = self.mood_engine.extract_and_update(full_text)
             except Exception:
                 logger.error("情绪标记提取失败，保留原始文本")
-                # full_text 不变，继续落盘
+                # 兜底剥离：防标记泄漏到 session（用户不可见）
+                import re
+                full_text = re.sub(r"<!--mood:.*?-->", "", full_text).rstrip() or full_text
 
         # 7. 落盘
         if full_text:
