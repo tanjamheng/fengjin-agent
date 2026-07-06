@@ -61,6 +61,19 @@ async def lifespan(app: FastAPI):
 
         app.state.memory_manager = memory_manager
 
+        # 情绪状态机（无上游依赖，无 GPU，总是成功）
+        try:
+            from ..mood.engine import MoodSettings, MoodEngine
+            mood_config = MoodSettings.load(
+                str(_project_root / "config" / "mood.yaml")
+            )
+            mood_engine = MoodEngine(mood_config, data_dir=_project_root / "data")
+            app.state.mood_engine = mood_engine
+            log.info("情绪引擎已加载")
+        except Exception as e:
+            log.warning("情绪引擎加载失败: {}", e)
+            app.state.mood_engine = None
+
         # RAG 知识库 + 工具注册表（可选：知识库为空时仍可正常对话）
         try:
             from ..rag.rag_service import RAGService
@@ -99,7 +112,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # 关闭：释放资源（对称释放，清理顺序：MCP→RAG→Tool→Memory→Safety）
+    # 关闭：释放资源（对称释放，清理顺序：MCP→RAG→Tool→Memory→Mood→Safety）
     try:
         await app.state.client.close()
     except Exception as e:
@@ -121,6 +134,11 @@ async def lifespan(app: FastAPI):
             memory_manager.cleanup()
         except Exception as e:
             log.warning("MemoryManager 清理异常: {}", e)
+    if getattr(app.state, "mood_engine", None):
+        try:
+            app.state.mood_engine.cleanup()
+        except Exception as e:
+            log.warning("MoodEngine 清理异常: {}", e)
     app.state.safety.cleanup()
     log.info("应用资源已释放")
     from loguru import logger

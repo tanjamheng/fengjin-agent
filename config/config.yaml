@@ -1,0 +1,15 @@
+# Agent 配置
+agent:
+  name: "风堇"
+  max_tokens: 1024
+  temperature: 0.7
+  thinking_enabled: false  # 已废弃，保留兼容
+  max_tool_rounds: 5  # tool calling 最大循环轮数
+
+# 系统提示词：指向独立文件，方便单独编辑管理
+system_prompt_file: "system_prompt.md"
+
+# WebSocket 服务器配置
+server:
+  websocket_host: "127.0.0.1"
+  websocket_port: 8765

@@ -72,12 +72,14 @@ class Agent:
         context_manager: Optional[ContextManager] = None,
         memory_manager=None,
         tool_registry: Optional[ToolRegistry] = None,
+        mood_engine=None,
     ):
         self.config = config
         self.session_mgr = session_mgr
         self.safety = safety
         self.context_manager = context_manager
         self.memory_manager = memory_manager
+        self.mood_engine = mood_engine
 
         # AsyncOpenAI — 可注入（WS 从 app.state 共享）或自动创建（CLI）
         self.client = client or AsyncOpenAI(
@@ -203,15 +205,17 @@ class Agent:
             if comfort_prompt:
                 logger.info("COMFORT 模式已激活: 自伤安抚指令将注入 system_prompt")
 
-            # 4. 记忆检索 + 上下文组装
+            # 4. 情绪注入 + 记忆检索 + 上下文组装
             t_memory_start = time.monotonic()
             api_input = message_content
+            if self.mood_engine:
+                api_input = self.mood_engine.inject(api_input)
             if self.context_manager:
                 api_input = self.context_manager.build_input(
-                    message_content, trace_id=self.trace_id
+                    api_input, trace_id=self.trace_id
                 )
             t_memory = (time.monotonic() - t_memory_start) * 1000
-            logger.info("记忆检索+上下文组装完成 ({:.0f}ms)", t_memory)
+            logger.info("情绪注入+记忆检索+上下文组装完成 ({:.0f}ms)", t_memory)
         except BlockedError:
             raise
         except Exception:
@@ -421,7 +425,11 @@ class Agent:
         finally:
             self._current_controller = None
 
-        # 6. 落盘
+        # 6. 情绪标记提取与更新
+        if self.mood_engine and full_text:
+            full_text = self.mood_engine.extract_and_update(full_text)
+
+        # 7. 落盘
         if full_text:
             self.session_mgr.append_message("assistant", full_text)
             self.session_mgr.flush()
@@ -434,7 +442,7 @@ class Agent:
             self.session_mgr.flush()
             logger.warning("回复为空, 空消息已落盘")
 
-        # 7. 异步记忆提取（不阻塞回复）
+        # 8. 异步记忆提取（不阻塞回复）
         if self.memory_manager and full_text:
             logger.debug("触发异步记忆提取")
             self.memory_manager.extract_async(

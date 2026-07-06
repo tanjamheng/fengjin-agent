@@ -126,11 +126,12 @@ def _print_recent_messages(console: Console, session_mgr: SessionManager, n: int
     console.print("")
 
 
-def _safe_cleanup(agent, memory_manager, rag_service, safety_engine):
+def _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine=None):
     """逐组件安全清理：每个组件独立 try/except，单点失败不阻塞其余清理"""
     for name, cleanup_fn in [
         ("Agent", lambda: agent.cleanup()),
         ("Memory", lambda: memory_manager.cleanup() if memory_manager else None),
+        ("Mood", lambda: mood_engine.cleanup() if mood_engine else None),
         ("RAG", lambda: rag_service.cleanup() if rag_service else None),
         ("Safety", lambda: safety_engine.cleanup() if safety_engine else None),
     ]:
@@ -145,12 +146,12 @@ def _handle_command(cmd: str, args: str, console: Console,
                     session_mgr: SessionManager,
                     agent: Agent, memory_manager: MemoryManager,
                     rag_service, safety_engine,
-                    max_turns: int) -> bool:
+                    max_turns: int, mood_engine=None) -> bool:
     """处理会话命令。返回 True 表示继续循环，False 表示退出。"""
 
     if cmd == "/quit":
         session_mgr.flush()
-        _safe_cleanup(agent, memory_manager, rag_service, safety_engine)
+        _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine)
         from loguru import logger
         logger.complete()
         console.print("[yellow]再见！[/yellow]")
@@ -324,6 +325,17 @@ def main():
         memory_retriever=memory_manager
     )
 
+    # 初始化情绪状态机（无上游依赖，最早上线）
+    mood_engine = None
+    try:
+        from src.mood.engine import MoodSettings, MoodEngine
+        mood_config = MoodSettings.load(str(PROJECT_ROOT / "config" / "mood.yaml"))
+        mood_engine = MoodEngine(mood_config, data_dir=PROJECT_ROOT / "data")
+        console.print("[dim]情绪引擎已加载[/dim]")
+    except Exception as e:
+        get_logger("main").warning("情绪引擎加载失败，情绪功能将不可用: {}", e)
+        console.print("[yellow]⚠ 情绪引擎暂不可用，对话将无情绪追踪[/yellow]")
+
     # 初始化安全护栏（P0 规则引擎 + P1 Llama Guard）—— 必须在 Agent 之前
     try:
         safety_engine = SafetyManager(
@@ -350,6 +362,7 @@ def main():
             safety=safety_engine,
             context_manager=context_manager,
             memory_manager=memory_manager,
+            mood_engine=mood_engine,
         )
     except Exception as e:
         console.print(f"[red]Agent 初始化失败（环境变量缺失或配置错误）: {e}[/red]")
@@ -424,7 +437,7 @@ def main():
         except (EOFError, KeyboardInterrupt):
             console.print("\n[yellow]再见！[/yellow]")
             session_mgr.flush()
-            _safe_cleanup(agent, memory_manager, rag_service, safety_engine)
+            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine)
             from loguru import logger
             logger.complete()
             break
@@ -589,7 +602,7 @@ def main():
         except KeyboardInterrupt:
             # Ctrl+C — stream_reply 内部已通过 CancelledError 完成回滚
             console.print()
-            _safe_cleanup(agent, memory_manager, rag_service, safety_engine)
+            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine)
             from loguru import logger
             logger.complete()
             console.print("\n[yellow]再见！[/yellow]")

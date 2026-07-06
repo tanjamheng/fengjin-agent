@@ -4,8 +4,7 @@
 .env.local
 .env.*.local
 
-# 用户配置
-config/config.yaml
+# 本地覆盖配置（可选，不入仓库）
 config/config.local.yaml
 
 # ============ 整个文件夹忽略 ============
@@ -79,6 +78,8 @@ Thumbs.db
 安全词库
 安全项目参考
 项目sdk参考
+梳理_*
+*参考*
 .codegraph
 mcp_qwen_vision
 .mcp.json
