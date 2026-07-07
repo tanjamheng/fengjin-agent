@@ -62,6 +62,7 @@ export class LauncherManager {
   private _watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private _healthTimer: ReturnType<typeof setTimeout> | null = null;
   private _warnTimer: ReturnType<typeof setTimeout> | null = null;
+  private _healthGen: number = 0; // retry 时递增，防止旧轮询污染新后端
 
   // 阶段二硬编码：7 个 engine_init 步骤
   private readonly ENGINE_STEPS = [
@@ -137,6 +138,7 @@ export class LauncherManager {
   async retry(): Promise<void> {
     this._clearError();
     this._killBackend();
+    this._healthGen++; // 使旧轮询失效，防止误触发 _handleReady
     this._state.preprocessSteps = [];
     this._state.currentStepIndex = 0;
     try {
@@ -364,12 +366,14 @@ export class LauncherManager {
   private _handleWarn(msg: ProgressMessage): void {
     // 非致命 → 短暂显示警告
     this._state.stepText = `⚠ ${msg.error || "步骤失败，已跳过"}`;
+    this._emitState();
+    // 仅 preprocess 阶段显示按钮+自动推进（下载/量化步骤可跳过）
+    // system_load 阶段 warn 为纯信息提示，不显示按钮也不推进进度
+    if (this._state.phase !== "preprocess") return;
     this._state.showRetry = true;
     this._state.showSkip = true;
     this._state.showLogs = true;
     this._emitState();
-    // 仅 preprocess 阶段自动推进（下载/量化步骤），system_load 阶段 warn 为纯信息提示
-    if (this._state.phase !== "preprocess") return;
     if (this._warnTimer) clearTimeout(this._warnTimer);
     this._warnTimer = setTimeout(() => {
       this._warnTimer = null;
@@ -460,8 +464,10 @@ export class LauncherManager {
   }
 
   startHealthPoll(): void {
+    const myGen = this._healthGen;
     const startTime = Date.now();
     const poll = () => {
+      if (this._healthGen !== myGen) return; // 旧代轮询，停止
       if (this._state.phase === "done" || this._state.phase === "error") return;
       if (Date.now() - startTime > HEALTH_TIMEOUT_MS) {
         this._setError("启动超时，请查看日志后重试", true, false, true);
@@ -470,6 +476,7 @@ export class LauncherManager {
       fetch("http://127.0.0.1:8765/health")
         .then((r) => r.json())
         .then((data) => {
+          if (this._healthGen !== myGen) return; // 旧代响应，丢弃
           if (data.status === "ready" && this._state.phase !== "done") {
             this._handleReady();
           } else {
@@ -477,6 +484,7 @@ export class LauncherManager {
           }
         })
         .catch(() => {
+          if (this._healthGen !== myGen) return; // 旧代响应，丢弃
           this._healthTimer = setTimeout(poll, HEALTH_POLL_MS);
         });
     };
