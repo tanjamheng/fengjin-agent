@@ -6,7 +6,7 @@
  */
 
 interface LauncherState {
-  phase: "env_check" | "preprocess" | "system_load" | "done" | "error";
+  phase: "env_check" | "scanning" | "preprocess" | "system_load" | "done" | "error";
   phaseLabel: string;
   stepText: string;
   progressPercent: number;
@@ -110,12 +110,12 @@ export class LauncherRenderer {
     // 进度条 + 百分比
     this._progressFill.style.width = `${pct}%`;
     this._percentText.textContent = `${pct}%`;
-    if (state.phase === "preprocess" || state.phase === "system_load") {
+    if (state.phase === "scanning" || state.phase === "preprocess" || state.phase === "system_load") {
       this._progressBar.style.display = "";
     }
 
-    // 安抚文字 — 预处理和系统加载阶段都显示
-    if (state.phase === "preprocess" || state.phase === "system_load") {
+    // 安抚文字 — 所有加载阶段都显示
+    if (state.phase === "scanning" || state.phase === "preprocess" || state.phase === "system_load") {
       this._comfortText.style.display = "";
       if (this._comfortIndex < 0) this._pickNextComfort();
       this._comfortText.textContent = LauncherRenderer.COMFORT_MESSAGES[this._comfortIndex];

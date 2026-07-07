@@ -151,9 +151,8 @@ html, body {
   background: linear-gradient(135deg, var(--color-char-bg-start) 0%, var(--color-char-bg-mid) 40%, var(--color-char-bg-end) 100%);
 }
 
-/* 中间：对话区 45% */
+/* 中间：对话区 — 比例由父容器 flex 控制 */
 .chat-area {
-  width: 45%;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -162,9 +161,8 @@ html, body {
   border-right: 1px solid var(--color-divider);
 }
 
-/* 右侧：历史侧边栏 17% */
+/* 右侧：历史侧边栏 — 比例由父容器 flex 控制 */
 .sidebar-area {
-  width: 17%;
   min-width: 160px;
   background: var(--color-sidebar-bg);
 }
@@ -1375,11 +1373,10 @@ html, body {
   opacity: 1;
 }
 
-/* 修正 app-panel 内 chat/sidebar 比例：45:17 相对于 62% 右面板
-   chat = 45/62 ≈ 72.6%  sidebar = 17/62 ≈ 27.4% */
+/* chat:sidebar = 45:17 比例，浏览器自动计算，任何父容器宽度都正确 */
 .app-panel .chat-area {
-  flex: 0 0 72.6%;
+  flex: 45;
 }
 .app-panel .sidebar-area {
-  flex: 0 0 27.4%;
+  flex: 17;
 }

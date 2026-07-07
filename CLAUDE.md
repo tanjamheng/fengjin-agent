@@ -48,6 +48,10 @@
 | 5 | **`__init__` 中 `self.log` 必须在所有使用它的方法之前赋值** | PersonaDriftGuard R7 P0：`self._parse_anchors()` 内调 `self.log.info()` 但 `self.log = get_logger()` 在调用之后 → 每次构造 `AttributeError` → 漂移检测从未启用。**规则：`self.log` 赋值必须在所有调用 `self.log` 的方法之前。不只 `self.log`——任何被 `__init__` 内方法依赖的属性都适用。** |
 | 6 | **会话切换时必须调所有有状态组件的 `reset_state()`** | MoodEngine、BondTracker、PersonaDriftGuard 各有运行时计数器（EWMA、cumulative、consecutive），跨会话不重置会污染新会话。**8 个入口必须全覆盖**：CLI `/new` `/switch` `/clear` `/delete` + WS `_ensure_session`×2 `load_session` `delete_session`。新增入口或新增状态组件 → 双向检查。 |
 | 7 | **CLI 路径的状态修复必须同步到 WS 路径** | 同一个会话操作（新建/切换/清空/删除）在 CLI 和 WS 中各有一份实现。修了 CLI 的 `reset_state()` 调用 → 立即检查 WS 的 `_ensure_session`/`load_session`/`delete_session` 是否需要同样修复。多轮 CR 反复出现不对称：R2 修 CLI 漏 WS → R4 补 → R5 又漏 → R7 再补。 |
+| 8 | **CSS 百分比宽度参考父容器——加包装即变** | 前端三栏布局 38%/45%/17% 是固定比例的。`.chat-area { width: 45% }` 表示父容器的 45%。如果你把 chat-area 包进一个 `app-panel` 里，`45%` 就变成 app-panel 的 45% 而非主布局的 45%——侧边栏会缩到中间。**规则：HTML 结构加/删任何 wrapper 时，必须检查所有子元素的百分比宽度是否需要更新。** 建议用 `flex: N` 比例值替代 `width: N%`，这样挪到任何容器里都自动等比。 |
+| 9 | **CSS `animation` 的 `transform` 会覆盖元素自身的 `transform`** | 如果元素用 `transform: translateX(-50%)` 居中，又挂了 `animation`（含 `transform`），animation 的 transform 会覆盖元素的定位 transform → 元素偏位。**规则：需要定位 transform 的元素不要用含 transform 的 animation。** 用 `left:0; width:100%; text-align:center` 或外层 wrapper 替代。  |
+| 10 | **IPC 状态必须原子发射——禁止拆开送** | 启动加载页的阶段标签、进度条、步骤文字、安抚语应该同时出现。如果在 `start()` 里先发 `_sendState("", "正在检查环境...")` 再等后端消息才发阶段标签 → 下方字先跳出来、上方标签晚到 → 视觉割裂。**规则：任何会一起显示的 UI 元素，第一条状态消息就必须全部包含。** 要么全发，要么全不发。 |
+| 11 | **多路径触发的状态迁移必须防重入** | 启动器的 "done" 状态被 stdout 消息和健康检查轮询两条路径同时触发 → `_handleReady()` 被调用两次 → `initChatModules()` 两次 → 侧边栏创建两遍 → 两个"新对话"按钮。**规则：任何可能被多个 async 源触发的状态变更函数，第一行就加 `if (this._state.phase === target) return;`。** |
 
 # 功能速查
 
@@ -88,6 +92,15 @@ Windows 桌面客户端，Electron ≥ 28.x + TypeScript + 原生 HTML/CSS，Web
 - **布局比例固定** — 左 38%（角色展示）+ 中 45%（对话区）+ 右 17%（历史侧边栏），V2 不变
 - **窗口** — 默认 960×680，最小 800×520，自定义粉蓝渐变标题栏（`#FFBACC → #9AC2FF`）
 - **单实例锁** — `app.requestSingleInstanceLock()`，防止多窗口 WebSocket 冲突
+
+### 前端修改检查清单（每次改前端必过）
+
+1. **HTML 加/删 wrapper？** → 检查子元素百分比 width（父容器变了，比例也会变）。建议用 `flex: N` 替代 `width: N%`
+2. **CSS animation 含 transform？** → 同一元素不能用 `transform` 定位（居中）。用 `text-align`/`margin:auto` 替代
+3. **IPC 新增状态发送？** → 一起显示的 UI 元素必须同一条消息发射，不能拆开发
+4. **状态迁移有多条触发路径？** → 第一行加重入守卫 `if (already === target) return`
+5. **改了聊天区/侧边栏？** → 启动加载页也测一遍（它们在同一个右面板）
+6. **改了启动加载页？** → 聊天区+侧边栏也测一遍
 
 ### 安全策略（Electron 固定值，不可改）
 

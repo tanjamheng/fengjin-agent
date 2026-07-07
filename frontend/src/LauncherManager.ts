@@ -21,7 +21,7 @@ export interface ProgressMessage {
   detail?: string;
 }
 
-export type LauncherPhase = "env_check" | "preprocess" | "system_load" | "done" | "error";
+export type LauncherPhase = "env_check" | "scanning" | "preprocess" | "system_load" | "done" | "error";
 
 export interface LauncherState {
   phase: LauncherPhase;
@@ -111,13 +111,20 @@ export class LauncherManager {
   /** 完整启动流程 */
   async start(): Promise<void> {
     try {
-      // 0. 环境检查（静默，不打扰用户）
+      // 0. 窗口打开瞬间 → 立即显示"正在检查资源..." + 进度条 0%
+      this._state.phase = "scanning";
+      this._state.phaseLabel = "正在检查资源...";
+      this._state.stepText = "";
+      this._state.progressPercent = 0;
+      this._emitState();
+
+      // 1. 环境检查（静默）
       this._checkPython();
       await this._ensureVenv();
       this._checkEnvConfig();
       this._ensureDirectories();
 
-      // 1. spawn 后端 — 第一条进度消息到达后 UI 统一亮相
+      // 2. spawn 后端 — 后端扫描模型状态 → preprocess_plan → 切换阶段
       this._spawnBackend();
     } catch (e: any) {
       this._setError(e.message || "启动失败", true, false, true);
@@ -416,7 +423,9 @@ export class LauncherManager {
   }
 
   private _clearError(): void {
-    this._state.phase = "env_check";
+    this._state.phase = "scanning";
+    this._state.phaseLabel = "正在检查资源...";
+    this._state.progressPercent = 0;
     this._state.error = null;
     this._state.showRetry = false;
     this._state.showSkip = false;

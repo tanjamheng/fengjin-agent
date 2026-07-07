@@ -128,6 +128,13 @@ def ensure_models(
     all_ok = True
 
     for local_name, ms_id, model_type in MODELS:
+        # Llama Guard 条件跳过 — 与 _scan_preprocess_plan 保持一致
+        if local_name == "Llama-Guard-3-1B":
+            guard_enabled = os.environ.get("FENGJIN_GUARD_MODEL_ENABLED", "false").lower() == "true"
+            if not guard_enabled:
+                _emit(f"  - {local_name} (未启用，跳过)")
+                continue
+
         target_path = MODELS_DIR / local_name
         state_file = target_path / _STATE_FILE
 
