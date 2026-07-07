@@ -1,18 +1,47 @@
-# AI风堇 — 治愈晨昏
+# 风堇 Agent
 
-> 愿这一抹微光，治愈晨昏！
+> 愿这一抹微光，拨开云雾，重见晴空。
 
-还原《崩坏：星穹铁道》中的风堇，一个有记忆、有知识、有安全边界的角色扮演 AI NPC。
+这是一个为还原《崩坏：星穹铁道》角色**风堇**而生的开源 Agent。
+我的核心愿景是：让这一Agent尽可能地还原风堇——有着和风堇一样的性格，并且像一个活生生的人——有情绪，有羁绊，有记忆。我希望风堇Agent可以给予用户陪伴，和昏光庭院的医师一样治愈人心。
+当然，AI生成的回答偶尔会OOC，偶尔会出现错误，希望大家能够自行辨别。空余时间内我会不断迭代优化风堇Agent。
+对于更远的愿景，我希望游戏AI NPC可以融入游戏中，增加游戏的可玩性。
 
-## 项目特色
+## 功能特色
 
-- **角色还原** — 详细的人物设定、性格、说话风格、知识边界，降低 OOC
-- **长期记忆** — 跨会话记住用户偏好，自动提取、去重、合并、冲突消解
-- **知识检索** — 混合 RAG（稠密 + 稀疏 + RRF 融合 + 交叉编码器重排序）
-- **安全护栏** — 两级防护：P0 规则引擎（关键词/正则，毫秒级）+ P1 Llama Guard 3 1B（语义级）
-- **双模型架构** — 主模型负责对话，辅助小模型负责记忆提取/合并，降低成本
-- **桌面客户端** — Electron + TypeScript 原生前端，WebSocket 实时通信
-- **双入口** — CLI 命令行 + WebSocket 桌面客户端，共用同一对话引擎
+### 🤍 情绪状态机
+
+风堇有自己的心情底色——不是每轮从零开始的 NPC。开心的事会让她温暖好几轮，低落也会慢慢消散。如果你很久没来，她会带着一点点想念和更温柔的问候。这一切自动发生，你只管聊天就好。
+
+### 🤝 羁绊系统
+
+刚认识时礼貌温柔，聊熟了自然地叫你"灰宝"，偶尔也会分享自己的小心事。很久不见会重新客气几分——但那种温暖的底色不会变。关系是活的，风堇也是。
+
+### 🎯 角色漂移检测
+
+长聊中 AI 容易"跑偏"——聊着聊着就不像本人了。我们有一个悄悄运行的校准机制：每轮回复后自动检测她是否偏离了自己，偏了就温柔地拉回来。你感觉不到任何痕迹——就是会觉得，她一直是那个风堇。
+
+### 🧠 长期记忆
+
+下次聊起来，她会自然地提起你上次说过的事。不用自我介绍，不用刻意提醒。当然，只有她觉得重要的事才会记住——像个真正的朋友。
+
+### 📚 RAG 知识检索
+
+知道自己是谁、来自翁法罗斯、经历过什么。不确定的事会坦诚说"不太确定"，不会编造。需要查资料的时候她会自己去查——你像平时一样聊天就好。
+
+### 🖥 桌面客户端
+
+粉蓝渐变窗口，流式打字逐字呈现。也有命令行版本，给喜欢终端的你。
+
+<p align="center">
+  <img src="docs/images/screenshot-client.png" width="80%" alt="桌面客户端截图">
+  <br><em>桌面客户端</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/screenshot-cli.png" width="80%" alt="CLI 截图">
+  <br><em>命令行版本</em>
+</p>
 
 ## 快速开始
 
@@ -59,10 +88,6 @@ python -m src.server.server          # 终端 1：启动后端 WS 服务
 cd frontend && npm run dev           # 终端 2：启动 Electron 前端
 ```
 
-### 4. 放置角色图（前端）
-
-将风堇角色图放到 `frontend/src/renderer/assets/fengjin.jpg`，前端会自动加载。缺图时渐变背景兜底，不影响聊天功能。如需使用不同文件名，修改 `frontend/src/renderer/config.ts` 中的 `character.imagePath`。
-
 ## CLI 命令
 
 | 命令 | 说明 |
@@ -82,277 +107,90 @@ cd frontend && npm run dev           # 终端 2：启动 Electron 前端
 | `/skills` | 查看已注册技能 |
 | `/mcp` | 查看已注册 MCP 服务器 |
 
-## 核心架构
+## 技术架构（给技术党）
 
 ### 对话管线
 
 ```
 用户输入
-  → 小伊卡安全检测（P0 规则引擎 → P1 Llama Guard）
-      ├── BLOCK → 返回拦截提示
-      └── PASS/COMFORT → 继续
-  → 多轮上下文组装（记忆注入 + 滑动窗口裁剪）
-  → LLM 流式生成（支持 Tool Calling 自主检索知识库，最多 5 轮）
-  → 流式输出（CLI 打字效果 / WS 流式推送）
-  → 异步记忆提取
-  → 会话持久化
+  → 安全护栏（P0 规则引擎 + P1 Llama Guard 3 1B）
+  → 上下文组装（角色锚点 → 羁绊 → 情绪 → 记忆注入）
+  → LLM 流式生成（支持 Tool Calling，最多 5 轮）
+  → 流式输出 → 情绪/羁绊标记提取 → 角色漂移检测
+  → 异步记忆提取 → 会话持久化
 ```
 
-### 双入口架构
+### 情绪状态机
 
-```
-                    ┌─────────────────────┐
-                    │  src/agent/streaming │  ← 共享对话引擎
-                    └──────────┬──────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-    ┌─────────▼──────┐  ┌──────▼──────┐  ┌──────▼───────┐
-    │  main.py (CLI)  │  │  ws/        │  │  frontend/    │
-    │  终端交互        │  │  FastAPI    │  │  Electron     │
-    │  rich 格式化     │  │  /ws 端点   │  │  TypeScript   │
-    └─────────────────┘  └─────────────┘  └──────────────┘
-```
+风堇不是每轮从零开始的 NPC——她有一个跨会话持续演化的情绪系统。底层用 PAD 三维模型（Pleasure-Arousal-Dominance）追踪心情底色：每轮 LLM 回复末尾输出隐藏情绪标记，后端正则提取后用 EMA 指数移动平均平滑更新（α=0.3），防止单轮剧烈跳变。长时间不说话时，正向情绪衰减比负向慢——她会自然回归她的温暖底色，而不是面无表情的中立。状态跨会话 JSON 持久化，重启不丢失。
 
-### 双模型架构
+### 羁绊系统
 
-| 模型 | 用途 | 协议 |
-|------|------|------|
-| 主模型（默认 GLM-5.1） | 对话推理、Tool Calling | OpenAI 兼容 |
-| 辅助模型（默认 GLM-4.5-air） | 记忆提取/合并 | OpenAI 兼容 |
+风堇和灰宝的关系是活的。四维羁绊模型（温暖度/信任度/正式度/幽默度）追踪两人关系的自然演变：LLM 在回复末尾输出当前状态，后端计算隐含变化量，经 change clamp（单轮 ±0.05 封顶）和接近度衰减（越亲近越难更进一步）后累加。信任几乎锁定（180 天半衰期），温暖会慢慢降温（14 天），久不联系关系自然生疏——但不会失忆。"关系可变，角色核心不可变。"
 
-### 三种能力模型
+### 角色漂移检测
 
-| 能力 | 基类 | 触发者 | LLM 可见 | 用途 |
-|------|------|--------|-----------|------|
-| Skill | SkillBase | 系统代码 | 否 | 提示词注入（系统决定时机） |
-| Tool | ToolBase | LLM | 是 | 函数调用（LLM 自主决定），返回 str |
-| MCP | MCPServerBase | LLM | 是 | 标准化工具协议，注册时立即初始化 |
-
-### 安全护栏
-
-```
-P0 规则引擎（毫秒级，零 LLM 调用）
-  ├── 隐形字符检测（零宽空格、私用区字符）
-  ├── 关键词匹配（9 类词表）
-  └── 正则匹配
-      ↓ 未命中
-P1 Llama Guard 3 1B（语义级，懒加载）
-  └── 13 类安全分类 → 统一映射到 11 类
-```
-
-三种动作：`BLOCK`（拦截）、`COMFORT`（注入安慰提示词，不中断对话）、`PASS`（放行）
+长聊中 LLM 会逐渐偏离初始人设——这是被反复验证的问题。我们用 bge-m3 计算每轮回复与 11 条角色锚点（启动时自动从 system_prompt.md §二 解析，无需手动维护）的余弦相似度，取 top-3 平均后用 EWMA 平滑。连续两轮低于阈值时，自动将 `[角色校准]` + 锚点文本注入下一轮 user message 开头——用户不可见，不入历史，但风堇会被悄悄拉回来。设计受 Echo-Mode 和 ContextEcho（NeurIPS 2026）启发。
 
 ### 记忆系统
 
-```
-对话结束
-  → LLM 提取事实（json_object 格式，最多 2 次重试）
-  → 规则过滤（PII 黑名单 + 向量去重）
-  → 队列写入（后台线程串行）
-    ├── 相似度 < 0.1 → 去重跳过
-    ├── 冲突检测 → LLM 合并
-    └── 新事实 → 写入 ChromaDB
-  → 核心记忆保护（低重要性不可覆盖高重要性）
-  → 自动刷新 core_memory.md
+每次对话结束后，辅助小模型异步提取值得记住的事实，经 PII 过滤和向量去重后，按三级阈值路由：太相似的丢弃，明显不同的直写，中间模糊的交给小模型判断合并。写入通过单线程队列串行化（ChromaDB 非线程安全）。高重要性记忆受保护，不会被低重要性新事实覆盖。检索时双层并行：core_memory.md 全文读取（~1ms）+ ChromaDB 语义搜索（~30ms）。
 
-检索：
-  → 全文读取 core_memory.md（~1ms）
-  → ChromaDB 语义搜索 top-K（~30ms）
-  → 格式化注入对话上下文
-```
+### RAG 知识检索
 
-### RAG 管线
+风堇了解翁法罗斯的一切——但她不需要每轮都把知识塞进上下文。LLM 通过 Tool Calling 自主决定何时检索：闲聊跳过，需要时才查。检索走 6 步管道：文档加载（PDF/DOCX/MD/TXT）→ 切分 → BGE-M3 稠密 + BM25 稀疏 + RRF 融合索引 → 查询增强 → BGE-reranker-v2-m3 交叉编码器重排序。结果硬截断 1500 字符，不挤占对话窗口。
 
-```
-文档 → 加载（PDF/DOCX/MD/TXT）
-    → 切分（fixed / recursive / semantic / markdown）
-    → 索引（稠密 BGE-M3 + 稀疏 BM25 + 混合 RRF）
-    → 检索（top_k / hybrid / HyDE / parent_doc）
-    → 查询增强（rewrite / expand / decompose）
-    → 重排序（none / LLM / BGE-reranker-v2-m3 交叉编码器）
-    → 返回结果
-```
+### 安全护栏
 
-### WebSocket 协议
+两级协同：P0 规则引擎（关键词 + 正则 + 不可见字符检测，毫秒级，零 LLM 调用）挡住 90%+ 的明显攻击。
 
-前后端通过 `ws://127.0.0.1:8765/ws` 通信，17 种消息类型，支持流式推送、取消控制、心跳保持。完整协议定义见 `核心文档/核心4_WS通信协议.md`。
+### 前端
 
-### 前端架构
+Windows 桌面客户端，Electron 28 + TypeScript + 原生 HTML/CSS。不引入 React/Vue/CSS 框架——单页面，原生 DOM 足够。WebSocket 实时通信，流式打字逐字呈现，粉蓝渐变自定义标题栏。安全策略固定值：`contextIsolation: true, nodeIntegration: false, sandbox: true`。单实例锁防多窗口冲突。
 
-Windows 桌面客户端，Electron 28 + TypeScript + 原生 HTML/CSS，无框架。
-
-| 模块 | 职责 |
-|------|------|
-| CharacterDisplay | 角色展示：静态图片 + 渐变背景 + CSS 星光粒子 |
-| WSClient + MessageParser | WebSocket 连接管理、心跳 30s、超时 60s、消息收发 |
-| ChatUI + MessageRenderer + InputController | 对话区 DOM 渲染、流式打字效果、发送/停止互斥 |
-| HistorySidebar | 会话列表、切换/删除/新建/清空 |
-| state.ts | 中心状态管理（wsStatus / isReplying / sessions） |
-
-安全策略：`contextIsolation: true, nodeIntegration: false, sandbox: true`，单实例锁。布局 38% / 42% / 20%，窗口 960×680 最小 800×520，粉蓝渐变自定义标题栏。前端配置集中在 `frontend/src/renderer/config.ts`。
-
-## 技术栈
+### 关键选型
 
 | 类别 | 技术 |
 |------|------|
-| LLM 调用 | `openai` SDK |
-| 向量数据库 | `chromadb` |
-| 嵌入模型 | BGE-M3（sentence-transformers） |
+| LLM | OpenAI 兼容协议，双模型（对话 + 记忆） |
+| 嵌入 | BGE-M3（FP16，~550MB） |
+| 向量库 | ChromaDB |
 | 重排序 | BGE-reranker-v2-m3 |
-| 稀疏检索 | `rank_bm25` |
-| 文本切分 | `langchain-text-splitters` |
-| 文档解析 | `pypdf`、`python-docx` |
-| 安全模型 | Llama Guard 3 1B（transformers） |
-| 配置 | `pydantic`、`pyyaml` |
-| 日志 | `loguru` |
-| CLI | `rich` |
-| Web 框架 | `FastAPI` + `uvicorn` |
-| WebSocket | `ws`（starlette 内置） |
-| 桌面客户端 | `electron` ≥ 28 + `electron-vite` ≥ 2 + TypeScript |
-| 构建 | `electron-builder`（Portable 免安装） |
+| 安全 | Llama Guard 3 1B |
+| CLI | Rich |
+| 服务 | FastAPI + uvicorn + WebSocket |
+| 桌面 | Electron + electron-vite + electron-builder |
+| 配置 | YAML + Pydantic，全默认回退 |
+| 日志 | loguru |
+| 离线 | 模型首次下载后可零运行时网络依赖 |
 
-## 迭代计划
+## 致谢
 
-- [x] RAG 引擎 + Agent 框架
-- [x] 记忆系统（提取 + 写入 + 检索 + 冲突消解）
-- [x] 多轮对话上下文管理
-- [x] 安全护栏（规则引擎 + Llama Guard）
-- [x] WebSocket API + 会话管理
-- [x] 前端桌面客户端 V1（Electron + TypeScript）
-- [ ] OOC 率评估
-- [ ] 性能评估
-- [ ] 风堇 3D / Live2D 动画（V2）
-- [ ] MCP 动作/表情调用
+本项目在设计和开发过程中参考了以下优秀的开源项目和研究工作，特此致谢。
 
-## 项目结构
+### 情绪状态机
 
-```
-AI风堇_治愈晨昏/
-├── main.py                          # CLI 入口：启动序列 + 对话循环 + 命令路由
-├── .env.example                     # 环境变量模板
-├── requirements.txt                 # Python 依赖
-├── CLAUDE.md                        # Claude Code 指令（红线 + 文件结构速查）
-│
-├── config/                          # 配置层
-│   ├── config.yaml                  # Agent 主配置
-│   ├── config.example.yaml          # 配置示例
-│   ├── rag.yaml                     # RAG 管线配置
-│   ├── memory.yaml                  # 记忆系统配置
-│   ├── context.yaml                 # 上下文管理配置
-│   ├── safety.yaml                  # 安全护栏配置
-│   ├── system_prompt.md             # 风堇角色设定
-│   ├── prompts/                     # Prompt 模板
-│   │   ├── core_memory.md           # 核心记忆视图
-│   │   ├── memory_extraction.md     # 记忆提取提示词
-│   │   └── memory_merge.md          # 记忆合并提示词
-│   └── safety_words/                # 安全词表
-│       ├── *.txt                    # 关键词表
-│       └── *.yaml                   # 正则规则
-│
-├── data/
-│   ├── chroma/                      # RAG 向量库
-│   ├── memory_chroma/               # 记忆向量库
-│   └── sessions/                    # 会话 JSON 文件
-│
-├── models/                          # 本地模型（bge-m3 / bge-reranker-v2-m3 / Llama-Guard-3-1B）
-├── logs/
-│
-├── src/                             # 后端核心实现
-│   ├── agent/                       # Agent 核心（对话编排层）
-│   │   ├── core.py                  # Agent 主类（CLI 对话循环 + Tool Calling）
-│   │   ├── streaming.py             # 流式对话 service 层（CLI/WS 共用）
-│   │   ├── stream_controller.py     # 流式取消机制
-│   │   ├── context_manager.py       # 多轮上下文管理（记忆注入 + 滑动窗口裁剪）
-│   │   ├── message_builder.py       # 共享消息组装（system_prompt + 回滚）
-│   │   ├── skill_registry.py        # Skill 注册中心
-│   │   ├── tool_registry.py         # Tool 注册中心
-│   │   ├── mcp_manager.py           # MCP 管理器
-│   │   └── prompt_template.py       # Prompt 模板引擎
-│   │
-│   ├── rag/                         # RAG 引擎（六层管线）
-│   │   ├── rag_service.py           # RAG 服务门面
-│   │   ├── a_loader.py              # 文档加载
-│   │   ├── b_splitter.py            # 文本切分
-│   │   ├── c_indexer.py             # 向量索引
-│   │   ├── d_retriever.py           # 检索策略
-│   │   ├── e_query_enhancer.py      # 查询增强
-│   │   ├── f_reranker.py            # 重排序
-│   │   ├── embedding_registry.py    # 嵌入模型进程级单例
-│   │   └── strategies/              # 策略仓库
-│   │       ├── splitter/            # fixed, recursive, semantic, markdown
-│   │       ├── index/               # dense, sparse, hybrid
-│   │       ├── retriever/           # top_k, hybrid, hyde, parent_doc
-│   │       ├── query/               # rewrite, expand, decompose
-│   │       └── reranker/            # none, llm, cross_encoder
-│   │
-│   ├── memory/                      # 记忆系统
-│   │   ├── manager.py               # 记忆管理器（门面）
-│   │   ├── extractor.py             # 记忆提取（LLM + 规则过滤）
-│   │   ├── writer.py                # 异步写入（队列 + 冲突消解）
-│   │   ├── retriever.py             # 双层检索（核心记忆文件 + 向量搜索）
-│   │   ├── storage.py               # ChromaDB 存储层
-│   │   └── config.py                # 记忆配置模型
-│   │
-│   ├── safety/                      # 安全护栏
-│   │   ├── __init__.py              # SafetyManager（分层调度）
-│   │   ├── rule_engine.py           # P0 规则引擎（关键词 + 正则）
-│   │   ├── guard_model.py           # P1 Llama Guard 3 1B
-│   │   └── loaders.py               # 词表/规则加载
-│   │
-│   ├── session/                     # 会话管理
-│   │   ├── session.py               # Session / Message / MessageMeta
-│   │   ├── store.py                 # 原子 JSON 读写（.tmp → os.replace）
-│   │   ├── manager.py               # SessionManager — CRUD + flush
-│   │   └── context_restorer.py      # 上下文恢复
-│   │
-│   ├── server/                      # WebSocket 服务入口
-│   │   ├── app.py                   # FastAPI 工厂 + lifespan 单例加载
-│   │   └── server.py                # uvicorn 启动入口
-│   │
-│   ├── ws/                          # WebSocket 传输适配层
-│   │   ├── connection.py            # /ws 端点 + 消息路由 + 报文映射
-│   │   └── schemas.py               # WS 协议 Pydantic 模型
-│   │
-│   ├── capabilities/                # 能力抽象层
-│   │   ├── skill.py                 # Skill 基类
-│   │   ├── tool.py                  # Tool 基类
-│   │   └── mcp_server.py            # MCP 服务器基类
-│   │
-│   ├── mcp_servers/                 # MCP 服务器实例
-│   │   └── rag_server.py            # RAG MCP 服务器
-│   │
-│   ├── skills/                      # 技能插件
-│   ├── config.py                    # Pydantic 配置模型
-│   └── utils/                       # 工具函数
-│
-├── frontend/                        # Electron 桌面客户端
-│   ├── package.json
-│   ├── electron.vite.config.ts
-│   ├── electron-builder.yml
-│   └── src/
-│       ├── main.ts                  # Electron 主进程
-│       ├── preload.ts               # IPC 桥接（窗口控制 API）
-│       └── renderer/
-│           ├── index.html           # 入口 HTML
-│           ├── config.ts            # 前端配置中心
-│           ├── state.ts             # 中心状态管理
-│           ├── main.ts              # 渲染进程入口
-│           ├── styles/main.css      # 全局样式 + CSS 变量
-│           ├── assets/fengjin.jpg   # 角色展示图
-│           ├── types/               # 协议类型定义
-│           └── modules/
-│               ├── character/       # 角色展示区
-│               ├── chat/            # 对话区 UI
-│               ├── sidebar/         # 历史侧边栏
-│               └── ws/              # WebSocket 客户端
-│
-├── 核心文档/                        # 核心1(需求) 核心2(架构) 核心3(规范) 核心4(协议)
-├── 前端开发核心文档/                 # 前端详细规格文档
-├── 重要文档/                        # CR 流程 / 开发规范
-├── 学习_多轮cr经验.md               # 后端 30 轮 CR 经验总结
-└── 学习_前端8轮cr总结.md            # 前端 8 轮 CR 经验总结
-```
+- **[sovyx-ai/sovyx](https://github.com/sovyx-ai/sovyx)** — 完整 AI 伴侣框架，PAD 三维情绪模型 + Ebbinghaus 遗忘曲线实现，AGPL-3.0
+- **[kagioneko/neurostate-engine](https://github.com/kagioneko/neurostate-engine)** — 确定性情绪引擎，6 神经递质 + 6×6 交互矩阵，MIT
+- **Mehrabian (1996)** — PAD（Pleasure-Arousal-Dominance）三维情绪模型的原始理论框架
+
+### 角色漂移检测
+
+- **[Seanhong0818/Echo-Mode](https://github.com/Seanhong0818/Echo-Mode)** — 开源 tone drift 中间件，driftScore + EWMA + FSM 修复闭环，其设计直接影响了本项目的漂移检测架构，Apache-2.0
+- **[Accenture/ContextEcho](https://github.com/Accenture/ContextEcho)** — 23 模型基准测试，验证了单次锚点注入修复角色漂移 20+ 轮的可行性，为本项目的锚点注入策略提供了实验依据，Apache-2.0
+
+### 羁绊系统
+
+- **[kiro0x/five-character-engine](https://github.com/kiro0x/five-character-engine)** — "warmth moves, seals don't" 的核心理念——关系可变而角色核心不可变——深刻影响了本项目的羁绊系统设计，MIT
+- **[etherfunlab/eros-engine](https://github.com/etherfunlab/eros-engine)** — 多维度亲和力向量的建模方法为本项目的四维羁绊模型提供了参考
+
+### 安全护栏
+
+- **[verazuo/jailbreak_llms](https://github.com/verazuo/jailbreak_llms)** — ACM CCS 2024 论文，提供了 1,405 条真实世界越狱提示词数据集，用于本项目安全词库的建设，MIT
+
+---
+
+以上项目的思想和代码对本项目的情绪引擎、漂移检测、羁绊追踪和安全护栏四个核心子系统产生了实质性影响。遵循开源精神，特此标注并致谢。
 
 ## 许可证
 
