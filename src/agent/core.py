@@ -88,6 +88,7 @@ class Agent:
         tool_registry: Optional[ToolRegistry] = None,
         mood_engine=None,
         bond_tracker=None,
+        persona_guard=None,
     ):
         self.config = config
         self.session_mgr = session_mgr
@@ -96,6 +97,10 @@ class Agent:
         self.memory_manager = memory_manager
         self.mood_engine = mood_engine
         self.bond_tracker = bond_tracker
+        self.persona_guard = persona_guard
+
+        # 角色漂移：本轮检测 → 下轮注入
+        self._pending_anchor: Optional[str] = None
 
         # AsyncOpenAI — 可注入（WS 从 app.state 共享）或自动创建（CLI）
         self.client = client or AsyncOpenAI(
@@ -226,9 +231,13 @@ class Agent:
             if comfort_prompt:
                 logger.info("COMFORT 模式已激活: 自伤安抚指令将注入 system_prompt")
 
-            # 4. 情绪注入 + 记忆检索 + 上下文组装
+            # 4. 角色校准 → 羁绊注入 → 情绪注入 → 记忆检索 → 上下文组装
             t_memory_start = time.monotonic()
             api_input = message_content
+            # 角色漂移锚点（上一轮检测到偏离 → 本轮注入）
+            if self._pending_anchor:
+                api_input = self._pending_anchor + "\n\n" + api_input
+                self._pending_anchor = None
             if self.bond_tracker:
                 api_input = self.bond_tracker.inject(api_input)
             if self.mood_engine:
@@ -476,6 +485,14 @@ class Agent:
         # 兜底剥离：无论引擎是否可用，确保标记不泄漏到 session
         if full_text:
             full_text = _strip_all_tags(full_text)
+
+        # 6b. 角色漂移检测（本轮回复 → 下一轮注入）
+        if self.persona_guard and full_text:
+            try:
+                self._pending_anchor = self.persona_guard.check(full_text)
+            except Exception:
+                logger.error("角色漂移检测失败，跳过本轮")
+                self._pending_anchor = None
 
         # 7. 落盘
         if controller.cancel_requested:

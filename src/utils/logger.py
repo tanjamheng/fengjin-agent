@@ -30,6 +30,7 @@ AGENT_SOURCES = {
     "core", "streaming", "context", "message_builder",
     "skill_registry", "tool_registry", "mcp_manager",
     "mood",
+    "persona",
     # RAG
     "rag_service", "rag_server", "embedding_registry",
     "rag_loader", "rag_splitter", "rag_indexer", "rag_retriever",

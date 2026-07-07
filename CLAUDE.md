@@ -50,7 +50,7 @@
 
 ## 核心链路
 
-用户输入 → Agent.chat() 统一管线（CLI/WS 共用）→ 小伊卡安全检测（P0规则 + P1 Llama Guard）→ 多轮上下文组装（情绪注入 + 羁绊注入 + 记忆注入 + 滑动窗口裁剪）→ LLM 流式生成（stream_llm，支持 Tool Calling 自主检索知识库，最多 5 轮）→ 流式输出 → LLM 回复末尾提取情绪标记 + 羁绊标记 → EMA 更新情绪 + change clamp 更新羁绊 → 异步记忆提取（Writer WAL 崩溃恢复）→ 会话持久化
+用户输入 → Agent.chat() 统一管线（CLI/WS 共用）→ 小伊卡安全检测（P0规则 + P1 Llama Guard）→ 多轮上下文组装（角色漂移锚点 + 羁绊注入 + 情绪注入 + 记忆注入 + 滑动窗口裁剪）→ LLM 流式生成（stream_llm，支持 Tool Calling 自主检索知识库，最多 5 轮）→ 流式输出 → LLM 回复末尾提取情绪标记 + 羁绊标记 → EMA 更新情绪 + change clamp 更新羁绊 → 角色漂移检测（bge-m3 余弦相似度 → EWMA）→ 异步记忆提取（Writer WAL 崩溃恢复）→ 会话持久化
 
 ## 后端已有能力
 
@@ -60,6 +60,7 @@
 | 风堇角色系统 | 外部 system_prompt.md 定义人设，调角色不改代码 |
 | 情绪状态机 | PAD 三维情绪 + EMA 平滑 + 非对称指数衰减，LLM 输出隐藏标记，数字注入 user message |
 | 羁绊状态机 | 四维羁绊（Warmth/Trust/Formality/Humor）+ change clamp + 接近度衰减 + 非对称指数衰减，LLM 输出隐藏标记，数字注入 user message |
+| 角色漂移检测 | bge-m3 计算回复与 6 条角色锚点余弦相似度 → EWMA 平滑 → 低于阈值时注入锚点到 user message |
 | RAG 知识库 | 6 步管道检索风堇相关知识，LLM 自主决定调用时机 |
 | 记忆系统 | 跨会话记住用户信息，双存储（core_memory.md + ChromaDB），异步提取 |
 | 安全护栏 | 两级检测（规则引擎 + Llama Guard 3 1B），11 类拦截，Comfort 安抚模式 |
@@ -198,6 +199,7 @@ AI风堇_治愈晨昏/
 │   ├── safety_words/                # 安全词库（8 TXT + ~89 regex）
 │   ├── mood.yaml                     # 情绪状态机配置（PAD/EMA/衰减/漂移保护/阈值/注入）
 │   ├── bond.yaml                     # 羁绊状态机配置（4维/change clamp/接近度衰减/衰减/标签）
+│   ├── persona.yaml                  # 角色漂移检测配置（阈值/EMA/冷却/升级）
 │   ├── system_prompt.md             # 风堇主人设
 │   └── prompts/                     # Prompt 模板（core_memory / memory_extraction / memory_merge）
 │
@@ -246,6 +248,8 @@ AI风堇_治愈晨昏/
 │   │   └── engine.py                # MoodEngine — PAD+EMA+衰减+注入+持久化 (~290行)
 │   ├── bond/                        # 羁绊状态机
 │   │   └── tracker.py               # BondTracker — 4D+change clamp+接近度衰减+指数衰减+JSON持久化 (~310行)
+│   ├── persona/                     # 角色漂移检测
+│   │   └── drift_guard.py           # PersonaDriftGuard — 锚点解析+余弦相似度+EWMA+锚点注入 (~130行)
 │   │
 │   ├── safety/                      # 安全护栏
 │   │   ├── __init__.py              # SafetyManager — check(text) → SafetyResult
@@ -395,9 +399,9 @@ AI风堇_治愈晨昏/
 
 ## 清理链
 
-启动：Mood → Bond → Memory → Context → Agent → RAG → MCP → Safety → Session
+启动：Mood → Bond → Persona → Memory → Context → Agent → RAG → MCP → Safety → Session
 
-退出：Session.flush() → Agent.cleanup()（含 Skill+MCP+Tool）→ Memory.cleanup()（含 writer.stop()+storage）→ Mood.cleanup() → Bond.cleanup() → RAG.cleanup()（reranker→query_enhancer→retriever→indexer→splitter→loader）→ Safety.cleanup() → logger.complete()
+退出：Session.flush() → Agent.cleanup()（含 Skill+MCP+Tool）→ Memory.cleanup()（含 writer.stop()+storage）→ Mood.cleanup() → Bond.cleanup() → Persona.cleanup() → RAG.cleanup()（reranker→query_enhancer→retriever→indexer→splitter→loader）→ Safety.cleanup() → logger.complete()
 
 ---
 

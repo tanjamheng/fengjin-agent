@@ -87,6 +87,27 @@ async def lifespan(app: FastAPI):
             log.warning("羁绊引擎加载失败: {}", e)
             app.state.bond_tracker = None
 
+        # 角色漂移检测（复用 bge-m3，优雅降级）
+        try:
+            from ..persona.drift_guard import PersonaSettings, PersonaDriftGuard
+            from ..rag import embedding_registry as _emb_reg
+            _model_path = str(_project_root / "models" / "bge-m3")
+            _emb = _emb_reg.acquire(_model_path, "cpu")
+            persona_config = PersonaSettings.load(
+                str(_project_root / "config" / "persona.yaml")
+            )
+            persona_guard = PersonaDriftGuard(_emb, persona_config)
+            if persona_guard.anchor_count >= 3:
+                app.state.persona_guard = persona_guard
+                log.info("角色漂移检测已加载: {} 条锚点", persona_guard.anchor_count)
+            else:
+                log.warning("角色锚点不足（<3），漂移检测不可用")
+                persona_guard.cleanup()
+                app.state.persona_guard = None
+        except Exception as e:
+            log.warning("角色漂移检测加载失败: {}", e)
+            app.state.persona_guard = None
+
         # RAG 知识库 + 工具注册表（可选：知识库为空时仍可正常对话）
         try:
             from ..rag.rag_service import RAGService
@@ -158,6 +179,11 @@ async def lifespan(app: FastAPI):
             app.state.bond_tracker.cleanup()
         except Exception as e:
             log.warning("BondTracker 清理异常: {}", e)
+    if getattr(app.state, "persona_guard", None):
+        try:
+            app.state.persona_guard.cleanup()
+        except Exception as e:
+            log.warning("PersonaDriftGuard 清理异常: {}", e)
     app.state.safety.cleanup()
     log.info("应用资源已释放")
     from loguru import logger

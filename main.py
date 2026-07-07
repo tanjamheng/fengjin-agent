@@ -126,13 +126,14 @@ def _print_recent_messages(console: Console, session_mgr: SessionManager, n: int
     console.print("")
 
 
-def _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine=None, bond_tracker=None):
+def _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine=None, bond_tracker=None, persona_guard=None):
     """逐组件安全清理：每个组件独立 try/except，单点失败不阻塞其余清理"""
     for name, cleanup_fn in [
         ("Agent", lambda: agent.cleanup()),
         ("Memory", lambda: memory_manager.cleanup() if memory_manager else None),
         ("Mood", lambda: mood_engine.cleanup() if mood_engine else None),
         ("Bond", lambda: bond_tracker.cleanup() if bond_tracker else None),
+        ("Persona", lambda: persona_guard.cleanup() if persona_guard else None),
         ("RAG", lambda: rag_service.cleanup() if rag_service else None),
         ("Safety", lambda: safety_engine.cleanup() if safety_engine else None),
     ]:
@@ -147,12 +148,12 @@ def _handle_command(cmd: str, args: str, console: Console,
                     session_mgr: SessionManager,
                     agent: Agent, memory_manager: MemoryManager,
                     rag_service, safety_engine,
-                    max_turns: int, mood_engine=None, bond_tracker=None) -> bool:
+                    max_turns: int, mood_engine=None, bond_tracker=None, persona_guard=None) -> bool:
     """处理会话命令。返回 True 表示继续循环，False 表示退出。"""
 
     if cmd == "/quit":
         session_mgr.flush()
-        _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine, bond_tracker)
+        _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine, bond_tracker, persona_guard)
         from loguru import logger
         logger.complete()
         console.print("[yellow]再见！[/yellow]")
@@ -355,6 +356,25 @@ def main():
         get_logger("main").warning("羁绊引擎加载失败，羁绊功能将不可用: {}", e)
         console.print("[yellow]⚠ 羁绊引擎暂不可用，对话将无羁绊追踪[/yellow]")
 
+    # 初始化角色漂移检测（复用 bge-m3，优雅降级）
+    persona_guard = None
+    try:
+        from src.persona.drift_guard import PersonaSettings, PersonaDriftGuard
+        from src.rag import embedding_registry as _emb_reg
+        _model_path = str(PROJECT_ROOT / "models" / "bge-m3")
+        _emb = _emb_reg.acquire(_model_path, "cpu")
+        persona_config = PersonaSettings.load(str(PROJECT_ROOT / "config" / "persona.yaml"))
+        persona_guard = PersonaDriftGuard(_emb, persona_config)
+        if persona_guard.anchor_count >= 3:
+            console.print(f"[dim]角色漂移检测已加载: {persona_guard.anchor_count} 条锚点[/dim]")
+        else:
+            console.print("[yellow]⚠ 角色锚点不足（<3），漂移检测不可用[/yellow]")
+            persona_guard.cleanup()
+            persona_guard = None
+    except Exception as e:
+        get_logger("main").warning("角色漂移检测加载失败: {}", e)
+        console.print("[yellow]⚠ 角色漂移检测不可用，对话将无漂移防护[/yellow]")
+
     # 初始化安全护栏（P0 规则引擎 + P1 Llama Guard）—— 必须在 Agent 之前
     try:
         safety_engine = SafetyManager(
@@ -383,11 +403,12 @@ def main():
             memory_manager=memory_manager,
             mood_engine=mood_engine,
             bond_tracker=bond_tracker,
+            persona_guard=persona_guard,
         )
     except Exception as e:
         console.print(f"[red]Agent 初始化失败（环境变量缺失或配置错误）: {e}[/red]")
         get_logger("main").opt(exception=True).error("Agent 初始化失败")
-        # 清理已初始化的上游组件（memory_manager + mood_engine + bond_tracker + safety_engine）
+        # 清理已初始化的上游组件（memory_manager + mood_engine + bond_tracker + persona_guard + safety_engine）
         if memory_manager:
             try:
                 memory_manager.cleanup()
@@ -403,6 +424,11 @@ def main():
                 bond_tracker.cleanup()
             except Exception as cleanup_ex:
                 get_logger("main").warning("BondTracker 清理异常: {}", cleanup_ex)
+        if persona_guard:
+            try:
+                persona_guard.cleanup()
+            except Exception as cleanup_ex:
+                get_logger("main").warning("PersonaDriftGuard 清理异常: {}", cleanup_ex)
         try:
             safety_engine.cleanup()
         except Exception as cleanup_ex:
@@ -468,7 +494,7 @@ def main():
         except (EOFError, KeyboardInterrupt):
             console.print("\n[yellow]再见！[/yellow]")
             session_mgr.flush()
-            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine, bond_tracker)
+            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine, bond_tracker, persona_guard)
             from loguru import logger
             logger.complete()
             break
@@ -487,6 +513,7 @@ def main():
                     max_turns=context_settings.context.sliding_window.max_turns,
                     mood_engine=mood_engine,
                     bond_tracker=bond_tracker,
+                    persona_guard=persona_guard,
                 )
                 if not should_continue:
                     break
@@ -636,7 +663,7 @@ def main():
             # Ctrl+C — stream_reply 内部已通过 CancelledError 完成回滚
             console.print()
             session_mgr.flush()
-            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine, bond_tracker)
+            _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine, bond_tracker, persona_guard)
             from loguru import logger
             logger.complete()
             console.print("\n[yellow]再见！[/yellow]")
