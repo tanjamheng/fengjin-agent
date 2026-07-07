@@ -108,6 +108,10 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning("角色漂移检测加载失败: {}", e)
             app.state.persona_guard = None
+            try:
+                _emb_reg.release()
+            except Exception:
+                pass
 
         # RAG 知识库 + 工具注册表（可选：知识库为空时仍可正常对话）
         try:

@@ -538,6 +538,7 @@ class Agent:
         """清空对话历史（创建新会话）"""
         self.session_mgr.flush()
         self.session_mgr.create_session()
+        self._pending_anchor = None  # 角色校准不跨会话
         self.log.info("对话历史已清空")
 
     @property

@@ -3,7 +3,7 @@
 用 bge-m3 计算回复与角色锚点的余弦相似度 → EWMA 平滑 → 低于阈值时注入锚点。
 
 设计要点：
-  - 锚点从 system_prompt.md §二 解析（6 条），修改人设自动同步锚点
+  - 锚点从 system_prompt.md §二 动态解析，修改人设自动同步锚点
   - bge-m3 通过 embedding_registry 共享，零额外内存
   - 注入到 user message 开头，不入历史、用户不可见
   - cleanup() 幂等（_cleaned 标志位），红线18
@@ -26,7 +26,6 @@ from ..utils.logger import get_logger
 _DEFAULT_EMA_ALPHA = 0.3
 _DEFAULT_DRIFT_THRESHOLD = 0.65
 _DEFAULT_CONSECUTIVE_TRIGGER = 2
-_DEFAULT_ESCALATION_ROUNDS = 3
 _DEFAULT_COOLDOWN_ROUNDS = 5
 _DEFAULT_MIN_REPLY_LENGTH = 15
 
@@ -43,7 +42,6 @@ class PersonaSettings:
     ema_alpha: float = _DEFAULT_EMA_ALPHA
     drift_threshold: float = _DEFAULT_DRIFT_THRESHOLD
     consecutive_trigger: int = _DEFAULT_CONSECUTIVE_TRIGGER
-    escalation_rounds: int = _DEFAULT_ESCALATION_ROUNDS
     cooldown_rounds: int = _DEFAULT_COOLDOWN_ROUNDS
     min_reply_length: int = _DEFAULT_MIN_REPLY_LENGTH
 
@@ -70,7 +68,6 @@ class PersonaSettings:
             ema_alpha=float(detection.get("ema_alpha", _DEFAULT_EMA_ALPHA)),
             drift_threshold=float(detection.get("drift_threshold", _DEFAULT_DRIFT_THRESHOLD)),
             consecutive_trigger=int(detection.get("consecutive_trigger", _DEFAULT_CONSECUTIVE_TRIGGER)),
-            escalation_rounds=int(repair.get("escalation_rounds", _DEFAULT_ESCALATION_ROUNDS)),
             cooldown_rounds=int(repair.get("cooldown_rounds", _DEFAULT_COOLDOWN_ROUNDS)),
             min_reply_length=int(detection.get("min_reply_length", _DEFAULT_MIN_REPLY_LENGTH)),
         )
@@ -201,7 +198,8 @@ class PersonaDriftGuard:
             anchor_text = self._build_anchor()
             self._repair_active = True
             self._repair_rounds += 1
-            self._consecutive_below = 0
+            # 修复中降低注入间隔：set to trigger-1，下一轮漂移立即再次注入
+            self._consecutive_below = cfg.consecutive_trigger - 1
             self.log.info(
                 "角色漂移修复锚点已注入 (driftScore: {:.3f}, round: {})",
                 self._ewma, self._repair_rounds,
@@ -226,7 +224,7 @@ class PersonaDriftGuard:
     # ── 私有 ────────────────────────────────────────────────
 
     def _parse_anchors(self) -> None:
-        """从 system_prompt.md §二 解析 6 条角色锚点。"""
+        """从 system_prompt.md §二 解析角色锚点。"""
         try:
             text = self._system_prompt_path.read_text(encoding="utf-8")
         except Exception as e:

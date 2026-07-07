@@ -162,6 +162,8 @@ def _handle_command(cmd: str, args: str, console: Console,
     elif cmd == "/new":
         session_mgr.flush()
         agent.clear_history()
+        if persona_guard:
+            persona_guard.reset_state()
         session = session_mgr.current_session
         console.print(f"[green]新会话已创建: {session.title if session else '新会话'}[/green]")
         console.print("[bold green]风堇:[/bold green] 灰宝~今天想聊什么呢？\n")
@@ -213,6 +215,10 @@ def _handle_command(cmd: str, args: str, console: Console,
         if not session:
             console.print("[red]加载会话失败[/red]")
             return True
+
+        agent._pending_anchor = None  # 角色校准不跨会话
+        if persona_guard:
+            persona_guard.reset_state()
 
         # stream_reply() 内部调用 trim_messages()，无需手动恢复上下文
         console.print(f"[green]已加载会话: {session.title}[/green]")
@@ -375,6 +381,11 @@ def main():
     except Exception as e:
         get_logger("main").warning("角色漂移检测加载失败: {}", e)
         console.print("[yellow]⚠ 角色漂移检测不可用，对话将无漂移防护[/yellow]")
+        # acquire() 可能已成功 → 尝试释放引用计数（release() 在 refcount=0 时安全无操作）
+        try:
+            _emb_reg.release()
+        except Exception:
+            pass
 
     # 初始化安全护栏（P0 规则引擎 + P1 Llama Guard）—— 必须在 Agent 之前
     try:
