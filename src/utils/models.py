@@ -93,8 +93,13 @@ def _recover_orphaned_quantizations(emit: Callable[[str], None]) -> None:
 
 def ensure_models(
     msg: Optional[Callable[[str], None]] = None,
+    progress_callback: Optional[Callable[[str, str], None]] = None,
 ) -> bool:
     """确保所有模型已下载且量化为 FP16
+
+    Args:
+        msg: 日志回调（兼容旧接口）
+        progress_callback: 进度回调 (step_id, status) — 用于 launcher 模式
 
     健壮性：
     - 下载直写目标目录，ModelScope 自带文件级校验 + 断点续传
@@ -106,6 +111,12 @@ def ensure_models(
             msg(text)
         else:
             log.info(text)
+
+    def _progress(model_name: str, op: str, status: str):
+        """发送进度：step_id = 'model_{op}:{model_name}'"""
+        if progress_callback:
+            step_id = f"model_{op}:{model_name}"
+            progress_callback(step_id, status)
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -133,8 +144,11 @@ def ensure_models(
         # ── fp32：需要量化 ──
         if current_state == _STATE_FP32:
             _emit(f"  ⟳ {local_name} (FP32 → FP16) ...")
+            _progress(local_name, "quantize", "start")
             ok = _safe_quantize(local_name, model_type, target_path, _emit)
-            if not ok:
+            if ok:
+                _progress(local_name, "quantize", "done")
+            else:
                 all_ok = False
             continue
 
@@ -143,6 +157,7 @@ def ensure_models(
             _emit(f"  ⚠ {local_name} .state 异常 ({current_state})，重新下载")
 
         _emit(f"  ⬇ 下载 {local_name} ({ms_id}) ...")
+        _progress(local_name, "download", "start")
         target_path.mkdir(parents=True, exist_ok=True)
         try:
             # 直写目标目录：ModelScope 按文件校验 MD5
@@ -154,12 +169,17 @@ def ensure_models(
             all_ok = False
             continue
 
+        _progress(local_name, "download", "done")
+
         # 下载成功 → 写状态
         state_file.write_text(_STATE_FP32)
         _emit(f"    下载完成 ({_dir_size_gb(target_path):.1f} GB)")
 
         # ── 立即量化 ──
+        _progress(local_name, "quantize", "start")
         ok = _safe_quantize(local_name, model_type, target_path, _emit)
+        if ok:
+            _progress(local_name, "quantize", "done")
         if not ok:
             all_ok = False
 

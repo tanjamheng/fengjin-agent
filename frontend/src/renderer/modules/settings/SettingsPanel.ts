@@ -53,9 +53,12 @@ export class SettingsPanel {
   private _focusableElements: HTMLElement[] = [];
   private _focusedIndex = -1;
 
-  constructor(initialData: SettingsData, triggerEl?: HTMLElement) {
+  private _saveLabel: string;
+
+  constructor(initialData: SettingsData, triggerEl?: HTMLElement, saveLabel?: string) {
     this._data = JSON.parse(JSON.stringify(initialData));
     this._triggerEl = triggerEl || null;
+    this._saveLabel = saveLabel || "保存并应用";
   }
 
   /** 显示面板。返回 null 表示取消，返回 SettingsData 表示确认 */
@@ -139,7 +142,7 @@ export class SettingsPanel {
 
     const saveBtn = document.createElement("button");
     saveBtn.className = "dialog-btn dialog-btn--confirm settings-save-btn";
-    saveBtn.textContent = "保存并应用";
+    saveBtn.textContent = this._saveLabel;
     saveBtn.addEventListener("click", () => this._save());
     this._saveBtn = saveBtn;
 

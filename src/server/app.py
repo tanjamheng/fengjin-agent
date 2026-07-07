@@ -1,5 +1,6 @@
 """FastAPI 应用工厂"""
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,28 +11,94 @@ from openai import AsyncOpenAI
 from ..config import Config, ContextSettings, RAGSettings
 from ..safety import SafetyManager
 from ..utils.logger import get_logger
+from ..utils.progress import (
+    emit_preprocess_plan, emit_progress, emit_warn, emit_fatal, emit_ready,
+)
 
 log = get_logger("server")
+
+# ── 模型清单（与 src/utils/models.py 保持同步）──
+_MODEL_SPECS = [
+    ("bge-m3", True),               # (目录名, 必需)
+    ("bge-reranker-v2-m3", True),
+    ("Llama-Guard-3-1B", False),    # 仅 FENGJIN_GUARD_MODEL_ENABLED=true 时启用
+]
+
+
+def _scan_preprocess_plan(project_root: Path) -> list[str]:
+    """扫描模型文件状态 + 知识库状态，生成预处理步骤清单。
+
+    每个模型检查 .state 文件：
+    - 无目录 / .state 异常 → download + quantize
+    - .state=fp32 → 只需 quantize
+    - .state=fp16 → 跳过
+
+    Llama Guard 仅在 FENGJIN_GUARD_MODEL_ENABLED=true 时检查。
+    """
+    steps = []
+    models_dir = project_root / "models"
+    guard_enabled = os.environ.get("FENGJIN_GUARD_MODEL_ENABLED", "false").lower() == "true"
+
+    for dir_name, _required in _MODEL_SPECS:
+        # Llama Guard 条件跳过
+        if dir_name == "Llama-Guard-3-1B" and not guard_enabled:
+            continue
+
+        target = models_dir / dir_name
+        state_file = target / ".state"
+
+        if not target.exists():
+            # 目录不存在 → 需要下载 + 量化
+            steps.append(f"model_download:{dir_name}")
+            steps.append(f"model_quantize:{dir_name}")
+            continue
+
+        state = None
+        if state_file.exists():
+            state = state_file.read_text().strip()
+
+        if state == "fp16":
+            continue  # 已完成
+        elif state == "fp32":
+            steps.append(f"model_quantize:{dir_name}")
+        else:
+            # 无 .state 或状态异常 → 需要下载 + 量化
+            steps.append(f"model_download:{dir_name}")
+            steps.append(f"model_quantize:{dir_name}")
+
+    return steps
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时加载共享单例，关闭时释放资源
+    """应用生命周期：启动时加载共享单例，关闭时释放资源。
 
-    SafetyManager 内含 Llama Guard GPU 模型，加载约 13 秒，
-    提升为应用级单例后只加载一次（而非每个连接重载），符合资源红线。
+    Launcher 模式 (FENGJIN_LAUNCHER_MODE=1):
+    向 stdout 逐行发送 JSON 进度消息，供 Electron 主进程解析。
     """
     log.info("正在加载应用级单例（模型检查 / 配置 / 安全 / 记忆 / RAG / 工具）...")
     memory_manager = None
     rag_service = None
     try:
-        # 使用基于 __file__ 的绝对路径，与 CLI 路径保持一致
         _project_root = Path(__file__).resolve().parent.parent.parent
 
-        # ── 0. 模型检查：下载 + FP16 量化（在加载任何模型之前）──
-        from ..utils.models import ensure_models as _ensure_models
-        _ensure_models(msg=lambda text: log.info(text))
+        # ── 0. 扫描 + 发送预处理计划 ──
+        preprocess_steps = _scan_preprocess_plan(_project_root)
+        emit_preprocess_plan(preprocess_steps)
 
+        # ── 1. 模型检查：下载 + FP16 量化 ──
+        from ..utils.models import ensure_models as _ensure_models
+
+        def _model_progress(step_id: str, status: str):
+            """ensure_models 的进度回调 → 发射 JSON 到 stdout"""
+            emit_progress(step_id, status)
+
+        _ensure_models(
+            msg=lambda text: log.info(text),
+            progress_callback=_model_progress,
+        )
+
+        # ── 2. 配置 + 客户端 ──
         config = Config.load(str(_project_root / "config" / "config.yaml"))
         app.state.config = config
         app.state.client = AsyncOpenAI(
@@ -43,11 +110,16 @@ async def lifespan(app: FastAPI):
         app.state.context_config = ContextSettings.load(
             str(_project_root / "config" / "context.yaml")
         ).context
+
+        # ── 3. 安全护栏 ──
+        emit_progress("engine_init:safety", "start")
         app.state.safety = SafetyManager(
             config_path=str(_project_root / "config" / "safety.yaml")
-        )   # Llama Guard 在此加载（仅一次）
+        )
+        emit_progress("engine_init:safety", "done")
 
-        # 记忆系统（可选：环境变量缺失时优雅降级，不阻塞服务启动）
+        # ── 4. 记忆系统 ──
+        emit_progress("engine_init:memory", "start")
         try:
             from ..memory.config import MemorySettings
             memory_config = MemorySettings.load(
@@ -58,10 +130,11 @@ async def lifespan(app: FastAPI):
             log.info("记忆系统已加载")
         except Exception as e:
             log.warning("记忆系统加载失败（环境变量未设？），WS 路径无记忆增强: {}", e)
-
         app.state.memory_manager = memory_manager
+        emit_progress("engine_init:memory", "done")
 
-        # 情绪状态机（无上游依赖，无 GPU，总是成功）
+        # ── 5. 情绪引擎 ──
+        emit_progress("engine_init:mood", "start")
         try:
             from ..mood.engine import MoodSettings, MoodEngine
             mood_config = MoodSettings.load(
@@ -73,8 +146,10 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning("情绪引擎加载失败: {}", e)
             app.state.mood_engine = None
+        emit_progress("engine_init:mood", "done")
 
-        # 羁绊状态机（对齐情绪引擎，无上游依赖，无 GPU，总是成功）
+        # ── 6. 羁绊追踪 ──
+        emit_progress("engine_init:bond", "start")
         try:
             from ..bond.tracker import BondSettings, BondTracker
             bond_config = BondSettings.load(
@@ -86,8 +161,10 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning("羁绊引擎加载失败: {}", e)
             app.state.bond_tracker = None
+        emit_progress("engine_init:bond", "done")
 
-        # 角色漂移检测（复用 bge-m3，优雅降级）
+        # ── 7. 角色漂移检测 ──
+        emit_progress("engine_init:persona", "start")
         try:
             from ..persona.drift_guard import PersonaSettings, PersonaDriftGuard
             from ..rag import embedding_registry as _emb_reg
@@ -103,7 +180,7 @@ async def lifespan(app: FastAPI):
             else:
                 log.warning("角色锚点不足（<3），漂移检测不可用")
                 persona_guard.cleanup()
-                _emb_reg.release()  # 释放 acquire() 的引用计数
+                _emb_reg.release()
                 app.state.persona_guard = None
         except Exception as e:
             log.warning("角色漂移检测加载失败: {}", e)
@@ -112,8 +189,10 @@ async def lifespan(app: FastAPI):
                 _emb_reg.release()
             except Exception:
                 pass
+        emit_progress("engine_init:persona", "done")
 
-        # RAG 知识库 + 工具注册表（可选：知识库为空时仍可正常对话）
+        # ── 8. RAG 知识库 + 工具注册 ──
+        emit_progress("engine_init:rag", "start")
         try:
             from ..rag.rag_service import RAGService
             from ..agent.tool_registry import ToolRegistry
@@ -122,13 +201,12 @@ async def lifespan(app: FastAPI):
 
             rag_service = RAGService(
                 config=RAGSettings.load(str(_project_root / "config" / "rag.yaml")),
-                llm_client=None,  # WS 路径不传同步 client，RAG 仅用检索能力
+                llm_client=None,
             )
 
             tool_registry = ToolRegistry()
             mcp_manager = MCPManager()
             rag_mcp = RAGMCPServer(rag_service)
-            # register() 触发 rag_mcp.initialize() → rag_service.initialize()，避免重复 init
             mcp_manager.register(rag_mcp)
             tool_registry.register_mcp_server(rag_mcp)
 
@@ -143,11 +221,42 @@ async def lifespan(app: FastAPI):
             app.state.tool_registry = None
             app.state.mcp_manager = None
             app.state.rag_service = None
+        emit_progress("engine_init:rag", "done")
+
+        # ── 9. 知识库自动构建（仅首次，需 RAGService 已初始化）──
+        emit_progress("engine_init:knowledge", "start")
+        _knowledge_docs = 0
+        _knowledge_chunks = 0
+        if rag_service is not None:
+            try:
+                # 检查 ChromaDB collection 是否为空
+                if hasattr(rag_service, 'indexer') and rag_service.indexer is not None:
+                    coll = rag_service.indexer.collection
+                    if coll is not None and coll.count() == 0:
+                        knowledge_dir = _project_root / "数据侧_风堇资料"
+                        if knowledge_dir.is_dir():
+                            log.info("知识库为空，自动导入: {}", knowledge_dir)
+                            result = rag_service.ingest_directory(
+                                str(knowledge_dir), recursive=True
+                            )
+                            _knowledge_docs = result.get("document_count", 0)
+                            _knowledge_chunks = result.get("total_chunks", 0)
+                            log.info("知识库构建完成: {} 文档, {} chunks",
+                                     _knowledge_docs, _knowledge_chunks)
+                        else:
+                            log.warning("知识库目录不存在: {}", knowledge_dir)
+            except Exception as e:
+                log.warning("知识库自动构建失败（不影响对话）: {}", e)
+                emit_warn("engine_init:knowledge", f"知识库构建失败: {e}")
+        emit_progress("engine_init:knowledge", "done")
 
         log.info("应用级单例加载完成")
+        emit_ready()
+
     except Exception as e:
         log.opt(exception=True).error("应用级单例加载失败，服务无法启动: {}", e)
-        # 部分初始化回滚（红线19）：清理已成功加载的组件
+        emit_fatal("init_failed", str(e))
+        # 部分初始化回滚（红线19）
         for attr in ("persona_guard", "bond_tracker", "mood_engine"):
             obj = getattr(app.state, attr, None)
             if obj and hasattr(obj, "cleanup"):
@@ -172,7 +281,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # 关闭：释放资源（对称释放，清理顺序：MCP→RAG→Tool→Memory→Mood→Bond→Safety）
+    # 关闭：释放资源
     try:
         await app.state.client.close()
     except Exception as e:
@@ -213,7 +322,7 @@ async def lifespan(app: FastAPI):
     app.state.safety.cleanup()
     log.info("应用资源已释放")
     from loguru import logger
-    logger.complete()  # 等待异步日志队列排空（enqueue=True 的 handler）
+    logger.complete()
 
 
 def create_app() -> FastAPI:
@@ -221,14 +330,13 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],           # 本地桌面应用，允许所有来源
+        allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     @app.get("/health")
     async def health():
-        """健康检查 — lifespan 完成后才可达，表示所有模型已加载完毕"""
         return {"status": "ready"}
 
     from ..ws.connection import router

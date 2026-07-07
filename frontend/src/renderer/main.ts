@@ -1,8 +1,5 @@
 /**
- * Renderer 入口 — 串联五大模块 + 状态管理
- *
- * 启动顺序：CharacterDisplay → WSClient → ChatUI → HistorySidebar
- * 通过回调将模块连接，模块间不直接互相引用。
+ * Renderer 入口 — 串联五大模块 + 启动器
  */
 
 import { CONFIG } from "./config";
@@ -12,35 +9,107 @@ import { WSClient } from "./modules/ws/WSClient";
 import { ChatUI } from "./modules/chat/ChatUI";
 import { HistorySidebar } from "./modules/sidebar/HistorySidebar";
 import { SettingsPanel, type SettingsData } from "./modules/settings/SettingsPanel";
+import { LauncherRenderer } from "./modules/launcher/LauncherRenderer";
 import { Logger } from "./utils/logger";
 import type { SessionMeta, ChatMessage } from "./types/protocol";
 
 const log = new Logger("Main");
 
+// ===== 启动器 =====
+let _isLauncherMode = true; // 默认加载模式
+
+// 监听主进程：是否进入加载模式
+const api = (window as any).electronAPI;
+if (api) {
+  api.onLauncherMode((mode: string) => {
+    if (mode === "loading") _isLauncherMode = true;
+  });
+}
+
 // ===== 会话加载保护 =====
 let _loadingSession = false;
-let _loadingSessionId: string | null = null; // 跟踪正在加载的会话ID，防止快速切换覆盖
+let _loadingSessionId: string | null = null;
 let _loadTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ===== 初始化 =====
 
-// 1. CharacterDisplay（左侧角色展示）
+// 1. CharacterDisplay（左侧角色展示 — 始终显示）
 const charContainer = document.getElementById("character-container");
 if (!charContainer) throw new Error("Missing #character-container");
 const character = new CharacterDisplay(charContainer);
-character.onLoadComplete = () => {
-  log.info("Character image loaded");
-  appState.isModelLoaded = true;
-};
-character.onLoadError = () => {
-  // 渐变背景兜底，不影响聊天
-  log.warn("Character image load failed, using gradient fallback");
-  appState.isModelLoaded = true;
-};
+character.onLoadComplete = () => { appState.isModelLoaded = true; };
+character.onLoadError = () => { appState.isModelLoaded = true; };
 character.loadImage(CONFIG.character.imagePath);
 
-// 2. WSClient
-const ws = new WSClient();
+// 启动器（如果有 IPC 支持）
+const launcherContainer = document.getElementById("launcher-container");
+const appPanel = document.getElementById("app-panel");
+let launcherRenderer: LauncherRenderer | null = null;
+
+if (api && launcherContainer && appPanel) {
+  launcherRenderer = new LauncherRenderer(launcherContainer);
+
+  // 监听进度状态
+  api.onLauncherState((state: any) => {
+    launcherRenderer?.update(state);
+  });
+
+  // 需要配置 .env
+  api.onLauncherNeedConfig(async () => {
+    const result = await _showFirstTimeSettings();
+    if (result) {
+      const saved = await api.settingsWriteEnv(result);
+      if (saved.success) {
+        api.launcherRetry(); // 保存成功 → 重试启动
+      }
+    }
+  });
+
+  // 加载完成
+  launcherRenderer.onDone = () => {
+    _transitionToChat();
+  };
+}
+
+async function _showFirstTimeSettings(): Promise<SettingsData | null> {
+  const panel = new SettingsPanel({
+    main: { api_key: "", base_url: "", model: "" },
+    memory: { api_key: "", base_url: "", model: "" },
+    memory_enabled: false,
+  }, undefined, "保存并启动");
+  return panel.show();
+}
+
+function _transitionToChat(): void {
+  if (!launcherContainer || !appPanel) return;
+  // 加载区淡出
+  launcherContainer.style.opacity = "0";
+  setTimeout(() => {
+    launcherContainer!.style.display = "none";
+    appPanel!.style.display = "flex";
+    requestAnimationFrame(() => {
+      appPanel!.classList.add("app-panel--visible");
+    });
+    _isLauncherMode = false;
+    // 初始化聊天模块
+    initChatModules();
+  }, 300);
+}
+
+// 2. 如果是非 Electron 环境（浏览器 dev），直接显示聊天
+if (!api) {
+  _isLauncherMode = false;
+  if (launcherContainer) launcherContainer.style.display = "none";
+  if (appPanel) {
+    appPanel.style.display = "flex";
+    appPanel.classList.add("app-panel--visible");
+  }
+}
+
+// ===== 聊天模块（延迟到加载完成后初始化） =====
+function initChatModules(): void {
+  // 2. WSClient
+  const ws = new WSClient();
 
 // WS 回调 → ChatUI
 ws.onStreamChunk = (text) => {
@@ -339,8 +408,12 @@ sidebar.onOpenSettings = async () => {
   ws.updateConfig(main, memory, result.memory_enabled);
 };
 
-// ===== 连接 =====
-ws.connect(CONFIG.ws.url);
+  // ===== 连接 =====
+  ws.connect(CONFIG.ws.url);
+}
+
+// 非 Electron 环境直接初始化
+if (!api) { initChatModules(); }
 
 // ===== 标题栏按钮（IPC） =====
 document.getElementById("btn-minimize")?.addEventListener("click", () => {

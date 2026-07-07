@@ -105,11 +105,12 @@ Windows 桌面客户端，Electron ≥ 28.x + TypeScript + 原生 HTML/CSS，Web
   → 超时 >60s？→ 显示"回复超时"，解锁
 ```
 
-### 五大模块
+### 六大模块
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
 | 角色展示 | `modules/character/CharacterDisplay.ts` | V1 静态 JPG + 渐变背景 + CSS 星光粒子 |
+| 启动加载 | `modules/launcher/LauncherRenderer.ts` | 加载页 — 阶段标签+进度条+步骤文字，监听主进程 IPC 更新 |
 | WS 通信 | `modules/ws/WSClient.ts` + `MessageParser.ts` | 连接管理 + 心跳 30s + 10s 超时 + 消息收发 |
 | 聊天 UI | `modules/chat/ChatUI.ts` + `MessageRenderer.ts` + `InputController.ts` | DOM 渲染 + 流式拼接 + 滚动 + 发送/停止 |
 | 历史侧边栏 | `modules/sidebar/HistorySidebar.ts` | 会话列表/切换/删除，通过 WSClient 调后端 SessionManager |
@@ -182,6 +183,11 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | StreamInterrupted | 流式中断异常——客户端断连时 on_token 回调抛出，Agent.chat() 保留部分回复不回滚 |
 | Core Memory | 核心记忆——从对话中提取的用户长期信息，存储在 core_memory.md + ChromaDB |
 | BlockedError | 安全拦截异常——安全检测 BLOCK 时由 Agent.chat() 抛出，CLI/WS 各自捕获展示 |
+| FENGJIN_LAUNCHER_MODE | 启动器模式标记——Electron spawn 后端时设为 1，后端看到后 stdout 专用于 JSON 进度行、日志只写文件 |
+| preprocess_plan | 预处理步骤清单——后端启动后扫描模型/知识库状态，发给前端动态渲染步骤列表。空数组 = 跳过预处理 |
+| LauncherManager | Electron 主进程启动管理器——环境检查→spawn后端→解析stdout JSON进度→IPC推渲染进程→健康检查 |
+| 阶段一（预处理） | 启动第一阶段——仅当 preprocess_plan 非空时出现，逐项下载/量化缺失模型 |
+| 阶段二（系统加载） | 启动第二阶段——每次启动都走，初始化安全/记忆/情绪/羁绊/漂移/RAG/知识库 7 个组件 |
 
 ---
 
@@ -190,7 +196,8 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 ```
 AI风堇_治愈晨昏/
 ├── main.py                          # CLI 入口：启动序列 + 对话循环 + 命令路由
-├── start.bat                        # 一键启动脚本（双击启动后端+前端）
+├── start.bat                        # 开发模式一键启动（venv+pip+npm+后端+前端）
+├── package.bat                      # 发布打包脚本（编译前端→打包exe→组装zip）
 ├── .env                             # API Key（不入 Git）
 │
 ├── config/
@@ -282,13 +289,15 @@ AI风堇_治愈晨昏/
 │   └── utils/
 │       ├── logger.py                # loguru 配置
 │       ├── helpers.py               # 通用工具
-│       └── models.py                # 模型下载+FP16量化一体化（CLI/Server共用）
+│       ├── models.py                # 模型下载+FP16量化一体化（CLI/Server共用）
+│       └── progress.py              # 启动进度发射器 — launcher 模式输出 JSON 行到 stdout
 │
-├── frontend/                        # 前端代码（Electron + TypeScript，尚未开发）
+├── frontend/                        # 前端代码（Electron + TypeScript，V1 已实现）
+│   ├── .cache/                       # 打包缓存（Electron 二进制，.gitignore）
 │   ├── src/
-│   │   ├── main.ts                  # Electron 主进程入口
-│   │   ├── preload.ts               # preload 脚本（IPC 桥接，暴露窗口控制 API）
-│   │   └── renderer/
+│   │   ├── main.ts                  # Electron 主进程入口（含 LauncherManager 启动管理）
+│   │   ├── LauncherManager.ts       # 启动管理器 — 环境检查/spawn后端/进度解析/健康检查
+│   │   ├── preload.ts               # preload 脚本（IPC 桥接：窗口控制+启动器+设置）
 │   │       ├── index.html           # 入口 HTML
 │   │       ├── main.ts              # 渲染进程入口，串联五大模块
 │   │       ├── state.ts             # 中心状态管理（AppState）
@@ -302,6 +311,8 @@ AI风堇_治愈晨昏/
 │   │       │   │   ├── ChatUI.ts            # 对话区 DOM 管理 + 滚动行为
 │   │       │   │   ├── MessageRenderer.ts   # 消息气泡渲染（用户/AI/系统）
 │   │       │   │   └── InputController.ts   # 输入框 + 发送/停止按钮逻辑
+│   │       │   ├── launcher/
+│   │       │   │   └── LauncherRenderer.ts  # 加载页渲染 — 监听 IPC 更新进度条/文字/按钮
 │   │       │   ├── sidebar/
 │   │       │   │   └── HistorySidebar.ts    # 历史侧边栏（会话列表/切换/删除）
 │   │       │   └── ws/
@@ -360,6 +371,7 @@ AI风堇_治愈晨昏/
 17. **daemon 线程必须有停止信号和 join 超时**。
 18. **`cleanup()` 必须是幂等的**——加 `self._cleaned` 标志位，支持 cleanup→reinit→cleanup 序列。`initialize()` 中必须将 `_cleaned` 重置为 `False`。
 19. **持有资源的 `__init__`/`initialize()` 必须支持部分初始化回滚**——中途失败时清理已初始化的子组件，防止 GPU 模型/ChromaDB/线程永久泄漏。
+20. **launcher 模式下 stdout 专用于进度 JSON——禁止任何模块往 stdout 输出**。`FENGJIN_LAUNCHER_MODE=1` 时 loguru 只写文件。违反 → Electron 解析 JSON 失败 → 加载页卡死。
 
 ## Python 陷阱红线
 

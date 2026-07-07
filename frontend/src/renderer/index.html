@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:8765 ws://localhost:8765; img-src 'self' data:"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:8765 ws://localhost:8765 http://127.0.0.1:8765; img-src 'self' data:"
   />
   <title>AI风堇</title>
   <link rel="stylesheet" href="./styles/main.css" />
@@ -17,53 +17,83 @@
     <h1 class="titlebar__title">✦ AI风堇</h1>
     <nav class="titlebar__controls">
       <button class="titlebar__btn titlebar__btn--pin" id="btn-pin" title="窗口置顶" aria-label="窗口置顶">📌</button>
-      <button class="titlebar__btn" id="btn-minimize" title="最小化" aria-label="最小化"></button>
-      <button class="titlebar__btn" id="btn-maximize" title="最大化" aria-label="最大化"></button>
-      <button class="titlebar__btn titlebar__btn--close" id="btn-close" title="关闭" aria-label="关闭"></button>
+      <button class="titlebar__btn" id="btn-minimize" title="最小化" aria-label="最小化">─</button>
+      <button class="titlebar__btn" id="btn-maximize" title="最大化" aria-label="最大化">□</button>
+      <button class="titlebar__btn titlebar__btn--close" id="btn-close" title="关闭" aria-label="关闭">✕</button>
     </nav>
   </header>
 
   <!-- ===== 主内容区 ===== -->
   <main class="main-layout">
 
-    <!-- 左侧：角色展示区 (38%) -->
+    <!-- 左侧：角色展示区 (38%) — 始终显示 -->
     <section class="character-area" id="character-area">
       <div id="character-container"></div>
     </section>
 
-    <!-- 中间：对话区 (45%) -->
-    <section class="chat-area" id="chat-area">
-      <!-- 消息列表 + 滚动提示 -->
-      <div class="chat-messages" aria-live="polite" aria-relevant="additions text">
-        <div class="chat-thinking" style="display:none;">思考中...</div>
-        <div class="scroll-hint" tabindex="0" role="button" aria-label="滚动到底部">↓ 有新消息</div>
+    <!-- 右侧：加载区 + 聊天区 + 侧边栏 (62%) -->
+    <div class="right-panel" id="right-panel">
+
+      <!-- 加载区（启动时显示） -->
+      <div class="launcher-container" id="launcher-container">
+        <div class="launcher-content">
+          <!-- 阶段标签 -->
+          <div class="launcher-phase-label" id="launcher-phase-label"></div>
+          <!-- 进度条 -->
+          <div class="launcher-progress-bar" id="launcher-progress-bar">
+            <div class="launcher-progress-fill" id="launcher-progress-fill"></div>
+          </div>
+          <!-- 步骤文字 -->
+          <div class="launcher-step-text" id="launcher-step-text"></div>
+          <!-- 安抚文字 -->
+          <div class="launcher-comfort" id="launcher-comfort" style="display:none;">
+            正在下载 AI 模型（约 3-5GB），可能需要几分钟。来杯茶吧 ☕
+          </div>
+          <!-- 错误 -->
+          <div class="launcher-error" id="launcher-error" style="display:none;">
+            <span id="launcher-error-text"></span>
+            <div class="launcher-error-buttons">
+              <button class="launcher-btn launcher-btn--retry" id="launcher-btn-retry" style="display:none;">重试</button>
+              <button class="launcher-btn launcher-btn--skip" id="launcher-btn-skip" style="display:none;">跳过</button>
+              <button class="launcher-btn launcher-btn--logs" id="launcher-btn-logs" style="display:none;">查看日志</button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- 快捷回复 -->
-      <div class="chat-quick-replies" style="display:none;"></div>
+      <!-- 聊天 + 侧边栏（加载完成后显示） -->
+      <div class="app-panel" id="app-panel" style="display:none;">
+        <!-- 中间：对话区 (45% of total → ~72% of right panel) -->
+        <section class="chat-area" id="chat-area">
+          <div class="chat-messages" aria-live="polite" aria-relevant="additions text">
+            <div class="chat-thinking" style="display:none;">思考中...</div>
+            <div class="scroll-hint" tabindex="0" role="button" aria-label="滚动到底部">↓ 有新消息</div>
+          </div>
+          <div class="chat-quick-replies" style="display:none;"></div>
+          <div class="chat-input-area">
+            <label for="chat-input" class="sr-only">输入消息</label>
+            <textarea
+              class="chat-input"
+              id="chat-input"
+              placeholder="在此输入消息..."
+              rows="1"
+              maxlength="10000"
+            ></textarea>
+            <button class="chat-send-btn chat-send-btn--disabled" id="chat-send-btn" disabled>发送</button>
+          </div>
+        </section>
 
-      <!-- 输入区 -->
-      <div class="chat-input-area">
-        <label for="chat-input" class="sr-only">输入消息</label>
-        <textarea
-          class="chat-input"
-          id="chat-input"
-          placeholder="在此输入消息..."
-          rows="1"
-          maxlength="10000"
-        ></textarea>
-        <button class="chat-send-btn chat-send-btn--disabled" id="chat-send-btn" disabled>发送</button>
+        <!-- 右侧：历史侧边栏 (17% of total → ~28% of right panel) -->
+        <aside class="sidebar-area" id="sidebar-area">
+          <div id="sidebar-container"></div>
+        </aside>
       </div>
-    </section>
 
-    <!-- 右侧：历史侧边栏 (17%) -->
-    <aside class="sidebar-area" id="sidebar-area">
-      <div id="sidebar-container"></div>
-    </aside>
+    </div>
 
   </main>
 
-  <!-- ===== 状态栏（全宽） ===== -->
+  <!-- ===== 状态栏 ===== -->
   <footer class="status-bar">
     <span class="status-indicator status-indicator--offline" role="status" aria-label="未连接">●</span>
     <span class="status-text">未连接 — 请启动后端</span>

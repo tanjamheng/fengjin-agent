@@ -1175,3 +1175,148 @@ html, body {
   background: linear-gradient(180deg, rgba(255, 186, 204, 0.08) 0%, rgba(154, 194, 255, 0.06) 100%);
   border-top: 1px solid rgba(180, 160, 200, 0.15);
 }
+
+/* ========================================
+   启动加载页
+   ======================================== */
+
+/* 右侧面板：加载区 + app 区共用 */
+.right-panel {
+  flex: 1;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 加载容器 */
+.launcher-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-chat);
+  transition: opacity 0.3s ease;
+}
+
+.launcher-content {
+  text-align: center;
+  max-width: 360px;
+  width: 100%;
+}
+
+.launcher-phase-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-bottom: 12px;
+  letter-spacing: 1px;
+}
+
+/* 进度条 */
+.launcher-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(154, 194, 255, 0.2);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.launcher-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #FFBACC, #9AC2FF);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  position: relative;
+}
+
+.launcher-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.3) 50%,
+    transparent 100%
+  );
+  animation: launcher-shimmer 2s infinite;
+}
+
+@keyframes launcher-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* 步骤文字 */
+.launcher-step-text {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+  min-height: 20px;
+}
+
+/* 安抚文字 */
+.launcher-comfort {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 6px;
+  opacity: 0.8;
+}
+
+/* 错误 */
+.launcher-error {
+  margin-top: 16px;
+}
+
+.launcher-error span {
+  display: block;
+  font-size: 13px;
+  color: var(--color-status-offline);
+  margin-bottom: 10px;
+}
+
+.launcher-error-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.launcher-btn {
+  padding: 6px 18px;
+  border: 1px solid var(--color-input-border);
+  border-radius: 14px;
+  background: #fff;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.launcher-btn:hover {
+  background: var(--color-bubble-ai);
+  border-color: var(--color-titlebar-start);
+}
+
+.launcher-btn--retry {
+  background: linear-gradient(135deg, #FFBACC, #9AC2FF);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+}
+
+.launcher-btn--retry:hover {
+  opacity: 0.9;
+}
+
+/* App 面板（聊天 + 侧边栏） */
+.app-panel {
+  flex: 1;
+  display: flex;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.app-panel.app-panel--visible {
+  opacity: 1;
+}

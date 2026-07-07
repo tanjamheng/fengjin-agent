@@ -79,59 +79,67 @@ class LogConfig:
         rotation_size: str = "10 MB",
         retention_days: str = "7 days",
         json_format: bool = False,
+        stdout_enabled: bool = True,
+        file_enabled: bool = True,
     ):
         self.log_dir = log_dir
         self.log_level = log_level
         self.rotation_size = rotation_size
         self.retention_days = retention_days
         self.json_format = json_format
+        self.stdout_enabled = stdout_enabled
+        self.file_enabled = file_enabled
 
 
 def setup_logger(config: Optional[LogConfig] = None) -> None:
-    """配置日志系统 — 控制台 + app.log 文件输出"""
+    """配置日志系统 — 控制台(stderr) + app.log 文件输出
+
+    Launcher 模式 (stdout_enabled=False): 不写 stderr，只写文件。
+    此时 stdout 专用于进度 JSON 行。
+    """
     if config is None:
         config = LogConfig()
 
     logger.remove()
 
-    # ═══ 控制台输出 ═══
-    # 简洁格式：时间 | 级别 | source | trace_id | 消息
-    logger.add(
-        sys.stderr,
-        level=config.log_level,
-        format=(
-            "<green>{time:HH:mm:ss}</green> | "
-            "<level>{level: <8}</level> | "
-            "{extra[source]: <18} | "
-            "<cyan>{extra[trace_id]}</cyan> | "
-            "<level>{message}</level>"
-        ),
-    )
+    # ═══ 控制台输出（stderr） ═══
+    if config.stdout_enabled:
+        logger.add(
+            sys.stderr,
+            level=config.log_level,
+            format=(
+                "<green>{time:HH:mm:ss}</green> | "
+                "<level>{level: <8}</level> | "
+                "{extra[source]: <18} | "
+                "<cyan>{extra[trace_id]}</cyan> | "
+                "<level>{message}</level>"
+            ),
+        )
 
     # ═══ 文件输出 ═══
-    # 详细格式：时间 | 级别 | source | trace_id | component | 位置 | 消息
-    file_fmt = (
-        "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
-        "{level: <8} | "
-        "{extra[source]: <18} | "
-        "{extra[trace_id]: <8} | "
-        "{extra[component]: <6} | "
-        "{name}:{function}:{line} | "
-        "{message}"
-    )
+    if config.file_enabled:
+        file_fmt = (
+            "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
+            "{level: <8} | "
+            "{extra[source]: <18} | "
+            "{extra[trace_id]: <8} | "
+            "{extra[component]: <6} | "
+            "{name}:{function}:{line} | "
+            "{message}"
+        )
 
-    logger.add(
-        f"{config.log_dir}/app.log",
-        level=config.log_level,
-        format=file_fmt,
-        rotation=config.rotation_size,
-        retention=config.retention_days,
-        encoding="utf-8",
-        enqueue=True,
-    )
+        logger.add(
+            f"{config.log_dir}/app.log",
+            level=config.log_level,
+            format=file_fmt,
+            rotation=config.rotation_size,
+            retention=config.retention_days,
+            encoding="utf-8",
+            enqueue=True,
+        )
 
     # JSON 格式日志（全量，用于分析）
-    if config.json_format:
+    if config.json_format and config.file_enabled:
         logger.add(
             f"{config.log_dir}/app_json.log",
             level=config.log_level,
