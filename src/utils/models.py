@@ -173,6 +173,7 @@ def ensure_models(
         except Exception as e:
             _emit(f"    ✗ 下载失败: {e}")
             _emit(f"    （目录已保留，下次启动自动续传）")
+            _progress(local_name, "download", "done")  # 通知前端推进进度条
             all_ok = False
             continue
 
@@ -185,8 +186,7 @@ def ensure_models(
         # ── 立即量化 ──
         _progress(local_name, "quantize", "start")
         ok = _safe_quantize(local_name, model_type, target_path, _emit)
-        if ok:
-            _progress(local_name, "quantize", "done")
+        _progress(local_name, "quantize", "done")  # 无论成败都推进进度条
         if not ok:
             all_ok = False
 

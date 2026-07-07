@@ -93,10 +93,13 @@ async def lifespan(app: FastAPI):
             """ensure_models 的进度回调 → 发射 JSON 到 stdout"""
             emit_progress(step_id, status)
 
-        _ensure_models(
+        _all_ok = _ensure_models(
             msg=lambda text: log.info(text),
             progress_callback=_model_progress,
         )
+        if not _all_ok:
+            log.warning("部分模型加载失败，对话功能可能受限")
+            emit_warn("model_check", "部分模型加载失败，对话功能可能受限。查看日志了解详情。")
 
         # ── 2. 配置 + 客户端 ──
         config = Config.load(str(_project_root / "config" / "config.yaml"))
@@ -264,6 +267,20 @@ async def lifespan(app: FastAPI):
                     obj.cleanup()
                 except Exception as ce:
                     log.warning("{} cleanup 异常: {}", attr, ce)
+        if rag_service:
+            try:
+                rag_service.cleanup()
+            except Exception as ce:
+                log.warning("rag_service cleanup 异常: {}", ce)
+        mcp_mgr = getattr(app.state, "mcp_manager", None)
+        if mcp_mgr:
+            try:
+                mcp_mgr.cleanup_all()
+            except Exception as ce:
+                log.warning("mcp_manager cleanup 异常: {}", ce)
+        tool_reg = getattr(app.state, "tool_registry", None)
+        if tool_reg:
+            tool_reg.clear()
         if memory_manager:
             try:
                 memory_manager.cleanup()

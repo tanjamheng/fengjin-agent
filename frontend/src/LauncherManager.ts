@@ -61,6 +61,7 @@ export class LauncherManager {
   private _state: LauncherState;
   private _watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private _healthTimer: ReturnType<typeof setTimeout> | null = null;
+  private _warnTimer: ReturnType<typeof setTimeout> | null = null;
 
   // 阶段二硬编码：7 个 engine_init 步骤
   private readonly ENGINE_STEPS = [
@@ -127,6 +128,7 @@ export class LauncherManager {
       // 2. spawn 后端 — 后端扫描模型状态 → preprocess_plan → 切换阶段
       this._spawnBackend();
     } catch (e: any) {
+      if (e.message === "NEED_CONFIG") throw e; // 向上传播给 main.ts 弹出设置面板
       this._setError(e.message || "启动失败", true, false, true);
     }
   }
@@ -142,6 +144,7 @@ export class LauncherManager {
       this._checkEnvConfig();
       this._spawnBackend();
     } catch (e: any) {
+      if (e.message === "NEED_CONFIG") throw e; // 向上传播给 main.ts 弹出设置面板
       this._setError(e.message || "重试失败", true, false, true);
     }
   }
@@ -181,13 +184,20 @@ export class LauncherManager {
     return new Promise((resolve, reject) => {
       const proc = spawn("python", ["-m", "venv", "venv"], {
         cwd: this._projectRoot,
-        timeout: 120_000,
       });
+      const timer = setTimeout(() => {
+        proc.kill();
+        reject(new Error("venv 创建超时，请检查 Python 安装"));
+      }, 120_000);
       proc.on("close", (code) => {
+        clearTimeout(timer);
         if (code === 0) resolve();
         else reject(new Error("venv 创建失败，请检查 Python 安装"));
       });
-      proc.on("error", (err) => reject(new Error(`venv 创建失败: ${err.message}`)));
+      proc.on("error", (err) => {
+        clearTimeout(timer);
+        reject(new Error(`venv 创建失败: ${err.message}`));
+      });
     });
   }
 
@@ -268,6 +278,8 @@ export class LauncherManager {
   _killBackend(): void {
     this._clearTimers();
     if (this._backend) {
+      // 移除事件监听器，防止 kill 后异步 close 事件污染 retry() 新状态
+      this._backend.removeAllListeners();
       try {
         // Windows: 杀子进程树
         if (process.platform === "win32") {
@@ -327,6 +339,7 @@ export class LauncherManager {
     this._state.phase = "preprocess";
     this._state.phaseLabel = "正在预处理...";
     this._state.progressPercent = 0;
+    this._resetWatchdog(); // 重置看门狗，给第一个下载步骤完整的 5 分钟预算
 
     // 是否有模型下载步骤 → 显示安抚
     this._state.showComfort = steps.some((s) => s.startsWith("model_download"));
@@ -356,7 +369,9 @@ export class LauncherManager {
     this._state.showLogs = true;
     this._emitState();
     // 2 秒后自动推进
-    setTimeout(() => {
+    if (this._warnTimer) clearTimeout(this._warnTimer);
+    this._warnTimer = setTimeout(() => {
+      this._warnTimer = null;
       this._state.showRetry = false;
       this._state.showSkip = false;
       this._advanceProgress();
@@ -364,7 +379,7 @@ export class LauncherManager {
   }
 
   private _handleReady(): void {
-    if (this._state.phase === "done") return; // 防竞态：已由其他路径触发
+    if (this._state.phase === "done" || this._state.phase === "error") return; // 防竞态 + 防覆盖致命错误
     this._state.phase = "done";
     this._state.phaseLabel = "";
     this._state.stepText = "";
@@ -403,6 +418,7 @@ export class LauncherManager {
     this._state.phase = "system_load";
     this._state.phaseLabel = "正在加载系统...";
     this._state.progressPercent = 0;
+    this._resetWatchdog(); // 给系统加载阶段完整的看门狗预算
     this._state.currentStepIndex = 0;
     this._state.showComfort = false;
     this._state.preprocessSteps = [];
@@ -469,6 +485,7 @@ export class LauncherManager {
   private _clearTimers(): void {
     if (this._watchdogTimer) { clearTimeout(this._watchdogTimer); this._watchdogTimer = null; }
     if (this._healthTimer) { clearTimeout(this._healthTimer); this._healthTimer = null; }
+    if (this._warnTimer) { clearTimeout(this._warnTimer); this._warnTimer = null; }
   }
 
   // ── 辅助 ──
