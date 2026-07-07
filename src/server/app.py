@@ -147,6 +147,27 @@ async def lifespan(app: FastAPI):
         log.info("应用级单例加载完成")
     except Exception as e:
         log.opt(exception=True).error("应用级单例加载失败，服务无法启动: {}", e)
+        # 部分初始化回滚（红线19）：清理已成功加载的组件
+        for attr in ("persona_guard", "bond_tracker", "mood_engine"):
+            obj = getattr(app.state, attr, None)
+            if obj and hasattr(obj, "cleanup"):
+                try:
+                    obj.cleanup()
+                except Exception as ce:
+                    log.warning("{} cleanup 异常: {}", attr, ce)
+        if memory_manager:
+            try:
+                memory_manager.cleanup()
+            except Exception as ce:
+                log.warning("memory_manager cleanup 异常: {}", ce)
+        try:
+            app.state.safety.cleanup()
+        except Exception as ce:
+            log.warning("safety cleanup 异常: {}", ce)
+        try:
+            await app.state.client.close()
+        except Exception as ce:
+            log.warning("client close 异常: {}", ce)
         raise
 
     yield
