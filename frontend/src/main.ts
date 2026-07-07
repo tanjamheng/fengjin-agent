@@ -140,9 +140,28 @@ async function startLauncher(): Promise<void> {
 // 这里提供渲染进程可以调用的操作
 
 ipcMain.handle("launcher:retry", async () => {
-  if (launcher) {
+  if (!launcher) return;
+  try {
     await launcher.retry();
     launcher.startHealthPoll();
+  } catch (e: any) {
+    if (e.message === "NEED_CONFIG") {
+      win?.webContents.send("launcher:needConfig");
+    } else {
+      win?.webContents.send("launcher:state", {
+        phase: "error",
+        phaseLabel: "",
+        stepText: "",
+        progressPercent: 0,
+        showComfort: false,
+        preprocessSteps: [],
+        currentStepIndex: 0,
+        error: e.message || "重试失败",
+        showRetry: true,
+        showSkip: false,
+        showLogs: true,
+      });
+    }
   }
 });
 

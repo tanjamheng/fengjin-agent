@@ -362,13 +362,14 @@ export class LauncherManager {
   }
 
   private _handleWarn(msg: ProgressMessage): void {
-    // 非致命 → 短暂显示警告，跳过当前步骤
+    // 非致命 → 短暂显示警告
     this._state.stepText = `⚠ ${msg.error || "步骤失败，已跳过"}`;
     this._state.showRetry = true;
     this._state.showSkip = true;
     this._state.showLogs = true;
     this._emitState();
-    // 2 秒后自动推进
+    // 仅 preprocess 阶段自动推进（下载/量化步骤），system_load 阶段 warn 为纯信息提示
+    if (this._state.phase !== "preprocess") return;
     if (this._warnTimer) clearTimeout(this._warnTimer);
     this._warnTimer = setTimeout(() => {
       this._warnTimer = null;

@@ -153,9 +153,8 @@ def ensure_models(
             _emit(f"  ⟳ {local_name} (FP32 → FP16) ...")
             _progress(local_name, "quantize", "start")
             ok = _safe_quantize(local_name, model_type, target_path, _emit)
-            if ok:
-                _progress(local_name, "quantize", "done")
-            else:
+            _progress(local_name, "quantize", "done")  # 无论成败都推进进度条
+            if not ok:
                 all_ok = False
             continue
 
