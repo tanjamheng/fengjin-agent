@@ -24,6 +24,7 @@ export class LauncherRenderer {
   private _phaseLabel: HTMLElement;
   private _progressBar: HTMLElement;
   private _progressFill: HTMLElement;
+  private _percentText: HTMLElement;
   private _stepText: HTMLElement;
   private _comfortText: HTMLElement;
   private _errorBox: HTMLElement;
@@ -31,13 +32,42 @@ export class LauncherRenderer {
   private _btnRetry: HTMLElement;
   private _btnSkip: HTMLElement;
   private _btnLogs: HTMLElement;
+  private _lastPhase: string = "";
+  private _comfortIndex: number = -1;
+  private _comfortPrev: number[] = []; // 前两次的 index，避免重复
+  private _doneFired: boolean = false;
   private _onDone: (() => void) | null = null;
+
+  // 风堇安抚语 — 点击可切换
+  private static readonly COMFORT_MESSAGES = [
+    "别急哦，我在准备呢~",
+    "马上就能见面了……",
+    "昏光庭院的午后，最适合等待了。",
+    "嘿，你今天心情怎么样？",
+    "来杯茶吧，很快就好了。",
+    "我会好好准备的，不会让你失望。",
+    "愿这一抹微光，拨开云雾。",
+    "嗯……让我想想，先从哪一步开始呢？",
+    "稍微等一下下，值得的。",
+    "灰宝，你在外面等着就好~",
+    "治愈需要一点时间，耐心也是良药哦。",
+    "风堇正在赶来……路上采了几朵花。",
+    "每一次等待，都是为了更好的重逢。",
+    "别担心，我在呢。",
+    "翁法罗斯的星光会陪你等。",
+    "好了好了，就快了……你还真是急性子呢。",
+    "今天的我，比昨天更想见你。",
+    "呼吸——放轻松，一切都会好的。",
+    "昏光庭院的花开了，你要看看吗？",
+    "不管多久，我都会在这里等你回来。",
+  ];
 
   constructor(container: HTMLElement) {
     this._container = container;
     this._phaseLabel = container.querySelector("#launcher-phase-label")!;
     this._progressBar = container.querySelector("#launcher-progress-bar")!;
     this._progressFill = container.querySelector("#launcher-progress-fill")!;
+    this._percentText = container.querySelector("#launcher-percent")!;
     this._stepText = container.querySelector("#launcher-step-text")!;
     this._comfortText = container.querySelector("#launcher-comfort")!;
     this._errorBox = container.querySelector("#launcher-error")!;
@@ -45,6 +75,9 @@ export class LauncherRenderer {
     this._btnRetry = container.querySelector("#launcher-btn-retry")!;
     this._btnSkip = container.querySelector("#launcher-btn-skip")!;
     this._btnLogs = container.querySelector("#launcher-btn-logs")!;
+
+    // 随机初始安抚语
+    this._pickNextComfort();
 
     this._bindButtons();
   }
@@ -56,22 +89,39 @@ export class LauncherRenderer {
 
   /** 主进程推送状态更新 */
   update(state: LauncherState): void {
-    // 阶段标签
-    this._phaseLabel.textContent = state.phaseLabel;
-    this._phaseLabel.style.display = state.phaseLabel ? "" : "none";
+    const pct = Math.min(100, Math.max(0, state.progressPercent));
+
+    // 阶段标签（用 visibility 而非 display，保证过渡动画生效）
+    if (state.phaseLabel !== this._lastPhase) {
+      this._phaseLabel.style.opacity = "0";
+      setTimeout(() => {
+        this._phaseLabel.textContent = state.phaseLabel;
+        this._phaseLabel.style.visibility = state.phaseLabel ? "visible" : "hidden";
+        if (state.phaseLabel) {
+          this._phaseLabel.style.opacity = "1";
+        }
+      }, 150);
+      this._lastPhase = state.phaseLabel;
+    }
 
     // 步骤文字
     this._stepText.textContent = state.stepText;
 
-    // 进度条
-    const pct = Math.min(100, Math.max(0, state.progressPercent));
+    // 进度条 + 百分比
     this._progressFill.style.width = `${pct}%`;
+    this._percentText.textContent = `${pct}%`;
     if (state.phase === "preprocess" || state.phase === "system_load") {
       this._progressBar.style.display = "";
     }
 
-    // 安抚文字
-    this._comfortText.style.display = state.showComfort ? "" : "none";
+    // 安抚文字 — 预处理和系统加载阶段都显示
+    if (state.phase === "preprocess" || state.phase === "system_load") {
+      this._comfortText.style.display = "";
+      if (this._comfortIndex < 0) this._pickNextComfort();
+      this._comfortText.textContent = LauncherRenderer.COMFORT_MESSAGES[this._comfortIndex];
+    } else {
+      this._comfortText.style.display = "none";
+    }
 
     // 错误
     if (state.error) {
@@ -89,8 +139,10 @@ export class LauncherRenderer {
     // 完成
     if (state.phase === "done") {
       this._progressFill.style.width = "100%";
+      this._percentText.textContent = "100%";
       this._phaseLabel.textContent = "";
       this._stepText.textContent = "";
+      this._lastPhase = "";
       this._triggerDone();
     }
   }
@@ -105,9 +157,34 @@ export class LauncherRenderer {
     this._btnLogs.addEventListener("click", () => {
       (window as any).electronAPI?.openLogs();
     });
+
+    // 点击安抚语随机切换（避免与前2次重复）
+    this._comfortText.addEventListener("click", () => {
+      this._pickNextComfort();
+      this._comfortText.textContent = LauncherRenderer.COMFORT_MESSAGES[this._comfortIndex];
+      // 切换时短暂闪烁
+      this._comfortText.style.opacity = "0.5";
+      requestAnimationFrame(() => {
+        this._comfortText.style.opacity = "";
+      });
+    });
+  }
+
+  /** 随机选取安抚语，排除前2次出现过的（拒绝采样，O(1) 期望） */
+  private _pickNextComfort(): void {
+    const total = LauncherRenderer.COMFORT_MESSAGES.length;
+    let pick: number;
+    do {
+      pick = Math.floor(Math.random() * total);
+    } while (this._comfortPrev.includes(pick) && this._comfortPrev.length < total);
+    this._comfortIndex = pick;
+    this._comfortPrev.push(pick);
+    if (this._comfortPrev.length > 2) this._comfortPrev.shift();
   }
 
   private _triggerDone(): void {
+    if (this._doneFired) return;
+    this._doneFired = true;
     // 延迟一帧，让 100% 进度条渲染出来
     requestAnimationFrame(() => {
       if (this._onDone) this._onDone();

@@ -111,18 +111,14 @@ export class LauncherManager {
   /** 完整启动流程 */
   async start(): Promise<void> {
     try {
-      // 0. 环境检查
-      this._sendState("env_check", "", "正在检查运行环境...", 0);
+      // 0. 环境检查（静默，不打扰用户）
       this._checkPython();
       await this._ensureVenv();
       this._checkEnvConfig();
       this._ensureDirectories();
 
-      // 1. spawn 后端
-      this._sendState("env_check", "", "正在启动服务...", 10);
+      // 1. spawn 后端 — 第一条进度消息到达后 UI 统一亮相
       this._spawnBackend();
-
-      // 后续由 stdout 解析驱动
     } catch (e: any) {
       this._setError(e.message || "启动失败", true, false, true);
     }
@@ -361,6 +357,7 @@ export class LauncherManager {
   }
 
   private _handleReady(): void {
+    if (this._state.phase === "done") return; // 防竞态：已由其他路径触发
     this._state.phase = "done";
     this._state.phaseLabel = "";
     this._state.stepText = "";
@@ -468,7 +465,7 @@ export class LauncherManager {
   // ── 辅助 ──
 
   private _labelForStep(step: string): string {
-    return STEP_LABELS[step] || step.replace(/_/g, " ").replace("model_", "").replace(":", " ");
+    return STEP_LABELS[step] || this.ENGINE_LABELS[step] || step;
   }
 
   private _emitState(): void {

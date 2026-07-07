@@ -43,7 +43,9 @@ function createWindow(): void {
     resizable: true,
     frame: false,
     titleBarStyle: "hidden",
-    icon: join(app.getAppPath(), "out/renderer/assets/avatar-fengjin.png"),
+    icon: app.isPackaged
+      ? join(__dirname, "../renderer/assets/avatar-fengjin.png")
+      : join(app.getAppPath(), "src/renderer/assets/avatar-fengjin.png"),
     show: false, // 先隐藏，ready-to-show 再显示
     webPreferences: {
       contextIsolation: true,

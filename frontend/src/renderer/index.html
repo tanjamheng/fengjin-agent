@@ -17,9 +17,9 @@
     <h1 class="titlebar__title">✦ AI风堇</h1>
     <nav class="titlebar__controls">
       <button class="titlebar__btn titlebar__btn--pin" id="btn-pin" title="窗口置顶" aria-label="窗口置顶">📌</button>
-      <button class="titlebar__btn" id="btn-minimize" title="最小化" aria-label="最小化">─</button>
-      <button class="titlebar__btn" id="btn-maximize" title="最大化" aria-label="最大化">□</button>
-      <button class="titlebar__btn titlebar__btn--close" id="btn-close" title="关闭" aria-label="关闭">✕</button>
+      <button class="titlebar__btn" id="btn-minimize" title="最小化" aria-label="最小化"></button>
+      <button class="titlebar__btn" id="btn-maximize" title="最大化" aria-label="最大化"></button>
+      <button class="titlebar__btn titlebar__btn--close" id="btn-close" title="关闭" aria-label="关闭"></button>
     </nav>
   </header>
 
@@ -39,9 +39,12 @@
         <div class="launcher-content">
           <!-- 阶段标签 -->
           <div class="launcher-phase-label" id="launcher-phase-label"></div>
-          <!-- 进度条 -->
-          <div class="launcher-progress-bar" id="launcher-progress-bar">
-            <div class="launcher-progress-fill" id="launcher-progress-fill"></div>
+          <!-- 进度条 + 百分比 -->
+          <div class="launcher-progress-row">
+            <div class="launcher-progress-bar" id="launcher-progress-bar">
+              <div class="launcher-progress-fill" id="launcher-progress-fill"></div>
+            </div>
+            <span class="launcher-percent" id="launcher-percent">0%</span>
           </div>
           <!-- 步骤文字 -->
           <div class="launcher-step-text" id="launcher-step-text"></div>

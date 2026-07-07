@@ -9,7 +9,7 @@ echo.
 REM ============================================================
 REM  0. Restart: kill old backend if already running
 REM ============================================================
-echo  [0/5] Checking for running instances...
+echo  [0/4] Checking for running instances...
 
 powershell -Command ^
   "$c = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
@@ -29,7 +29,7 @@ echo.
 REM ============================================================
 REM  1. Python venv
 REM ============================================================
-echo  [1/5] Python virtual environment...
+echo  [1/4] Python virtual environment...
 if not exist "venv\Scripts\python.exe" (
     echo    Creating venv...
     python -m venv venv
@@ -44,7 +44,7 @@ echo    OK
 REM ============================================================
 REM  2. Python dependencies
 REM ============================================================
-echo  [2/5] Python dependencies...
+echo  [2/4] Python dependencies...
 call venv\Scripts\python.exe -m pip install -r requirements.txt -q >nul 2>&1
 if errorlevel 1 (
     echo    WARNING: Some dependencies failed to install, continuing...
@@ -54,7 +54,7 @@ echo    OK
 REM ============================================================
 REM  3. Frontend dependencies
 REM ============================================================
-echo  [3/5] Frontend dependencies...
+echo  [3/4] Frontend dependencies...
 if not exist "frontend\node_modules\" (
     echo    Installing...
     cd frontend
@@ -69,34 +69,9 @@ if not exist "frontend\node_modules\" (
 echo    OK
 
 REM ============================================================
-REM  4. Start backend (silent, logs -> logs\app.log)
+REM  4. Start Electron (LauncherManager spawns backend internally)
 REM ============================================================
-echo  [4/5] Starting backend...
-start "" /B venv\Scripts\python.exe -m src.server.server >nul 2>&1
-
-echo    Waiting for backend (models loading, ~30s first run)...
-powershell -Command ^
-  "for ($i=1; $i -le 120; $i++) {" ^
-  "  try {" ^
-  "    $r = Invoke-RestMethod http://127.0.0.1:8765/health -TimeoutSec 2;" ^
-  "    if ($r.status -eq 'ready') { Write-Host ('    Backend ready in ' + $i + 's'); exit 0 }" ^
-  "  } catch {}" ^
-  "  if ($i %% 15 -eq 0) { Write-Host ('    ...still waiting (' + $i + 's)') };" ^
-  "  Start-Sleep 1" ^
-  "}; Write-Host '    ERROR: Backend did not respond within 120s'; exit 1"
-
-if errorlevel 1 (
-    echo.
-    echo    Backend failed to start. Check logs\app.log
-    echo    Run manually: venv\Scripts\python.exe -m src.server.server
-    pause
-    exit /b 1
-)
-
-REM ============================================================
-REM  5. Start frontend (Electron opens its own window)
-REM ============================================================
-echo  [5/5] Starting frontend...
+echo  [4/4] Starting frontend...
 start "" /B cmd /c "cd /d frontend && npm run dev >nul 2>&1"
 echo    Electron launching...
 

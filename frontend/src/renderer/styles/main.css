@@ -1183,51 +1183,74 @@ html, body {
 /* 右侧面板：加载区 + app 区共用 */
 .right-panel {
   flex: 1;
-  display: flex;
   position: relative;
   overflow: hidden;
 }
 
-/* 加载容器 */
+/* 加载容器 — 绝对定位覆盖 app 面板，内容居中 */
 .launcher-container {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--color-bg-chat);
   transition: opacity 0.3s ease;
+  z-index: 2;
 }
 
 .launcher-content {
   text-align: center;
-  max-width: 360px;
+  max-width: 400px;
   width: 100%;
+  padding: 0 24px;
 }
 
+/* 阶段标签：大、粗、靠上 + 呼吸感 */
 .launcher-phase-label {
-  font-size: 13px;
-  color: var(--color-text-muted);
-  margin-bottom: 12px;
-  letter-spacing: 1px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #5A4A6A;
+  margin-bottom: 22px;
+  letter-spacing: 1.5px;
+  min-height: 26px;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  animation: launcher-step-pulse 2s ease-in-out infinite;
 }
 
-/* 进度条 */
+/* 进度条行：条 + 百分比 */
+.launcher-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+/* 进度条 — 更粗 */
 .launcher-progress-bar {
-  width: 100%;
-  height: 6px;
+  flex: 1;
+  height: 10px;
   background: rgba(154, 194, 255, 0.2);
-  border-radius: 3px;
+  border-radius: 5px;
   overflow: hidden;
-  margin-bottom: 14px;
 }
 
 .launcher-progress-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #FFBACC, #9AC2FF);
-  border-radius: 3px;
-  transition: width 0.4s ease;
+  background: linear-gradient(90deg, #FFBACC, #C8A0E0, #9AC2FF);
+  background-size: 200% 100%;
+  border-radius: 5px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
+  animation: launcher-flow 3s linear infinite;
+}
+
+@keyframes launcher-flow {
+  0%   { background-position: 200% 0; }
+  100% { background-position: 0% 0; }
 }
 
 .launcher-progress-fill::after {
@@ -1237,31 +1260,60 @@ html, body {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(255,255,255,0.3) 50%,
+    rgba(255,255,255,0.4) 30%,
+    rgba(255,255,255,0.6) 50%,
+    rgba(255,255,255,0.4) 70%,
     transparent 100%
   );
-  animation: launcher-shimmer 2s infinite;
+  animation: launcher-shimmer 2s ease-in-out infinite;
 }
 
 @keyframes launcher-shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
 }
 
-/* 步骤文字 */
+/* 百分比数字 */
+.launcher-percent {
+  font-size: 15px;
+  font-weight: 600;
+  color: #9A8AAA;
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 步骤文字 — 呼吸感 */
 .launcher-step-text {
-  font-size: 14px;
+  font-size: 15px;
   color: var(--color-text-secondary);
   margin-bottom: 8px;
-  min-height: 20px;
+  min-height: 23px;
+  animation: launcher-step-pulse 2s ease-in-out infinite;
 }
 
-/* 安抚文字 */
+@keyframes launcher-step-pulse {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1; }
+}
+
+/* 安抚文字 — 底部固定，可点击切换 */
 .launcher-comfort {
-  font-size: 12px;
-  color: var(--color-text-muted);
-  margin-top: 6px;
+  position: absolute;
+  bottom: 60px;
+  left: 0;
+  width: 100%;
+  text-align: center;
+  font-size: 16px;
+  color: #9A8AAA;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
   opacity: 0.8;
+  transition: opacity 0.2s ease;
+}
+.launcher-comfort:hover {
+  color: #7A6A8A;
 }
 
 /* 错误 */
@@ -1309,14 +1361,25 @@ html, body {
   opacity: 0.9;
 }
 
-/* App 面板（聊天 + 侧边栏） */
+/* App 面板（聊天 + 侧边栏）— 绝对定位与加载区重叠 */
 .app-panel {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   display: flex;
   opacity: 0;
   transition: opacity 0.3s ease;
+  z-index: 1;
 }
 
 .app-panel.app-panel--visible {
   opacity: 1;
+}
+
+/* 修正 app-panel 内 chat/sidebar 比例：45:17 相对于 62% 右面板
+   chat = 45/62 ≈ 72.6%  sidebar = 17/62 ≈ 27.4% */
+.app-panel .chat-area {
+  flex: 0 0 72.6%;
+}
+.app-panel .sidebar-area {
+  flex: 0 0 27.4%;
 }
