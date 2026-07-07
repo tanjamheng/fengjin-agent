@@ -406,6 +406,15 @@ class BondTracker:
             f"综合值: {composite:.2f} | 总轮数: {self._total_rounds}"
         )
 
+    def reset_state(self) -> None:
+        """重置会话级漂移保护计数器（会话切换时调用）。不重置持久羁绊状态。"""
+        self._session_cumulative = {}
+        self._consecutive_same = {}
+        self._last_sign = {}
+        self._warned_cumulative = set()
+        self._warned_consecutive = set()
+        self._session_braked = set()
+
     def cleanup(self) -> None:
         """幂等清理（红线18）。"""
         if not self._cleaned:

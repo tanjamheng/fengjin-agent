@@ -164,6 +164,10 @@ def _handle_command(cmd: str, args: str, console: Console,
         agent.clear_history()
         if persona_guard:
             persona_guard.reset_state()
+        if mood_engine:
+            mood_engine.reset_state()
+        if bond_tracker:
+            bond_tracker.reset_state()
         session = session_mgr.current_session
         console.print(f"[green]新会话已创建: {session.title if session else '新会话'}[/green]")
         console.print("[bold green]风堇:[/bold green] 灰宝~今天想聊什么呢？\n")
@@ -219,6 +223,10 @@ def _handle_command(cmd: str, args: str, console: Console,
         agent._pending_anchor = None  # 角色校准不跨会话
         if persona_guard:
             persona_guard.reset_state()
+        if mood_engine:
+            mood_engine.reset_state()
+        if bond_tracker:
+            bond_tracker.reset_state()
 
         # stream_reply() 内部调用 trim_messages()，无需手动恢复上下文
         console.print(f"[green]已加载会话: {session.title}[/green]")
@@ -285,6 +293,10 @@ def _handle_command(cmd: str, args: str, console: Console,
             agent.clear_history()
             if persona_guard:
                 persona_guard.reset_state()
+            if mood_engine:
+                mood_engine.reset_state()
+            if bond_tracker:
+                bond_tracker.reset_state()
             console.print("[dim]当前会话已清空，请用 /new 创建新会话[/dim]")
         return True
 
@@ -539,6 +551,10 @@ def main():
                 agent.clear_history()
                 if persona_guard:
                     persona_guard.reset_state()
+                if mood_engine:
+                    mood_engine.reset_state()
+                if bond_tracker:
+                    bond_tracker.reset_state()
                 console.print("[green]对话历史已清空，新会话已创建[/green]")
                 continue
 

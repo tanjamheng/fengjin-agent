@@ -159,10 +159,14 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "load_session":
                 loaded = session_mgr.load_session(data.get("session_id", ""))
                 if loaded:
-                    # 会话切换 → 清理角色漂移状态（对齐 CLI /switch 行为）
+                    # 会话切换 → 清理漂移保护状态（对齐 CLI /switch 行为）
                     agent._pending_anchor = None
                     if persona_guard:
                         persona_guard.reset_state()
+                    if agent.mood_engine:
+                        agent.mood_engine.reset_state()
+                    if agent.bond_tracker:
+                        agent.bond_tracker.reset_state()
                     await websocket.send_json({
                         "type": "session_loaded",
                         "session_id": loaded.session_id,
@@ -185,11 +189,15 @@ async def websocket_endpoint(websocket: WebSocket):
             # ── delete_session ──
             elif msg_type == "delete_session":
                 target_id = data.get("session_id", "")
-                # 若删除的是当前会话，清理角色漂移状态（对齐 CLI /delete 行为）
+                # 若删除的是当前会话，清理漂移保护状态（对齐 CLI /delete 行为）
                 if target_id and target_id == session_mgr.get_current_session_id():
                     agent._pending_anchor = None
                     if persona_guard:
                         persona_guard.reset_state()
+                    if agent.mood_engine:
+                        agent.mood_engine.reset_state()
+                    if agent.bond_tracker:
+                        agent.bond_tracker.reset_state()
                 session_mgr.delete_session(target_id)
                 await websocket.send_json({
                     "type": "session_deleted",
@@ -408,6 +416,10 @@ def _ensure_session(session_mgr: SessionManager, target_id: str,
         session_mgr.create_session()
         if agent:
             agent._pending_anchor = None  # type: ignore[attr-defined]
+            if agent.mood_engine:
+                agent.mood_engine.reset_state()
+            if agent.bond_tracker:
+                agent.bond_tracker.reset_state()
         if persona_guard:
             persona_guard.reset_state()
         return True
@@ -419,6 +431,10 @@ def _ensure_session(session_mgr: SessionManager, target_id: str,
             return False
         if agent:
             agent._pending_anchor = None  # type: ignore[attr-defined]
+            if agent.mood_engine:
+                agent.mood_engine.reset_state()
+            if agent.bond_tracker:
+                agent.bond_tracker.reset_state()
         if persona_guard:
             persona_guard.reset_state()
     return True

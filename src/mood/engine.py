@@ -357,6 +357,15 @@ class MoodEngine:
         parts.append(user_input)
         return "\n".join(parts)
 
+    def reset_state(self) -> None:
+        """重置会话级漂移保护计数器（会话切换时调用）。不重置持久情绪状态。"""
+        self._consecutive_low = 0
+        self._session_cumulative = {}
+        self._consecutive_same = {}
+        self._last_sign = {}
+        self._warned_cumulative = set()
+        self._warned_consecutive = set()
+
     def cleanup(self) -> None:
         """幂等清理（红线18）。"""
         if not self._cleaned:
