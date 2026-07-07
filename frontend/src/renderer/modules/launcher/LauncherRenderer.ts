@@ -37,6 +37,8 @@ export class LauncherRenderer {
   private _comfortPrev: number[] = []; // 前两次的 index，避免重复
   private _doneFired: boolean = false;
   private _onDone: (() => void) | null = null;
+  private _animFrame: number | null = null;
+  private _targetPct: number = 0;
 
   // 风堇安抚语 — 点击可切换
   private static readonly COMFORT_MESSAGES = [
@@ -107,9 +109,8 @@ export class LauncherRenderer {
     // 步骤文字
     this._stepText.textContent = state.stepText;
 
-    // 进度条 + 百分比
-    this._progressFill.style.width = `${pct}%`;
-    this._percentText.textContent = `${pct}%`;
+    // 进度条 + 百分比（平滑动画，防止同步批量 done 消息导致瞬时跳变）
+    this._animateProgress(pct);
     if (state.phase === "scanning" || state.phase === "preprocess" || state.phase === "system_load") {
       this._progressBar.style.display = "";
     }
@@ -168,6 +169,28 @@ export class LauncherRenderer {
         this._comfortText.style.opacity = "";
       });
     });
+  }
+
+  /** 平滑动画进度条——防止同步批量 done 消息导致百分比瞬时跳变 */
+  private _animateProgress(target: number): void {
+    this._targetPct = target;
+    if (this._animFrame !== null) return; // 已有动画进行中，只更新目标值
+    const step = () => {
+      const cur = parseFloat(this._progressFill.style.width) || 0;
+      const diff = this._targetPct - cur;
+      if (Math.abs(diff) < 0.5) {
+        this._progressFill.style.width = `${this._targetPct}%`;
+        this._percentText.textContent = `${this._targetPct}%`;
+        this._animFrame = null;
+        return;
+      }
+      // ease-out: 每帧移动剩余距离的 40%
+      const next = cur + diff * 0.4;
+      this._progressFill.style.width = `${next}%`;
+      this._percentText.textContent = `${Math.round(next)}%`;
+      this._animFrame = requestAnimationFrame(step);
+    };
+    this._animFrame = requestAnimationFrame(step);
   }
 
   /** 随机选取安抚语，排除前2次出现过的（拒绝采样，O(1) 期望） */
