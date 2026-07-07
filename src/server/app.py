@@ -103,6 +103,7 @@ async def lifespan(app: FastAPI):
             else:
                 log.warning("角色锚点不足（<3），漂移检测不可用")
                 persona_guard.cleanup()
+                _emb_reg.release()  # 释放 acquire() 的引用计数
                 app.state.persona_guard = None
         except Exception as e:
             log.warning("角色漂移检测加载失败: {}", e)

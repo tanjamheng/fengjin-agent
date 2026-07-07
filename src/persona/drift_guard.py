@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,7 +32,7 @@ _DEFAULT_MIN_REPLY_LENGTH = 15
 
 # ── 锚点解析 ──────────────────────────────────────────────────
 
-_ANCHOR_SECTION_RE = re.compile(r"^# 二、角色锚点\s*$")
+_ANCHOR_SECTION_RE = re.compile(r"^#{1,3}\s*(?:二|2)[、.]?\s*角色锚点\s*$")
 _ANCHOR_ITEM_RE = re.compile(r"^- (.+)$")
 
 
@@ -84,6 +83,11 @@ class PersonaDriftGuard:
     偏离时返回锚点注入文本，由 Agent.chat() 注入下一轮 user message 开头。
 
     线程安全：单线程使用（Agent.chat() 是单会话串行的）。
+
+    重要约束：内部状态（_ewma / _consecutive_below 等）绑定到实例。
+    当前设计中 WS 多连接共享同一实例（app.state 单例），在多连接场景下
+    状态会交叉污染。单用户 + 单实例锁场景安全。若未来支持多连接，
+    需改为 per-Agent 实例或添加 reset_state() 在会话切换时重置。
     """
 
     def __init__(
@@ -128,6 +132,14 @@ class PersonaDriftGuard:
     def anchor_count(self) -> int:
         """已解析的锚点数量"""
         return len(self._anchors)
+
+    def reset_state(self) -> None:
+        """重置所有运行时状态（会话切换时调用，防止跨会话状态污染）。"""
+        self._ewma = None
+        self._consecutive_below = 0
+        self._repair_active = False
+        self._repair_rounds = 0
+        self._cooldown_remaining = 0
 
     def check(self, reply_text: str) -> Optional[str]:
         """检测一轮回复的角色漂移程度。
@@ -186,16 +198,13 @@ class PersonaDriftGuard:
 
         # 触发修复
         if self._consecutive_below >= cfg.consecutive_trigger:
-            level = 1
-            if self._repair_active and self._repair_rounds >= cfg.escalation_rounds:
-                level = 2
-            anchor_text = self._build_anchor(level)
+            anchor_text = self._build_anchor()
             self._repair_active = True
             self._repair_rounds += 1
-            self._consecutive_below = 0  # 重置，等下一轮重新评估
+            self._consecutive_below = 0
             self.log.info(
-                "角色漂移修复锚点已注入 (driftScore: {:.3f}, level: {})",
-                self._ewma, level,
+                "角色漂移修复锚点已注入 (driftScore: {:.3f}, round: {})",
+                self._ewma, self._repair_rounds,
             )
             return anchor_text
 
@@ -207,6 +216,11 @@ class PersonaDriftGuard:
             self._anchor_vecs = None
             self._anchors = []
             self._ewma = None
+            self._emb = None
+            self._consecutive_below = 0
+            self._repair_active = False
+            self._repair_rounds = 0
+            self._cooldown_remaining = 0
             self._cleaned = True
 
     # ── 私有 ────────────────────────────────────────────────
@@ -241,11 +255,6 @@ class PersonaDriftGuard:
                 len(anchors),
             )
             return
-        if len(anchors) != 6:
-            self.log.warning(
-                "锚点数量与预期不符（预期 6 条，实际 {} 条），继续运行",
-                len(anchors),
-            )
 
         self._anchors = anchors
 
@@ -273,15 +282,9 @@ class PersonaDriftGuard:
         top_k = sims[-k:] if len(sims) >= k else sims
         return float(np.mean(top_k))
 
-    def _build_anchor(self, level: int = 1) -> str:
-        """构建锚点注入文本。
-
-        Level 1: [角色校准] + 6 条锚点（~80 token）
-        Level 2: [角色校准] + 身份简述 + 6 条锚点（~200 token）
-        """
+    def _build_anchor(self) -> str:
+        """构建锚点注入文本：[角色校准] + N 条锚点（~80 token）。"""
         lines = ["[角色校准]"]
-        if level >= 2:
-            lines.append("你是风堇，翁法罗斯昏光庭院的首席护理师。小伊卡在你身边，和你对话的人是灰宝——你在乎的朋友。")
         for a in self._anchors:
             lines.append(f"- {a}")
         return "\n".join(lines)
