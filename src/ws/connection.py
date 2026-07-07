@@ -125,7 +125,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         log.opt(exception=True).error("旧流异常收尾: {}", e)
 
                 # 切换/创建会话（目标会话不存在则报错，不继续）
-                if not _ensure_session(session_mgr, data.get("session_id", "")):
+                if not _ensure_session(session_mgr, data.get("session_id", ""),
+                                       agent=agent, persona_guard=persona_guard):
                     await websocket.send_json({"type": "error", "message": "会话不存在"})
                     continue
 
@@ -387,11 +388,19 @@ async def _handle_user_msg(
 
 # ── 辅助函数 ─────────────────────────────────────────────────
 
-def _ensure_session(session_mgr: SessionManager, target_id: str) -> bool:
-    """确保当前会话正确。返回 True=就绪，False=目标会话不存在"""
+def _ensure_session(session_mgr: SessionManager, target_id: str,
+                    agent: Optional[Agent] = None,
+                    persona_guard=None) -> bool:
+    """确保当前会话正确。返回 True=就绪，False=目标会话不存在。
+    会话切换时清理角色漂移状态（对齐 CLI /new 和 /switch 的行为）。
+    """
     if not target_id:
         session_mgr.flush()
         session_mgr.create_session()
+        if agent:
+            agent._pending_anchor = None  # type: ignore[attr-defined]
+        if persona_guard:
+            persona_guard.reset_state()
         return True
 
     if session_mgr.get_current_session_id() != target_id:
@@ -399,6 +408,10 @@ def _ensure_session(session_mgr: SessionManager, target_id: str) -> bool:
         loaded = session_mgr.load_session(target_id)
         if loaded is None:
             return False
+        if agent:
+            agent._pending_anchor = None  # type: ignore[attr-defined]
+        if persona_guard:
+            persona_guard.reset_state()
     return True
 
 
