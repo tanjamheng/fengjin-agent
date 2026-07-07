@@ -45,6 +45,9 @@
 | 2 | **禁止提交任何中文文档** | `核心文档/`、`重要文档/`、`前端开发核心文档/`、`*.md`（中文设计/规范/流程文档）已被 `.gitignore` 忽略。git add 会报 `ignored by .gitignore`。**永远不要用 `-f` 强制提交中文文档**——它们是本地工作副本，不入仓库。只提交 `src/`、`frontend/src/`、`config/`、`main.py`、`requirements.txt`、`CLAUDE.md`、`start.bat` 等代码文件 |
 | 3 | **`.bat` 中 PowerShell inline 命令的 `%` 必须写成 `%%`** | CMD 会把 `%` 当变量前缀吃掉——`$i % 15` 会变成 `$i  15`（`%` 被吞 → 后面的数字变成裸 token → PowerShell 语法错误）。正确写法：`$i %% 15`（CMD 将 `%%` 转义为 `%` 传给 PowerShell）。任何传给 PowerShell 的 `%` 都要双写 |
 | 4 | **禁止未经允许执行 `git commit`** | 所有 git 提交必须等用户明确说"提交"/"commit"之后才能执行。用户没开口 = 不准 commit。**例外：Code Review 循环中每轮修复后允许自动提交**（CR 流程本身要求每轮 commit） |
+| 5 | **`__init__` 中 `self.log` 必须在所有使用它的方法之前赋值** | PersonaDriftGuard R7 P0：`self._parse_anchors()` 内调 `self.log.info()` 但 `self.log = get_logger()` 在调用之后 → 每次构造 `AttributeError` → 漂移检测从未启用。**规则：`self.log` 赋值必须在所有调用 `self.log` 的方法之前。不只 `self.log`——任何被 `__init__` 内方法依赖的属性都适用。** |
+| 6 | **会话切换时必须调所有有状态组件的 `reset_state()`** | MoodEngine、BondTracker、PersonaDriftGuard 各有运行时计数器（EWMA、cumulative、consecutive），跨会话不重置会污染新会话。**8 个入口必须全覆盖**：CLI `/new` `/switch` `/clear` `/delete` + WS `_ensure_session`×2 `load_session` `delete_session`。新增入口或新增状态组件 → 双向检查。 |
+| 7 | **CLI 路径的状态修复必须同步到 WS 路径** | 同一个会话操作（新建/切换/清空/删除）在 CLI 和 WS 中各有一份实现。修了 CLI 的 `reset_state()` 调用 → 立即检查 WS 的 `_ensure_session`/`load_session`/`delete_session` 是否需要同样修复。多轮 CR 反复出现不对称：R2 修 CLI 漏 WS → R4 补 → R5 又漏 → R7 再补。 |
 
 # 功能速查
 
@@ -60,7 +63,7 @@
 | 风堇角色系统 | 外部 system_prompt.md 定义人设，调角色不改代码 |
 | 情绪状态机 | PAD 三维情绪 + EMA 平滑 + 非对称指数衰减，LLM 输出隐藏标记，数字注入 user message |
 | 羁绊状态机 | 四维羁绊（Warmth/Trust/Formality/Humor）+ change clamp + 接近度衰减 + 非对称指数衰减，LLM 输出隐藏标记，数字注入 user message |
-| 角色漂移检测 | bge-m3 计算回复与 6 条角色锚点余弦相似度 → EWMA 平滑 → 低于阈值时注入锚点到 user message |
+| 角色漂移检测 | bge-m3 余弦相似度+EWMA平滑，低于阈值自动注入锚点到user message；会话切换时reset_state()清空漂移状态 |
 | RAG 知识库 | 6 步管道检索风堇相关知识，LLM 自主决定调用时机 |
 | 记忆系统 | 跨会话记住用户信息，双存储（core_memory.md + ChromaDB），异步提取 |
 | 安全护栏 | 两级检测（规则引擎 + Llama Guard 3 1B），11 类拦截，Comfort 安抚模式 |
@@ -199,7 +202,7 @@ AI风堇_治愈晨昏/
 │   ├── safety_words/                # 安全词库（8 TXT + ~89 regex）
 │   ├── mood.yaml                     # 情绪状态机配置（PAD/EMA/衰减/漂移保护/阈值/注入）
 │   ├── bond.yaml                     # 羁绊状态机配置（4维/change clamp/接近度衰减/衰减/标签）
-│   ├── persona.yaml                  # 角色漂移检测配置（阈值/EMA/冷却/升级）
+│   ├── persona.yaml                  # 角色漂移检测配置（检测参数/修复参数）
 │   ├── system_prompt.md             # 风堇主人设
 │   └── prompts/                     # Prompt 模板（core_memory / memory_extraction / memory_merge）
 │
@@ -249,7 +252,7 @@ AI风堇_治愈晨昏/
 │   ├── bond/                        # 羁绊状态机
 │   │   └── tracker.py               # BondTracker — 4D+change clamp+接近度衰减+指数衰减+JSON持久化 (~310行)
 │   ├── persona/                     # 角色漂移检测
-│   │   └── drift_guard.py           # PersonaDriftGuard — 锚点解析+余弦相似度+EWMA+锚点注入 (~130行)
+│   │   └── drift_guard.py           # PersonaDriftGuard — 锚点解析+余弦相似度+EWMA+锚点注入+reset_state+cleanup (~290行)
 │   │
 │   ├── safety/                      # 安全护栏
 │   │   ├── __init__.py              # SafetyManager — check(text) → SafetyResult
