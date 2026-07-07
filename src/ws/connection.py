@@ -157,6 +157,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # ── load_session ──
             elif msg_type == "load_session":
+                # 若有流式任务正在运行，先取消等待（防止并发写入错乱）
+                if current_stream and not current_stream.done():
+                    agent.cancel()
+                    try:
+                        await asyncio.wait_for(current_stream, timeout=30)
+                    except asyncio.TimeoutError:
+                        current_stream.cancel()
+                        try:
+                            await current_stream
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    except (asyncio.CancelledError, BlockedError):
+                        pass
+                    except Exception as e:
+                        log.opt(exception=True).error("load_session 取消旧流异常: {}", e)
                 loaded = session_mgr.load_session(data.get("session_id", ""))
                 if loaded:
                     # 会话切换 → 清理漂移保护状态（对齐 CLI /switch 行为）
