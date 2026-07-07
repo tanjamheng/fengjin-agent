@@ -159,6 +159,10 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "load_session":
                 loaded = session_mgr.load_session(data.get("session_id", ""))
                 if loaded:
+                    # 会话切换 → 清理角色漂移状态（对齐 CLI /switch 行为）
+                    agent._pending_anchor = None
+                    if persona_guard:
+                        persona_guard.reset_state()
                     await websocket.send_json({
                         "type": "session_loaded",
                         "session_id": loaded.session_id,

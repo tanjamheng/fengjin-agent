@@ -283,6 +283,8 @@ def _handle_command(cmd: str, args: str, console: Console,
 
         if target["session_id"] == current_id_before:
             agent.clear_history()
+            if persona_guard:
+                persona_guard.reset_state()
             console.print("[dim]当前会话已清空，请用 /new 创建新会话[/dim]")
         return True
 
@@ -535,6 +537,8 @@ def main():
             if cmd == "/clear":
                 session_mgr.flush()
                 agent.clear_history()
+                if persona_guard:
+                    persona_guard.reset_state()
                 console.print("[green]对话历史已清空，新会话已创建[/green]")
                 continue
 

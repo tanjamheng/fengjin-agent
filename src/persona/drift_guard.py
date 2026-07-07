@@ -266,6 +266,7 @@ class PersonaDriftGuard:
             except Exception as e:
                 self.log.warning("锚点编码失败，漂移检测不可用: {}", e)
                 self._anchor_vecs = None
+                self._anchors = []  # 清零使 anchor_count 返回 0，触发上游降级
 
     def _top_k_cosine(self, reply_vec: np.ndarray, k: int = 3) -> float:
         """计算回复向量与所有锚点的 top-k 平均余弦相似度。"""
