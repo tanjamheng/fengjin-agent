@@ -185,6 +185,11 @@ async def websocket_endpoint(websocket: WebSocket):
             # ── delete_session ──
             elif msg_type == "delete_session":
                 target_id = data.get("session_id", "")
+                # 若删除的是当前会话，清理角色漂移状态（对齐 CLI /delete 行为）
+                if target_id and target_id == session_mgr.get_current_session_id():
+                    agent._pending_anchor = None
+                    if persona_guard:
+                        persona_guard.reset_state()
                 session_mgr.delete_session(target_id)
                 await websocket.send_json({
                     "type": "session_deleted",

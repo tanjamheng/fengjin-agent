@@ -96,6 +96,7 @@ class PersonaDriftGuard:
     ):
         self._settings = settings or PersonaSettings()
         self._emb = embed_model
+        self.log = get_logger("persona")
 
         # 路径（红线19：以本文件为基准）
         if system_prompt_path is None:
@@ -115,8 +116,6 @@ class PersonaDriftGuard:
         self._repair_rounds: int = 0
         self._cooldown_remaining: int = 0
         self._cleaned = False
-
-        self.log = get_logger("persona")
 
     # ── 公开 API ────────────────────────────────────────────
 
