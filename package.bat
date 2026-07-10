@@ -124,6 +124,7 @@ copy ".env.example" "%RELEASE_DIR%\" >nul
 copy "README.md" "%RELEASE_DIR%\" >nul 2>nul
 copy "LICENSE" "%RELEASE_DIR%\" >nul 2>nul
 copy "THIRD_PARTY_ASSETS.md" "%RELEASE_DIR%\" >nul 2>nul
+copy "THIRD_PARTY_NOTICES.md" "%RELEASE_DIR%\" >nul 2>nul
 
 REM Create empty directories
 mkdir "%RELEASE_DIR%\models" 2>nul

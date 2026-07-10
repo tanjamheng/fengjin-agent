@@ -83,6 +83,7 @@ jobs:
           Copy-Item README.md         "$releaseDir\" -ErrorAction SilentlyContinue
           Copy-Item LICENSE           "$releaseDir\" -ErrorAction SilentlyContinue
           Copy-Item THIRD_PARTY_ASSETS.md "$releaseDir\" -ErrorAction SilentlyContinue
+          Copy-Item THIRD_PARTY_NOTICES.md "$releaseDir\" -ErrorAction SilentlyContinue
 
           # 空目录（用户首次启动时填充）
           New-Item -ItemType Directory -Force -Path "$releaseDir\models"           | Out-Null
@@ -93,7 +94,7 @@ jobs:
 
           # 打 zip
           $zipName = "风堇AI-v$version-portable.zip"
-          Compress-Archive -Path "$releaseDir\*" -DestinationPath "release\$zipName" -Force
+          Compress-Archive -Path "$releaseDir" -DestinationPath "release\$zipName" -Force
           Write-Output "zip=release\$zipName" >> $env:GITHUB_ENV
           Write-Output "version=$version" >> $env:GITHUB_ENV
           Write-Output "Release zip: release\$zipName"

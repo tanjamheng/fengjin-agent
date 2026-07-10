@@ -31,7 +31,11 @@ class MemoryStorage:
         try:
             # 通过共享注册表获取 ChromaDB 客户端（与 RAG 共享）
             from ..rag.chroma_registry import acquire as chroma_acquire
-            persist_dir = str(Path(config.chroma.persist_directory).resolve())
+            from ..utils.helpers import get_project_root
+            persist_path = Path(config.chroma.persist_directory)
+            if not persist_path.is_absolute():
+                persist_path = get_project_root() / persist_path
+            persist_dir = str(persist_path.resolve())
             Path(persist_dir).mkdir(parents=True, exist_ok=True)
             self.client = chroma_acquire(persist_dir)
             self._chroma_shared = True
@@ -39,7 +43,6 @@ class MemoryStorage:
             # 相对路径解析为项目根目录下的绝对路径
             embedding_model = config.chroma.embedding_model
             if not Path(embedding_model).is_absolute():
-                from ..utils.helpers import get_project_root
                 embedding_model = str(get_project_root() / embedding_model)
 
             # 自动检测 GPU 可用性（通过共享注册表，避免与 RAG DenseIndex 重复加载）

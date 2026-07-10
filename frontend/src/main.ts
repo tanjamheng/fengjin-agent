@@ -141,7 +141,6 @@ ipcMain.handle("launcher:retry", async () => {
   if (!launcher) return;
   try {
     await launcher.retry();
-    launcher.startHealthPoll();
   } catch (e: any) {
     win?.webContents.send("launcher:state", {
       phase: "error",

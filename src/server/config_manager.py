@@ -245,6 +245,35 @@ class ConfigManager:
             app.state._retired_resources = retired
         retired.append(resource)
 
+    @staticmethod
+    def register_connection(app) -> None:
+        app.state._active_ws_connections = getattr(app.state, "_active_ws_connections", 0) + 1
+
+    @staticmethod
+    async def unregister_connection(app) -> None:
+        app.state._active_ws_connections = max(
+            0, getattr(app.state, "_active_ws_connections", 0) - 1
+        )
+        if app.state._active_ws_connections == 0:
+            await ConfigManager.cleanup_retired_resources(app)
+
+    @staticmethod
+    async def cleanup_retired_resources(app) -> None:
+        retired = getattr(app.state, "_retired_resources", [])
+        if not retired:
+            return
+        app.state._retired_resources = []
+        for idx, resource in enumerate(retired, start=1):
+            try:
+                if hasattr(resource, "close"):
+                    result = resource.close()
+                    if hasattr(result, "__await__"):
+                        await result
+                elif hasattr(resource, "cleanup"):
+                    resource.cleanup()
+            except Exception as e:
+                log.warning("清理 retired_resource[{}] 异常: {}", idx, e)
+
 
 def _reload_dotenv():
     """重新加载 .env 到 os.environ（幂等）"""

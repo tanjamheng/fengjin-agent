@@ -35,7 +35,11 @@ class MemoryWriter:
             from ..utils.helpers import get_project_root
             self._core_path = get_project_root() / self._core_path
         try:
-            self._merge_prompt_template = Path(config.merge.prompt_file).read_text(
+            merge_prompt = Path(config.merge.prompt_file)
+            if not merge_prompt.is_absolute():
+                from ..utils.helpers import get_project_root
+                merge_prompt = get_project_root() / merge_prompt
+            self._merge_prompt_template = merge_prompt.read_text(
                 encoding="utf-8"
             )
         except Exception as e:

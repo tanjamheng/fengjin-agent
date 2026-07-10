@@ -7,7 +7,7 @@
 
 import { spawn, exec, ChildProcess } from "child_process";
 import { join } from "path";
-import { readFileSync, existsSync, copyFileSync, mkdirSync, createWriteStream } from "fs";
+import { readFileSync, existsSync, copyFileSync, mkdirSync, createWriteStream, statSync, writeFileSync } from "fs";
 import type { WriteStream } from "fs";
 import { BrowserWindow } from "electron";
 
@@ -142,14 +142,16 @@ export class LauncherManager {
       this._checkPython();
       this._log("Step 2: ensureVenv...");
       await this._ensureVenv();
-      this._log("Step 3: ensureEnvFile...");
+      this._log("Step 3: ensurePythonDependencies...");
+      await this._ensurePythonDependencies();
+      this._log("Step 4: ensureEnvFile...");
       this._ensureEnvFile();
-      this._log("Step 4: ensureDirectories...");
+      this._log("Step 5: ensureDirectories...");
       this._ensureDirectories();
 
       // 2. spawn 后端 — 后端扫描模型状态 → preprocess_plan → 下载/量化 → engine_init → ready
       //    API Key 检查延后到 ready 之后（模型下载不需要 API Key，不应被拦截）
-      this._log("Step 5: spawnBackend...");
+      this._log("Step 6: spawnBackend...");
       this._spawnBackend();
     } catch (e: any) {
       this._log(`FATAL: ${e.message || "启动失败"}`);
@@ -172,6 +174,8 @@ export class LauncherManager {
     this._emitState();
     try {
       this._checkPython();
+      await this._ensureVenv();
+      await this._ensurePythonDependencies();
       this._spawnBackend();
     } catch (e: any) {
       this._log(`Retry FATAL: ${e.message || "重试失败"}`);
@@ -210,9 +214,7 @@ export class LauncherManager {
   }
 
   private async _ensureVenv(): Promise<void> {
-    const venvPython = process.platform === "win32"
-      ? join(this._projectRoot, "venv", "Scripts", "python.exe")
-      : join(this._projectRoot, "venv", "bin", "python");
+    const venvPython = this._venvPythonPath();
     if (existsSync(venvPython)) return; // venv 已存在
 
     return new Promise((resolve, reject) => {
@@ -233,6 +235,66 @@ export class LauncherManager {
         reject(new Error(`venv 创建失败: ${err.message}`));
       });
     });
+  }
+
+  private async _ensurePythonDependencies(): Promise<void> {
+    const venvPython = this._venvPythonPath();
+    const requirements = join(this._projectRoot, "requirements.txt");
+    const marker = join(this._projectRoot, "venv", ".requirements-installed");
+    if (!existsSync(requirements)) return;
+
+    if (existsSync(marker)) {
+      try {
+        if (statSync(marker).mtimeMs >= statSync(requirements).mtimeMs) {
+          return;
+        }
+      } catch {
+        // 状态异常则重新安装依赖。
+      }
+    }
+
+    this._state.stepText = "正在安装 Python 依赖...";
+    this._emitState();
+    this._log("Installing Python dependencies from requirements.txt");
+
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(venvPython, [
+        "-m", "pip", "install", "-r", "requirements.txt",
+        "-i", "https://pypi.tuna.tsinghua.edu.cn/simple",
+      ], {
+        cwd: this._projectRoot,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const timer = setTimeout(() => {
+        proc.kill();
+        reject(new Error("Python 依赖安装超时，请检查网络后重试"));
+      }, 20 * 60 * 1000);
+      proc.stdout?.on("data", (chunk: Buffer) => {
+        this._log(`[pip stdout] ${chunk.toString("utf-8").trim()}`);
+      });
+      proc.stderr?.on("data", (chunk: Buffer) => {
+        this._log(`[pip stderr] ${chunk.toString("utf-8").trim()}`);
+      });
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (code === 0) {
+          writeFileSync(marker, new Date().toISOString(), "utf-8");
+          resolve();
+        } else {
+          reject(new Error(`Python 依赖安装失败 (code=${code})`));
+        }
+      });
+      proc.on("error", (err) => {
+        clearTimeout(timer);
+        reject(new Error(`Python 依赖安装失败: ${err.message}`));
+      });
+    });
+  }
+
+  private _venvPythonPath(): string {
+    return process.platform === "win32"
+      ? join(this._projectRoot, "venv", "Scripts", "python.exe")
+      : join(this._projectRoot, "venv", "bin", "python");
   }
 
   /** 确保 .env 文件存在（首次启动从 .env.example 复制） */
@@ -263,9 +325,7 @@ export class LauncherManager {
   // ── 后端进程管理 ──
 
   private _spawnBackend(): void {
-    const venvPython = process.platform === "win32"
-      ? join(this._projectRoot, "venv", "Scripts", "python.exe")
-      : join(this._projectRoot, "venv", "bin", "python");
+    const venvPython = this._venvPythonPath();
     const pythonExe = existsSync(venvPython) ? venvPython : "python";
 
     this._log(`Spawning backend: ${pythonExe} -m src.server.server`);

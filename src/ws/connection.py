@@ -36,6 +36,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
     await websocket.accept()
     log.info("WebSocket 客户端已连接")
+    from ..server.config_manager import ConfigManager
+    ConfigManager.register_connection(websocket.app)
 
     # 应用级单例（启动时加载，含 GPU 模型，所有连接共享）
     config = websocket.app.state.config
@@ -432,6 +434,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 _emb_reg.release()
             except Exception as e:
                 log.warning("连接级 persona embedding release 异常: {}", e)
+        await ConfigManager.unregister_connection(websocket.app)
         log.info("WebSocket 连接关闭，会话已保存")
 
 
