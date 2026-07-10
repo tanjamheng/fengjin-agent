@@ -118,6 +118,7 @@ echo    Copying project files...
 
 xcopy "src" "%RELEASE_DIR%\src\" /E /I /Q >nul
 xcopy "config" "%RELEASE_DIR%\config\" /E /I /Q >nul
+xcopy "数据侧_风堇资料" "%RELEASE_DIR%\数据侧_风堇资料\" /E /I /Q >nul
 copy "requirements.txt" "%RELEASE_DIR%\" >nul
 copy ".env.example" "%RELEASE_DIR%\" >nul
 copy "README.md" "%RELEASE_DIR%\" >nul 2>nul

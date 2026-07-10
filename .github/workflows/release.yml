@@ -77,6 +77,7 @@ jobs:
           # Python 后端 + 配置
           Copy-Item src          "$releaseDir\src"         -Recurse
           Copy-Item config       "$releaseDir\config"      -Recurse
+          Copy-Item "数据侧_风堇资料" "$releaseDir\数据侧_风堇资料" -Recurse
           Copy-Item requirements.txt "$releaseDir\"
           Copy-Item .env.example      "$releaseDir\"
           Copy-Item README.md         "$releaseDir\" -ErrorAction SilentlyContinue
