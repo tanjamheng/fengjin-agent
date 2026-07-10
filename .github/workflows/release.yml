@@ -1,0 +1,79 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      # ---- 前端构建 --------------------------------------------------
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend (electron-vite)
+        working-directory: frontend
+        run: npm run build
+
+      - name: Package Electron exe (electron-builder portable)
+        working-directory: frontend
+        run: npx electron-builder --win portable
+
+      # ---- 组装发布包 -------------------------------------------------
+      - name: Assemble release folder
+        shell: pwsh
+        run: |
+          $version = (Get-Content frontend\package.json | ConvertFrom-Json).version
+          $releaseDir = "release\风堇AI-v$version"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+
+          # Portable exe（electron-builder 输出到 frontend\dist）
+          $exe = Get-ChildItem frontend\dist -Filter "*.exe" | Select-Object -First 1
+          Copy-Item $exe.FullName "$releaseDir\风堇AI.exe"
+
+          # Python 后端 + 配置
+          Copy-Item src          "$releaseDir\src"         -Recurse
+          Copy-Item config       "$releaseDir\config"      -Recurse
+          Copy-Item requirements.txt "$releaseDir\"
+          Copy-Item .env.example      "$releaseDir\"
+          Copy-Item README.md         "$releaseDir\" -ErrorAction SilentlyContinue
+          Copy-Item LICENSE           "$releaseDir\" -ErrorAction SilentlyContinue
+
+          # 知识库数据（如有）
+          if (Test-Path "数据侧_风堇资料") {
+            Copy-Item "数据侧_风堇资料" "$releaseDir\数据侧_风堇资料" -Recurse
+          }
+
+          # 空目录（用户首次启动时填充）
+          New-Item -ItemType Directory -Force -Path "$releaseDir\models"           | Out-Null
+          New-Item -ItemType Directory -Force -Path "$releaseDir\data\sessions"    | Out-Null
+          New-Item -ItemType Directory -Force -Path "$releaseDir\data\chroma"      | Out-Null
+          New-Item -ItemType Directory -Force -Path "$releaseDir\logs"             | Out-Null
+
+          # 打 zip
+          $zipName = "风堇AI-v$version-portable.zip"
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath "release\$zipName" -Force
+          Write-Output "zip=release\$zipName" >> $env:GITHUB_ENV
+          Write-Output "version=$version" >> $env:GITHUB_ENV
+          Write-Output "Release zip: release\$zipName"
+
+      # ---- 发布到 GitHub Releases ------------------------------------
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "风堇AI v${{ env.version }}"
+          files: release/风堇AI-v*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -199,7 +199,7 @@ Windows 桌面客户端，Electron 28 + TypeScript + 原生 HTML/CSS。不引入
 
 - **[sovyx-ai/sovyx](https://github.com/sovyx-ai/sovyx)** — 完整 AI 伴侣框架，PAD 三维情绪模型 + Ebbinghaus 遗忘曲线实现，AGPL-3.0
 - **[kagioneko/neurostate-engine](https://github.com/kagioneko/neurostate-engine)** — 确定性情绪引擎，6 神经递质 + 6×6 交互矩阵，MIT
-- **Mehrabian (1996)** — PAD（Pleasure-Arousal-Dominance）三维情绪模型的原始理论框架
+- **Mehrabian, A. (1996).** *Pleasure-arousal-dominance: A general framework for describing and measuring individual differences in temperament.* Current Psychology, 14(4), 261–292. [DOI: 10.1007/BF02686918](https://doi.org/10.1007/BF02686918)
 
 ### 角色漂移检测
 
