@@ -21,10 +21,10 @@
 核心文档\核心3_开发规范.md
 核心文档\核心4_WS通信协议.md
 这四个文档将是开发的最高宗旨，不容违反。一切开发将以其为锚点。
-其中的核心内容已写入AGENTS.md中，如有必要，可以进行复习这些文档中的内容。
+其中的核心内容已写入CLAUDE.md中，如有必要，可以进行复习这些文档中的内容。
 每当开发新功能时，也会将新功能相关的需求，技术架构等写入这些核心文档中。
 
-## AGENTS.md 维护规则
+## CLAUDE.md 维护规则
 
 本文档是核心1/2/3/4 的**衍生速查**——红线、文件结构、技术约束均从核心文档提取。**核心文档是权威源，本文档是工作副本。**
 
@@ -35,14 +35,14 @@
 - 清理链/初始化顺序变更 → 同步本文档「清理链」
 - 核心文档新增关键约束或技术决策 → 同步本文档「技术约束」
 
-**每次开发对话结束时**，如果本次修改了核心文档 → AI 必须主动检查本文档是否需要同步。最危险的情况：核心3 加了新红线但本文档没加 → AI 在后续工作中不会遵守那条规则——因为 AI 只看 AGENTS.md。
+**每次开发对话结束时**，如果本次修改了核心文档 → AI 必须主动检查本文档是否需要同步。最危险的情况：核心3 加了新红线但本文档没加 → AI 在后续工作中不会遵守那条规则——因为 AI 只看 CLAUDE.md。
 
 ## 陷阱速查（本项目踩过的坑）
 
 | # | 陷阱 | 说明 |
 |---|------|------|
 | 1 | **PowerShell 中不要用 `git commit -m @'...'@`** | here-string 的 `@'` 会被当作文本的一部分混入提交消息，导致消息以 `@ ` 开头。正确做法：先 `$msg = @'...'@` 赋值变量，再 `git commit -m $msg` |
-| 2 | **禁止提交任何中文文档** | `核心文档/`、`重要文档/`、`前端开发核心文档/`、`*.md`（中文设计/规范/流程文档）已被 `.gitignore` 忽略。git add 会报 `ignored by .gitignore`。**永远不要用 `-f` 强制提交中文文档**——它们是本地工作副本，不入仓库。只提交 `src/`、`frontend/src/`、`config/`、`main.py`、`requirements.txt`、`AGENTS.md`、`start.bat` 等代码文件 |
+| 2 | **禁止提交任何中文文档** | `核心文档/`、`重要文档/`、`前端开发核心文档/`、`*.md`（中文设计/规范/流程文档）已被 `.gitignore` 忽略。git add 会报 `ignored by .gitignore`。**永远不要用 `-f` 强制提交中文文档**——它们是本地工作副本，不入仓库。只提交 `src/`、`frontend/src/`、`config/`、`main.py`、`requirements.txt`、`CLAUDE.md`、`start.bat` 等代码文件 |
 | 3 | **`.bat` 中 PowerShell inline 命令的 `%` 必须写成 `%%`** | CMD 会把 `%` 当变量前缀吃掉——`$i % 15` 会变成 `$i  15`（`%` 被吞 → 后面的数字变成裸 token → PowerShell 语法错误）。正确写法：`$i %% 15`（CMD 将 `%%` 转义为 `%` 传给 PowerShell）。任何传给 PowerShell 的 `%` 都要双写 |
 | 4 | **禁止未经允许执行 `git commit`** | 所有 git 提交必须等用户明确说"提交"/"commit"之后才能执行。用户没开口 = 不准 commit。**例外：Code Review 循环中每轮修复后允许自动提交**（CR 流程本身要求每轮 commit） |
 | 5 | **`__init__` 中 `self.log` 必须在所有使用它的方法之前赋值** | PersonaDriftGuard R7 P0：`self._parse_anchors()` 内调 `self.log.info()` 但 `self.log = get_logger()` 在调用之后 → 每次构造 `AttributeError` → 漂移检测从未启用。**规则：`self.log` 赋值必须在所有调用 `self.log` 的方法之前。不只 `self.log`——任何被 `__init__` 内方法依赖的属性都适用。** |
@@ -157,7 +157,7 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | `list_sessions` | `stream` (text 分片) |
 | `load_session` (session_id) | `end` (full_text, action) |
 | `delete_session` (session_id) | `blocked` (message, category) |
-| | `session_list` / `session_loaded` / `session_deleted` |
+| `rename_session` (session_id, title) | `session_list` / `session_loaded` / `session_deleted` / `session_renamed` |
 | | `quick_replies` (可选，最多3条) / `error` |
 
 > 完整字段定义 + 时序图 → `核心文档/核心4_WS通信协议.md`

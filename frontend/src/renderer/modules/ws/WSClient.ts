@@ -46,6 +46,7 @@ export class WSClient {
   onSessionList?: (sessions: SessionMeta[]) => void;
   onSessionLoaded?: (sessionId: string, title: string, messages: ChatMessage[]) => void;
   onSessionDeleted?: (sessionId: string) => void;
+  onSessionRenamed?: (sessionId: string, title: string) => void;
   onQuickReplies?: (replies: string[]) => void;
 
   // 连接确认回调
@@ -165,6 +166,10 @@ export class WSClient {
 
   deleteSession(sessionId: string): void {
     this._send({ type: "delete_session", session_id: sessionId });
+  }
+
+  renameSession(sessionId: string, title: string): void {
+    this._send({ type: "rename_session", session_id: sessionId, title });
   }
 
   getConfig(): void {
@@ -358,6 +363,11 @@ export class WSClient {
       case "session_deleted":
         log.info("Session deleted (id={})", msg.session_id);
         this.onSessionDeleted?.(msg.session_id);
+        break;
+
+      case "session_renamed":
+        log.info("Session renamed (id={})", msg.session_id);
+        this.onSessionRenamed?.(msg.session_id, msg.title);
         break;
 
       case "quick_replies":

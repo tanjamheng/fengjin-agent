@@ -50,6 +50,12 @@ export interface ClientDeleteSession {
   session_id: string;
 }
 
+export interface ClientRenameSession {
+  type: "rename_session";
+  session_id: string;
+  title: string;
+}
+
 export interface ClientGetConfig {
   type: "get_config";
 }
@@ -68,6 +74,7 @@ export type ClientMessage =
   | ClientListSessions
   | ClientLoadSession
   | ClientDeleteSession
+  | ClientRenameSession
   | ClientGetConfig
   | ClientUpdateConfig;
 
@@ -123,6 +130,12 @@ export interface ServerSessionDeleted {
   session_id: string;
 }
 
+export interface ServerSessionRenamed {
+  type: "session_renamed";
+  session_id: string;
+  title: string;
+}
+
 export interface ServerQuickReplies {
   type: "quick_replies";
   replies: string[];
@@ -157,6 +170,7 @@ export type ServerMessage =
   | ServerSessionList
   | ServerSessionLoaded
   | ServerSessionDeleted
+  | ServerSessionRenamed
   | ServerQuickReplies
   | ServerError
   | ServerCurrentConfig

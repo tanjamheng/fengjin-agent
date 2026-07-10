@@ -227,6 +227,29 @@ async def websocket_endpoint(websocket: WebSocket):
                     "session_id": target_id,
                 })
 
+            # ── rename_session ──
+            elif msg_type == "rename_session":
+                target_id = data.get("session_id", "")
+                new_title = (data.get("title", "") or "").strip()
+                if not target_id or not new_title:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "会话ID或标题不能为空",
+                    })
+                else:
+                    ok = session_mgr.rename_session(target_id, new_title)
+                    if ok:
+                        await websocket.send_json({
+                            "type": "session_renamed",
+                            "session_id": target_id,
+                            "title": new_title,
+                        })
+                    else:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "会话不存在，重命名失败",
+                        })
+
             # ── get_config ──
             elif msg_type == "get_config":
                 from ..server.config_manager import ConfigManager

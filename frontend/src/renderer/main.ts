@@ -210,6 +210,14 @@ ws.onSessionDeleted = (sessionId: string) => {
   }
 };
 
+ws.onSessionRenamed = (sessionId: string, title: string) => {
+  log.info("Session renamed (id={}, title={})", sessionId, title);
+  appState.sessions = appState.sessions.map((s) =>
+    s.id === sessionId ? { ...s, title } : s
+  );
+  sidebar.renderList(appState.sessions);
+};
+
 ws.onQuickReplies = (replies: string[]) => chat.showQuickReplies(replies);
 
 // 会话ID变更：首次发消息后端创建会话 / blocked / error / cancel 等场景统一处理
@@ -373,6 +381,9 @@ sidebar.onSelectSession = (sessionId: string) => {
 };
 sidebar.onDeleteSession = (sessionId: string) => {
   ws.deleteSession(sessionId);
+};
+sidebar.onRenameSession = (sessionId: string, title: string) => {
+  ws.renameSession(sessionId, title);
 };
 sidebar.onClearAll = () => {
   log.info("Clear all sessions requested ({} sessions)", appState.sessions.length);

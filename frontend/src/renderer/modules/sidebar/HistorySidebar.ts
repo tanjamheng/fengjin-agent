@@ -1,5 +1,5 @@
 import type { SessionMeta } from "../../types/protocol";
-import { showConfirm } from "../../utils/dialog";
+import { showConfirm, showPrompt } from "../../utils/dialog";
 
 /**
  * HistorySidebar — 历史侧边栏 DOM 管理
@@ -19,6 +19,7 @@ export class HistorySidebar {
   onNewChat?: () => void;
   onSelectSession?: (sessionId: string) => void;
   onDeleteSession?: (sessionId: string) => void;
+  onRenameSession?: (sessionId: string, title: string) => void;
   onClearAll?: () => void;
   onOpenSettings?: () => void;
 
@@ -134,21 +135,42 @@ export class HistorySidebar {
       }
     });
 
-    // 标题
-    const title = document.createElement("div");
+    // 标题行（标题 + 编辑按钮）
+    const titleRow = document.createElement("div");
+    titleRow.className = "sidebar__item-title-row";
+
+    const title = document.createElement("span");
     title.className = "sidebar__item-title";
     title.textContent = session.title || "新对话";
-    item.appendChild(title);
+    titleRow.appendChild(title);
+
+    // 编辑按钮（hover 标题行时显示，跟在标题后面）
+    const editBtn = document.createElement("button");
+    editBtn.className = "sidebar__item-edit";
+    editBtn.textContent = "✎";
+    editBtn.setAttribute("aria-label", `重命名会话: ${session.title}`);
+    editBtn.title = "重命名此会话";
+    editBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (this._disabled) return;
+      const newTitle = await showPrompt("修改会话标题", session.title, 50);
+      if (!newTitle) return; // 用户取消
+      this.onRenameSession?.(session.id, newTitle);
+    });
+    titleRow.appendChild(editBtn);
+
+    item.appendChild(titleRow);
 
     // 副标题
     const meta = document.createElement("div");
     meta.className = "sidebar__item-meta";
-    meta.textContent = `${session.message_count} 条消息 · ${this._formatRelativeTime(
+    const rounds = Math.ceil(session.message_count / 2);
+    meta.textContent = `${rounds} 轮对话 · ${this._formatRelativeTime(
       session.updated_at
     )}`;
     item.appendChild(meta);
 
-    // 删除按钮（hover 显示）
+    // 删除按钮（hover 显示，绝对定位在右侧）
     const delBtn = document.createElement("button");
     delBtn.className = "sidebar__item-delete";
     delBtn.textContent = "×";
@@ -167,8 +189,12 @@ export class HistorySidebar {
   }
 
   private _formatRelativeTime(isoStr: string): string {
+    if (!isoStr) return "";
+
     const now = Date.now();
     const ts = new Date(isoStr).getTime();
+    if (isNaN(ts)) return "";
+
     const diffMs = now - ts;
 
     if (diffMs < 60_000) return "刚刚";
@@ -178,6 +204,12 @@ export class HistorySidebar {
     if (hours < 24) return `${hours} 小时前`;
     const days = Math.floor(hours / 24);
     if (days < 7) return `${days} 天前`;
-    return "更早";
+
+    const d = new Date(isoStr);
+    const thisYear = new Date().getFullYear();
+    if (d.getFullYear() === thisYear) {
+      return `${d.getMonth() + 1}月${d.getDate()}日`;
+    }
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
   }
 }

@@ -157,7 +157,7 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | `list_sessions` | `stream` (text 分片) |
 | `load_session` (session_id) | `end` (full_text, action) |
 | `delete_session` (session_id) | `blocked` (message, category) |
-| | `session_list` / `session_loaded` / `session_deleted` |
+| `rename_session` (session_id, title) | `session_list` / `session_loaded` / `session_deleted` / `session_renamed` |
 | | `quick_replies` (可选，最多3条) / `error` |
 
 > 完整字段定义 + 时序图 → `核心文档/核心4_WS通信协议.md`

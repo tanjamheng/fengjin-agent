@@ -35,6 +35,12 @@ class DeleteSessionMessage(BaseModel):
     session_id: str
 
 
+class RenameSessionMessage(BaseModel):
+    type: str = "rename_session"
+    session_id: str
+    title: str
+
+
 # ── 后端 → 前端 ──────────────────────────────────────────────
 
 class ConnectedMessage(BaseModel):
@@ -98,6 +104,12 @@ class SessionDeletedMessage(BaseModel):
     session_id: str
 
 
+class SessionRenamedMessage(BaseModel):
+    type: str = "session_renamed"
+    session_id: str
+    title: str
+
+
 class QuickRepliesMessage(BaseModel):
     type: str = "quick_replies"
     replies: list[str]
@@ -120,6 +132,7 @@ ServerMessage = Union[
     SessionListMessage,
     SessionLoadedMessage,
     SessionDeletedMessage,
+    SessionRenamedMessage,
     QuickRepliesMessage,
     ErrorMessage,
 ]
@@ -131,4 +144,5 @@ ClientMessage = Union[
     ListSessionsMessage,
     LoadSessionMessage,
     DeleteSessionMessage,
+    RenameSessionMessage,
 ]

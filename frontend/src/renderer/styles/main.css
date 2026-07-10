@@ -656,18 +656,58 @@ html, body {
   border-left: 3px solid var(--color-sidebar-active-bar);
 }
 
+.sidebar__item-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+  min-width: 0; /* 允许子元素收缩 */
+}
+
 .sidebar__item-title {
   font-size: 13px;
   color: var(--color-text-ai);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .sidebar__item-meta {
   font-size: 12px;
   color: #6A6A7A;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar__item-edit {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: #707070;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  margin-right: 4px; /* 和删除按钮拉开距离 */
+  transition: opacity 200ms ease, color 200ms ease, background 200ms ease;
+}
+
+.sidebar__item:hover .sidebar__item-edit,
+.sidebar__item:hover .sidebar__item-delete {
+  opacity: 1;
+}
+
+.sidebar__item-edit:hover {
+  color: var(--color-titlebar-end);
+  background: rgba(154, 194, 255, 0.15);
 }
 
 .sidebar__item-delete {
@@ -690,15 +730,12 @@ html, body {
   transition: opacity 200ms ease, color 200ms ease, background 200ms ease;
 }
 
-.sidebar__item:hover .sidebar__item-delete {
-  opacity: 1;
-}
-
 .sidebar__item-delete:hover {
   color: #C04040;
 }
 
-/* 键盘 Tab 到会话项时显示删除按钮 */
+/* 键盘 Tab 到会话项时显示操作按钮 */
+.sidebar__item:focus-within .sidebar__item-edit,
 .sidebar__item:focus-within .sidebar__item-delete {
   opacity: 1;
 }
@@ -927,6 +964,27 @@ html, body {
 .dialog-btn--confirm:hover {
   box-shadow: 0 4px 14px rgba(180, 150, 190, 0.4);
   transform: translateY(-1px);
+}
+
+.dialog-input {
+  width: 100%;
+  max-width: 280px;
+  padding: 8px 14px;
+  border: 2px solid var(--color-input-border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--color-text-ai);
+  background: var(--color-input-bg);
+  outline: none;
+  transition: border-color 200ms ease;
+  box-sizing: border-box;
+  margin: 4px auto 0;
+  display: block;
+}
+
+.dialog-input:focus {
+  border-color: var(--color-titlebar-end);
 }
 
 /* ===== 设置面板 ===== */
