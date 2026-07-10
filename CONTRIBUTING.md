@@ -4,7 +4,7 @@
 
 ## 提交 Issue
 
-遇到 Bug、有功能建议、或发现风堇的回复不够还原？请提交 [Issue](https://github.com/tanjamheng/ai-fengjin/issues)。
+遇到 Bug、有功能建议、或发现风堇的回复不够还原？请提交 [Issue](https://github.com/tanjamheng/fengjin-agent/issues)。
 
 ## 提交 Pull Request
 
