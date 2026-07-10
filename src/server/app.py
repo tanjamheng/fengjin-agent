@@ -143,13 +143,17 @@ async def lifespan(app: FastAPI):
         # ── 4. 记忆系统 ──
         emit_progress("engine_init:memory", "start")
         try:
-            from ..memory.config import MemorySettings
-            memory_config = MemorySettings.load(
-                str(_project_root / "config" / "memory.yaml")
-            ).memory
-            from ..memory.manager import MemoryManager
-            memory_manager = MemoryManager(memory_config)
-            log.info("记忆系统已加载")
+            memory_enabled = os.environ.get("MEMORY_ENABLED", "false").lower() == "true"
+            if memory_enabled:
+                from ..memory.config import MemorySettings
+                memory_config = MemorySettings.load(
+                    str(_project_root / "config" / "memory.yaml")
+                ).memory
+                from ..memory.manager import MemoryManager
+                memory_manager = MemoryManager(memory_config)
+                log.info("记忆系统已加载")
+            else:
+                log.info("记忆系统已禁用 (MEMORY_ENABLED=false)")
         except Exception as e:
             log.warning("记忆系统加载失败（环境变量未设？），WS 路径无记忆增强: {}", e)
         app.state.memory_manager = memory_manager

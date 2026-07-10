@@ -460,8 +460,10 @@ class Agent:
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
                 if self.memory_manager:
+                    current_session_id = self.session_mgr.get_current_session_id() or ""
                     self.memory_manager.extract_async(
-                        user_input, combined, trace_id=self.trace_id
+                        user_input, combined, trace_id=self.trace_id,
+                        session_id=current_session_id,
                     )
             raise
         except asyncio.CancelledError:
@@ -526,8 +528,10 @@ class Agent:
         # 8. 异步记忆提取（不阻塞回复）
         if self.memory_manager and full_text:
             logger.debug("触发异步记忆提取")
+            current_session_id = self.session_mgr.get_current_session_id() or ""
             self.memory_manager.extract_async(
-                user_input, full_text, trace_id=self.trace_id
+                user_input, full_text, trace_id=self.trace_id,
+                session_id=current_session_id,
             )
         elif self.memory_manager:
             logger.debug("跳过记忆提取: 回复为空")

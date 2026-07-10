@@ -293,6 +293,8 @@ def _handle_command(cmd: str, args: str, console: Console,
         current_id_before = session_mgr.get_current_session_id()
         deleted = session_mgr.delete_session(target["session_id"])
         if deleted:
+            if memory_manager:
+                memory_manager.delete_session_memories(target["session_id"])
             console.print(f"[green]已删除会话: {target['title']}[/green]")
         else:
             console.print(f"[yellow]会话「{target['title']}」已不存在（可能已被删除）[/yellow]")
@@ -349,11 +351,16 @@ def main():
     # 初始化记忆系统（可选：环境变量缺失时优雅降级，不阻塞启动）
     memory_config_path = PROJECT_ROOT / "config" / "memory.yaml"
     memory_settings = MemorySettings.load(str(memory_config_path))
-    try:
-        memory_manager = MemoryManager(memory_settings.memory)
-    except Exception as e:
-        get_logger("main").warning("记忆系统加载失败（环境变量未设？），记忆功能将不可用: {}", e)
-        console.print("[yellow]⚠ 记忆系统暂不可用（环境变量缺失或配置错误），对话将无长期记忆[/yellow]")
+    memory_enabled = os.environ.get("MEMORY_ENABLED", "false").lower() == "true"
+    if memory_enabled:
+        try:
+            memory_manager = MemoryManager(memory_settings.memory)
+        except Exception as e:
+            get_logger("main").warning("记忆系统加载失败（环境变量未设？），记忆功能将不可用: {}", e)
+            console.print("[yellow]⚠ 记忆系统暂不可用（环境变量缺失或配置错误），对话将无长期记忆[/yellow]")
+            memory_manager = None
+    else:
+        get_logger("main").info("记忆系统已禁用 (MEMORY_ENABLED=false)")
         memory_manager = None
 
     # 创建上下文管理器（依赖记忆检索器）

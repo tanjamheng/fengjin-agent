@@ -97,16 +97,19 @@ class MemoryStorage:
                 raise
 
     def add(self, memory_id: str, content: str, is_core: bool,
-            memory_type: str) -> None:
+            memory_type: str, session_id: str = "") -> None:
         """添加一条记忆"""
+        metadata = {
+            "is_core": int(is_core),
+            "type": memory_type,
+            "created_at": datetime.now().isoformat(),
+        }
+        if session_id:
+            metadata["session_id"] = session_id
         self.collection.add(
             documents=[content],
             ids=[memory_id],
-            metadatas=[{
-                "is_core": int(is_core),
-                "type": memory_type,
-                "created_at": datetime.now().isoformat()
-            }]
+            metadatas=[metadata]
         )
 
     def query(self, text: str, n_results: int = 1,

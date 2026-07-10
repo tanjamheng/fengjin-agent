@@ -161,7 +161,8 @@ class MemoryWriter:
             memory_id=memory_id,
             content=fact["content"],
             is_core=is_core,
-            memory_type=fact["type"]
+            memory_type=fact["type"],
+            session_id=fact.get("session_id", ""),
         )
 
     def _resolve_conflict(self, old_id: str, fact: dict, is_core: bool) -> None:
@@ -186,6 +187,8 @@ class MemoryWriter:
             self._insert(fact, is_core)
             return
 
+        if fact.get("session_id") and not old_meta.get("session_id"):
+            old_meta["session_id"] = fact["session_id"]
         old_meta["updated_at"] = datetime.now().isoformat()
         self.storage.upsert(memory_id=old_id, content=merged, metadata=old_meta)
 
@@ -211,20 +214,29 @@ class MemoryWriter:
             where={"is_core": 1},
             include=["documents", "metadatas"]
         )
-        if not results["documents"]:
-            return
-
-        paired = list(zip(results["documents"], results["metadatas"]))
-        paired.sort(key=lambda x: x[1].get("created_at", ""))
-
         text = "# 灰宝的档案\n"
-        text += "\n".join(f"- {doc}" for doc, _ in paired)
+        if results["documents"]:
+            paired = list(zip(results["documents"], results["metadatas"]))
+            paired.sort(key=lambda x: x[1].get("created_at", ""))
+            text += "\n".join(f"- {doc}" for doc, _ in paired)
 
         self._core_path.parent.mkdir(parents=True, exist_ok=True)
         # 原子写入：先写 .tmp 再 os.replace()，防止中途崩溃损坏文件（红线7）
         tmp_path = str(self._core_path) + ".tmp"
         Path(tmp_path).write_text(text, encoding="utf-8")
         os.replace(tmp_path, self._core_path)
+
+    def delete_session_memories(self, session_id: str) -> None:
+        """删除指定会话派生出的记忆，并刷新 core_memory.md。"""
+        if not session_id:
+            return
+        with self._queue.mutex:
+            kept = [fact for fact in self._queue.queue if fact.get("session_id") != session_id]
+            self._queue.queue.clear()
+            self._queue.queue.extend(kept)
+        self._checkpoint()
+        self.storage.delete(where={"session_id": session_id})
+        self._refresh_core_file()
 
     def _replay_pending(self) -> None:
         """启动时回放上次异常退出遗留的 pending_facts.json"""

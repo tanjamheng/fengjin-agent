@@ -275,6 +275,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     if agent.bond_tracker:
                         agent.bond_tracker.reset_state()
                 session_mgr.delete_session(target_id)
+                if memory_mgr and target_id:
+                    memory_mgr.delete_session_memories(target_id)
                 await websocket.send_json({
                     "type": "session_deleted",
                     "session_id": target_id,
