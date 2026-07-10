@@ -19,6 +19,7 @@ export class ChatUI {
   private _quickRepliesEl: HTMLElement;
   private _statusBarEl: HTMLElement;
   private _scrollHintEl: HTMLElement;
+  private _greetingEl: HTMLElement;
   private _autoScroll = true;
 
   // 回调
@@ -89,11 +90,18 @@ export class ChatUI {
         this._toggleScrollHint(false);
       }
     });
+
+    // 新会话欢迎语
+    this._greetingEl = document.createElement("div");
+    this._greetingEl.className = "chat-greeting";
+    this._greetingEl.textContent = "灰宝，想和我聊聊天吗？";
+    messagesEl.appendChild(this._greetingEl);
   }
 
   // ===== 消息操作 =====
 
   appendUserMessage(content: string): void {
+    this._greetingEl.style.display = "none";
     this.hideThinking();
     this.hideQuickReplies();
     this._renderer.appendUserMessage(content);
@@ -122,10 +130,22 @@ export class ChatUI {
 
   clearMessages(): void {
     this._renderer.clear();
+    // renderer.clear() 会清空 .chat-messages，需要重新挂载欢迎语
+    const messagesEl = this._container.querySelector(".chat-messages");
+    if (messagesEl && !messagesEl.contains(this._greetingEl)) {
+      messagesEl.appendChild(this._greetingEl);
+    }
+    this._greetingEl.style.display = "";
   }
 
   loadMessages(messages: ChatMessage[]): void {
     this._renderer.loadMessages(messages);
+    // renderer.loadMessages() 也会清空容器，需要重新挂载
+    const messagesEl = this._container.querySelector(".chat-messages");
+    if (messagesEl && !messagesEl.contains(this._greetingEl)) {
+      messagesEl.appendChild(this._greetingEl);
+    }
+    this._greetingEl.style.display = messages.length > 0 ? "none" : "";
     this.scrollToBottom();
   }
 

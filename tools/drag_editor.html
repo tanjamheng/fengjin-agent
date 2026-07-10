@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>背景拖拽编辑器</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ===== 左侧预览区 ===== */
+.preview-panel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a3e;
+  position: relative;
+}
+.chat-canvas {
+  position: relative;
+  width: 430px;
+  height: 600px;
+  background: linear-gradient(180deg, #EDF2FA 0%, #F2F0F8 35%, #F8F0F4 70%, #FDF5F5 100%);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+  overflow: hidden;
+}
+/* 网格辅助线 */
+.chat-canvas::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px);
+  background-size: 43px 60px; /* 10% 网格 */
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 可拖拽素材 */
+.deco-item {
+  position: absolute;
+  cursor: grab;
+  z-index: 2;
+  transition: filter 0.15s;
+}
+.deco-item:hover { filter: brightness(1.1) drop-shadow(0 0 6px rgba(100,150,255,0.5)); }
+.deco-item.dragging { cursor: grabbing; filter: brightness(1.2) drop-shadow(0 0 10px rgba(255,150,200,0.7)); z-index: 99; }
+.deco-item img { display: block; width: 100%; height: auto; pointer-events: none; }
+
+/* 选中指示器 */
+.deco-item::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 2px dashed transparent;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.deco-item.selected::after { border-color: rgba(255,200,100,0.7); }
+
+/* 标签 */
+.item-label {
+  position: absolute;
+  bottom: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: rgba(0,0,0,0.5);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ===== 右侧控制面板 ===== */
+.control-panel {
+  width: 360px;
+  background: #1e1e32;
+  border-left: 1px solid #3a3a50;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.panel-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #3a3a50;
+}
+.panel-header h2 { font-size: 16px; font-weight: 600; color: #cdd6f4; margin-bottom: 4px; }
+.panel-header p { font-size: 12px; color: #6c7086; }
+
+/* Sliders */
+.sliders {
+  padding: 12px 20px;
+  border-bottom: 1px solid #3a3a50;
+}
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.slider-row label { font-size: 12px; color: #a6adc8; width: 55px; flex-shrink: 0; }
+.slider-row input[type="range"] { flex: 1; accent-color: #9AC2FF; }
+.slider-row .val { font-size: 12px; color: #cdd6f4; width: 36px; text-align: right; }
+
+/* 素材列表 */
+.item-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 20px;
+  border-bottom: 1px solid #3a3a50;
+}
+.item-list h3 { font-size: 13px; color: #a6adc8; margin: 12px 0 8px; text-transform: uppercase; letter-spacing: 1px; }
+.item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 13px;
+}
+.item-row:hover { background: rgba(154,194,255,0.1); }
+.item-row.selected { background: rgba(154,194,255,0.2); }
+.item-row .dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.item-row .name { flex: 1; color: #cdd6f4; }
+.item-row .pos { color: #6c7086; font-size: 11px; font-variant-numeric: tabular-nums; }
+.item-row .size-in { width: 50px; font-size: 11px; background: #2a2a3e; border: 1px solid #3a3a50; border-radius: 4px; color: #cdd6f4; padding: 2px 6px; text-align: center; }
+
+/* CSS 输出区 */
+.css-output {
+  padding: 12px 20px;
+  border-bottom: 1px solid #3a3a50;
+}
+.css-output h3 { font-size: 13px; color: #a6adc8; margin-bottom: 8px; }
+.css-code {
+  background: #11111b;
+  border: 1px solid #3a3a50;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #cdd6f4;
+  white-space: pre;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.css-code .key { color: #89b4fa; }
+.css-code .val { color: #a6e3a1; }
+.css-code .comment { color: #6c7086; }
+
+/* 按钮 */
+.actions {
+  padding: 12px 20px;
+  display: flex;
+  gap: 8px;
+}
+.btn {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn-primary { background: linear-gradient(135deg, #FFBACC, #9AC2FF); color: #1a1a2e; }
+.btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-secondary { background: #2a2a3e; color: #cdd6f4; border: 1px solid #3a3a50; }
+.btn-secondary:hover { background: #3a3a4e; }
+.btn-warn { background: transparent; color: #f38ba8; border: 1px solid #f38ba8; font-size: 12px; }
+.btn-warn:hover { background: rgba(243,139,168,0.1); }
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #a6e3a1;
+  color: #1a1a2e;
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+  z-index: 999;
+}
+.toast.show { opacity: 1; }
+
+/* 列表中的按钮 */
+.btn-fliph, .btn-flipv, .btn-dupe, .btn-del {
+  width: 22px; height: 22px;
+  border: none; border-radius: 4px;
+  font-size: 14px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; line-height: 1;
+  transition: background 0.15s;
+}
+.btn-fliph, .btn-flipv { background: rgba(245,200,66,0.1); color: #f5c842; }
+.btn-fliph:hover, .btn-flipv:hover { background: rgba(245,200,66,0.25); }
+.btn-dupe { background: rgba(154,194,255,0.15); color: #89b4fa; }
+.btn-dupe:hover { background: rgba(154,194,255,0.3); }
+.btn-del { background: rgba(243,139,168,0.1); color: #f38ba8; }
+.btn-del:hover { background: rgba(243,139,168,0.3); }
+</style>
+</head>
+<body>
+
+<!-- 左侧预览 -->
+<div class="preview-panel">
+  <div class="chat-canvas" id="canvas"></div>
+</div>
+
+<!-- 右侧面板 -->
+<div class="control-panel">
+  <div class="panel-header">
+    <h2>拖拽编辑器</h2>
+    <p>鼠标拖动素材 → CSS 自动更新</p>
+  </div>
+
+  <div class="sliders">
+    <div class="slider-row">
+      <label>透明度</label>
+      <input type="range" id="opacity" min="1" max="100" value="55">
+      <span class="val" id="opacity-val">55%</span>
+    </div>
+    <div class="slider-row">
+      <label>缩放</label>
+      <input type="range" id="scale" min="30" max="200" value="100">
+      <span class="val" id="scale-val">100%</span>
+    </div>
+  </div>
+
+  <div class="item-list" id="item-list">
+    <h3>☁ 云朵</h3>
+    <div id="cloud-items"></div>
+    <h3>🫧 泡泡</h3>
+    <div id="bubble-items"></div>
+  </div>
+
+  <div class="css-output">
+    <h3>📋 CSS 代码 <span style="font-weight:400;color:#6c7086">（聊天区 ::before）</span></h3>
+    <div class="css-code" id="css-code"></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-primary" id="btn-copy">📋 复制 CSS</button>
+    <button class="btn btn-secondary" id="btn-export">📥 导出当前值</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ---- 素材模板 ----
+const ASSETS = [
+  { name: 'cloud_02', file: 'cloud_02.png', type: 'cloud', w: 90 },
+  { name: 'cloud_01', file: 'cloud_01.png', type: 'cloud', w: 180 },
+  { name: 'bubble_06', file: 'bubble_06.png', type: 'bubble', w: 30 },
+  { name: 'bubble_05', file: 'bubble_05.png', type: 'bubble', w: 25 },
+  { name: 'bubble_04', file: 'bubble_04.png', type: 'bubble', w: 80 },
+  { name: 'bubble_03', file: 'bubble_03.png', type: 'bubble', w: 70 },
+  { name: 'bubble_02', file: 'bubble_02.png', type: 'bubble', w: 55 },
+  { name: 'bubble_01', file: 'bubble_01.png', type: 'bubble', w: 60 },
+];
+const ASSET_MAP = {};
+ASSETS.forEach(a => ASSET_MAP[a.name] = a);
+
+// 初始位置
+const INITIAL_POSITIONS = {
+  cloud_02: [12, 28], cloud_01: [85, 20],
+  bubble_06: [78, 58], bubble_05: [28, 72],
+  bubble_04: [92, 36], bubble_03: [5, 50],
+  bubble_02: [88, 10], bubble_01: [10, 14],
+};
+
+const ASSET_BASE = '../frontend/src/renderer/assets/bg/';
+
+// ---- 全局状态 ----
+const state = {
+  instances: [],    // { id, assetName, el, pos:[x%,y%], sizeW, visible, flipH, flipV }
+  selectedId: null,
+  opacity: 0.55,
+  scale: 1.0,
+  draggingId: null,
+  dragStart: null,
+  dragPosStart: null,
+  clipboard: null,  // { assetName, sizeW, flipH, flipV } — 复制的模板
+};
+
+const canvas = document.getElementById('canvas');
+const cssCode = document.getElementById('css-code');
+
+function findInst(name) { return state.instances.find(i => i.displayName === name); }
+
+// ---- 创建/删除实例 ----
+function nextDisplayName(assetName) {
+  // 自动命名: cloud_01#1, cloud_01#2, bubble_03#1, ...
+  let n = 1;
+  while (state.instances.some(i => i.displayName === `${assetName}#${n}`)) n++;
+  return `${assetName}#${n}`;
+}
+
+function createInstance(assetName, pos, sizeW, flipH = false, flipV = false) {
+  const a = ASSET_MAP[assetName];
+  const displayName = nextDisplayName(assetName);
+  const el = document.createElement('div');
+  el.className = 'deco-item';
+  el.style.width = (sizeW * state.scale) + 'px';
+  el.dataset.displayName = displayName;
+
+  const img = document.createElement('img');
+  img.src = ASSET_BASE + a.file;
+
+  const label = document.createElement('span');
+  label.className = 'item-label';
+  label.textContent = displayName;
+
+  el.appendChild(img);
+  el.appendChild(label);
+  setPos(el, pos[0], pos[1]);
+
+  el.addEventListener('mousedown', e => onDragStart(e, displayName));
+  el.addEventListener('click', e => { e.stopPropagation(); selectItem(displayName); });
+
+  canvas.appendChild(el);
+  const inst = { displayName, assetName, el, pos: [...pos], sizeW, visible: true, flipH, flipV };
+  applyFlip(inst);
+  state.instances.push(inst);
+  return inst;
+}
+
+function deleteInstance(name) {
+  const idx = state.instances.findIndex(i => i.displayName === name);
+  if (idx === -1) return;
+  const inst = state.instances[idx];
+  inst.el.remove();
+  state.instances.splice(idx, 1);
+  if (state.selectedId === name) state.selectedId = null;
+  if (state.draggingId === name) state.draggingId = null;
+}
+
+// ---- 初始化 ----
+function initInstances() {
+  ASSETS.forEach(a => {
+    const [px, py] = INITIAL_POSITIONS[a.name] || [50, 50];
+    createInstance(a.name, [px, py], a.w);
+  });
+}
+
+// ---- 位置/拖拽 ----
+function setPos(el, px, py) {
+  el.style.left = px + '%';
+  el.style.top = py + '%';
+  el.style.transform = 'translate(-50%, -50%)';
+}
+
+function applyFlip(inst) {
+  let t = 'translate(-50%, -50%)';
+  if (inst.flipH) t += ' scaleX(-1)';
+  if (inst.flipV) t += ' scaleY(-1)';
+  inst.el.style.transform = t;
+}
+
+function onDragStart(e, name) {
+  e.preventDefault();
+  selectItem(name);
+  const inst = findInst(name);
+  if (!inst) return;
+  state.draggingId = name;
+  state.dragStart = [e.clientX, e.clientY];
+  state.dragPosStart = [...inst.pos];
+  inst.el.classList.add('dragging');
+}
+
+document.addEventListener('mousemove', e => {
+  if (!state.draggingId) return;
+  const inst = findInst(state.draggingId);
+  if (!inst) return;
+  const rect = canvas.getBoundingClientRect();
+  const dx = ((e.clientX - state.dragStart[0]) / rect.width) * 100;
+  const dy = ((e.clientY - state.dragStart[1]) / rect.height) * 100;
+  inst.pos[0] = Math.round((state.dragPosStart[0] + dx) * 100) / 100;
+  inst.pos[1] = Math.round((state.dragPosStart[1] + dy) * 100) / 100;
+  setPos(inst.el, inst.pos[0], inst.pos[1]);
+  applyFlip(inst);
+  updateOutput();
+});
+
+document.addEventListener('mouseup', () => {
+  if (state.draggingId) {
+    const inst = findInst(state.draggingId);
+    if (inst) inst.el.classList.remove('dragging');
+    state.draggingId = null;
+  }
+});
+
+// ---- 选中 ----
+function selectItem(name) {
+  state.instances.forEach(i => i.el.classList.remove('selected'));
+  if (name) {
+    const inst = findInst(name);
+    if (inst) { inst.el.classList.add('selected'); state.selectedId = name; }
+  } else {
+    state.selectedId = null;
+  }
+  buildList();
+}
+
+canvas.addEventListener('click', e => {
+  if (e.target === canvas) selectItem(null);
+});
+
+// ---- 列表 ----
+function buildList() {
+  const cloudList = document.getElementById('cloud-items');
+  const bubbleList = document.getElementById('bubble-items');
+  cloudList.innerHTML = '';
+  bubbleList.innerHTML = '';
+
+  // Group instances by asset type
+  const clouds = state.instances.filter(i => ASSET_MAP[i.assetName].type === 'cloud');
+  const bubbles = state.instances.filter(i => ASSET_MAP[i.assetName].type === 'bubble');
+
+  [ [cloudList, clouds, 'cloud'], [bubbleList, bubbles, 'bubble'] ].forEach(([list, insts, type]) => {
+    insts.forEach(inst => {
+      const [px, py] = inst.pos;
+      const sel = state.selectedId === inst.displayName;
+      const row = document.createElement('div');
+      row.className = 'item-row' + (sel ? ' selected' : '');
+      const flipLabel = (inst.flipH ? '↔' : '') + (inst.flipV ? '↕' : '');
+      row.innerHTML = `
+        <span class="dot" style="background:${type==='cloud'?'#F5C842':'#9AC2FF'}"></span>
+        <span class="name">${inst.assetName} ${inst.visible ? '' : '(隐藏)'} ${flipLabel}</span>
+        <span class="pos">${px.toFixed(1)}%, ${py.toFixed(1)}%</span>
+        <input class="size-in" type="number" value="${inst.sizeW}" min="10" max="500"
+               data-name="${inst.displayName}" title="宽度(px)">
+        <button class="btn-fliph" data-name="${inst.displayName}" title="水平翻转 (H键)">↔</button>
+        <button class="btn-flipv" data-name="${inst.displayName}" title="垂直翻转 (V键)">↕</button>
+        <button class="btn-dupe" data-name="${inst.displayName}" title="复制 (Ctrl+D)">+</button>
+        <button class="btn-del" data-name="${inst.displayName}" title="删除">×</button>
+      `;
+      row.addEventListener('click', e => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+        selectItem(inst.displayName);
+      });
+      list.appendChild(row);
+    });
+
+    // Add new button
+    const addRow = document.createElement('div');
+    addRow.className = 'item-row';
+    addRow.style.opacity = '0.6';
+    addRow.style.cursor = 'pointer';
+    addRow.innerHTML = `<span style="font-size:16px;">+</span> <span class="name" style="color:#6c7086;">添加${type==='cloud'?'云朵':'泡泡'}</span>`;
+    addRow.addEventListener('click', () => {
+      const assetName = type === 'cloud' ? 'cloud_01' : 'bubble_01';
+      const inst = createInstance(assetName, [50, 50], ASSET_MAP[assetName].w);
+      selectItem(inst.displayName);
+      buildList();
+      updateOutput();
+    });
+    list.appendChild(addRow);
+  });
+
+  // Size handlers
+  document.querySelectorAll('.size-in').forEach(inp => {
+    inp.addEventListener('change', e => {
+      const id = e.target.dataset.name;
+      const inst = findInst(id);
+      if (!inst) return;
+      inst.sizeW = parseInt(e.target.value) || 30;
+      inst.el.style.width = (inst.sizeW * state.scale) + 'px';
+      updateOutput();
+    });
+    inp.addEventListener('click', e => e.stopPropagation());
+  });
+
+  // Duplicate button
+  document.querySelectorAll('.btn-dupe').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const id = btn.dataset.name;
+      const inst = findInst(id);
+      if (!inst) return;
+      const newInst = createInstance(inst.assetName, [inst.pos[0]+3, inst.pos[1]+3], inst.sizeW);
+      selectItem(newInst.displayName);
+      buildList();
+      updateOutput();
+    });
+  });
+
+  // Flip buttons
+  document.querySelectorAll('.btn-fliph, .btn-flipv').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const id = btn.dataset.name;
+      const inst = findInst(id);
+      if (!inst) return;
+      if (btn.classList.contains('btn-fliph')) inst.flipH = !inst.flipH;
+      else inst.flipV = !inst.flipV;
+      applyFlip(inst);
+      buildList();
+      updateOutput();
+    });
+  });
+
+}
+
+// ---- CSS 输出 ----
+function updateOutput() {
+  const visible = state.instances.filter(i => i.visible);
+  const urls = visible.map(i => `    url('../assets/bg/${ASSET_MAP[i.assetName].file}')`).join(',\n');
+  const positions = visible.map(i => `    ${i.pos[0].toFixed(0)}% ${i.pos[1].toFixed(0)}%`).join(',\n');
+  const sizes = visible.map(i => `    ${i.sizeW}px auto`).join(',\n');
+
+  const flipped = visible.filter(i => i.flipH || i.flipV);
+  const flipNote = flipped.length ? ` · ${flipped.length}个需翻转 (CSS不支持单层翻转，需预生成翻转PNG)` : '';
+
+  cssCode.innerHTML = `<span class="comment">/* ${visible.length} 个素材 · opacity: <b>${Math.round(state.opacity*100)}%</b>${flipNote} */</span>
+<span class="key">background-image:</span>
+<span class="val">${urls};</span>
+
+<span class="key">background-position:</span>
+<span class="val">${positions};</span>
+
+<span class="key">background-size:</span>
+<span class="val">${sizes};</span>
+
+<span class="key">background-repeat:</span>
+<span class="val">    no-repeat;</span>`;
+}
+
+// ---- Sliders ----
+document.getElementById('opacity').addEventListener('input', function() {
+  state.opacity = this.value / 100;
+  document.getElementById('opacity-val').textContent = this.value + '%';
+  updateOutput();
+});
+
+document.getElementById('scale').addEventListener('input', function() {
+  state.scale = this.value / 100;
+  document.getElementById('scale-val').textContent = this.value + '%';
+  state.instances.forEach(inst => {
+    inst.el.style.width = (inst.sizeW * state.scale) + 'px';
+  });
+});
+
+// ---- 按钮 ----
+function copyCSS() {
+  const visible = state.instances.filter(i => i.visible);
+  const urls = visible.map(i => `    url('../assets/bg/${ASSET_MAP[i.assetName].file}')`).join(',\n');
+  const positions = visible.map(i => `    ${i.pos[0].toFixed(0)}% ${i.pos[1].toFixed(0)}%`).join(',\n');
+  const sizes = visible.map(i => `    ${i.sizeW}px auto`).join(',\n    ');
+  const css = `opacity: ${state.opacity.toFixed(2)};
+background-image:
+${urls};
+background-position:
+${positions};
+background-size:
+    ${sizes};
+background-repeat: no-repeat;`;
+  navigator.clipboard.writeText(css).then(() => showToast('CSS 已复制！'));
+}
+
+document.getElementById('btn-copy').addEventListener('click', copyCSS);
+
+document.getElementById('btn-export').addEventListener('click', () => {
+  const data = state.instances.filter(i => i.visible).map(i => ({
+    asset: i.assetName, pos: i.pos, sizeW: i.sizeW
+  }));
+  data._opacity = state.opacity;
+  navigator.clipboard.writeText(JSON.stringify(data, null, 2)).then(() => showToast('JSON 已复制！'));
+});
+
+// ---- Toast ----
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+// ---- 键盘 ----
+document.addEventListener('keydown', e => {
+  if (!state.selectedId) return;
+  const inst = findInst(state.selectedId);
+  if (!inst) return;
+  const step = e.shiftKey ? 5 : 1;
+  switch (e.key) {
+    case 'ArrowLeft': inst.pos[0] -= step; break;
+    case 'ArrowRight': inst.pos[0] += step; break;
+    case 'ArrowUp': inst.pos[1] -= step; break;
+    case 'ArrowDown': inst.pos[1] += step; break;
+    case 'Delete':
+    case 'Backspace':
+      inst.visible = !inst.visible;
+      inst.el.style.display = inst.visible ? '' : 'none';
+      buildList(); updateOutput();
+      e.preventDefault(); return;
+    default: return;
+  }
+  e.preventDefault();
+  setPos(inst.el, inst.pos[0], inst.pos[1]);
+  applyFlip(inst);
+  updateOutput();
+});
+
+// ---- Ctrl+C/V 复制粘贴 ----
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (e.key === 'c' && state.selectedId) {
+    e.preventDefault();
+    const inst = findInst(state.selectedId);
+    if (!inst) return;
+    state.clipboard = { assetName: inst.assetName, sizeW: inst.sizeW, flipH: inst.flipH, flipV: inst.flipV };
+    showToast(`已复制 ${inst.displayName}`);
+    return;
+  }
+  if (e.key === 'v' && state.clipboard) {
+    e.preventDefault();
+    const { assetName, sizeW, flipH, flipV } = state.clipboard;
+    const newInst = createInstance(assetName, [50, 50], sizeW, flipH, flipV);
+    applyFlip(newInst);
+    selectItem(newInst.displayName);
+    buildList(); updateOutput();
+    showToast(`已粘贴 ${newInst.displayName}`);
+    return;
+  }
+});
+
+// ---- 滚轮缩放选中素材 ----
+canvas.addEventListener('wheel', e => {
+  if (!state.selectedId) return;
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  const inst = findInst(state.selectedId);
+  if (!inst) return;
+  const delta = e.deltaY > 0 ? -5 : 5;
+  inst.sizeW = Math.max(10, Math.min(500, inst.sizeW + delta));
+  inst.el.style.width = (inst.sizeW * state.scale) + 'px';
+  buildList();
+  updateOutput();
+}, { passive: false });
+
+// ---- 启动 ----
+initInstances();
+buildList();
+updateOutput();
+</script>
+</body>
+</html>

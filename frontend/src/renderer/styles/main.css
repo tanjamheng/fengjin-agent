@@ -5,7 +5,7 @@
 
 /* ===== CSS 变量（全局配色，权威源） ===== */
 :root {
-  --color-bg-chat: #F8F8F8;
+  --color-bg-chat: #EDF1F8;           /* 淡蓝天底色 */
   --color-bubble-ai: #FFE6F2;
   --color-bubble-user: #F9F2EB;
   --color-text-ai: #333333;
@@ -31,7 +31,7 @@
   --color-hover-bg: #EEEEEE;
   --color-sidebar-active: #F0F6FF;
   --color-sidebar-active-bar: #9AC2FF;
-  --color-sidebar-bg: #FAFAFA;
+  --color-sidebar-bg: #F0F2F8;        /* 侧边栏底色，比聊天区微深以区隔 */
   --color-placeholder: #A0B0C0;
   --color-disabled-bg: #E8E8E8;
   --color-disabled-text: #C0C0C0;
@@ -62,7 +62,12 @@ html, body {
   font-size: 14px;
   line-height: 1.6;
   color: var(--color-text-ai);
-  background: var(--color-bg-chat);
+  background: linear-gradient(180deg,
+    #EDF2FA 0%,
+    #F2F0F8 35%,
+    #F8F0F4 70%,
+    #FDF5F5 100%
+  );
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -118,11 +123,6 @@ html, body {
   -webkit-app-region: no-drag;
 }
 
-.titlebar__btn--pin {
-  font-family: inherit;
-  font-size: 13px;
-}
-
 .titlebar__btn:hover {
   background: rgba(255, 255, 255, 0.3);
 }
@@ -132,9 +132,6 @@ html, body {
   color: #ffffff;
 }
 
-.titlebar__btn--active {
-  color: var(--color-star);
-}
 
 /* ===== 主布局 (38% / 42% / 20%) ===== */
 .main-layout {
@@ -156,15 +153,28 @@ html, body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-chat);
+  position: relative; /* 为 ::before 装饰层提供定位锚点 */
+  background: linear-gradient(180deg,
+    #EDF2FA 0%,
+    #F2F0F8 35%,
+    #F8F0F4 70%,
+    #FDF5F5 100%
+  );
   border-left: 1px solid var(--color-divider);
   border-right: 1px solid var(--color-divider);
 }
 
+/* 对话区：纯色渐变背景，无装饰 */
+
 /* 右侧：历史侧边栏 — 比例由父容器 flex 控制 */
 .sidebar-area {
   min-width: 160px;
-  background: var(--color-sidebar-bg);
+  position: relative; /* 为 ::before 装饰层提供定位锚点 */
+  background: linear-gradient(180deg,
+    #F0F2F8 0%,
+    #F4F2F8 50%,
+    #F8F4F6 100%
+  );
 }
 
 /* ===== 角色展示区 ===== */
@@ -231,10 +241,21 @@ html, body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* AI loading ● ● ● 呼吸 */
+/* 新会话欢迎语 */
+.chat-greeting {
+  text-align: center;
+  font-size: 22px;
+  font-weight: 500;
+  color: #8A8AAA;
+  padding: 40px 0 0;
+  margin: 0 auto;
+  animation: messageFadeIn 0.4s ease-out;
+}
+
+/* AI loading ● ● ● 呼吸（仅文字脉冲，气泡背景不动） */
 @keyframes loadingPulse {
-  0%, 100% { opacity: 0.25; }
-  50%      { opacity: 1; }
+  0%, 100% { color: rgba(51, 51, 51, 0.25); }
+  50%      { color: rgba(51, 51, 51, 1); }
 }
 
 .chat-message-wrapper {
@@ -566,6 +587,7 @@ html, body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden; /* 防止子元素溢出产生细条 */
 }
 
 .sidebar__header {
@@ -689,19 +711,11 @@ html, body {
 }
 
 .sidebar__footer {
-  padding: 12px;
-  border-top: 1px solid var(--color-divider);
+  display: none; /* 暂时隐藏，后续移至设置面板 */
 }
 
 .sidebar__clear-all {
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: #C04040;
-  font-size: 12px;
-  font-family: var(--font-stack);
-  cursor: pointer;
-  padding: 4px 0;
+  display: none; /* 暂时隐藏，后续移至设置面板 */
 }
 
 .sidebar__clear-all:hover {
@@ -1192,7 +1206,12 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-bg-chat);
+  background: linear-gradient(180deg,
+    #EDF2FA 0%,
+    #F2F0F8 35%,
+    #F8F0F4 70%,
+    #FDF5F5 100%
+  );
   transition: opacity 0.3s ease;
   z-index: 2;
 }

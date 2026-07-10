@@ -62,20 +62,10 @@ export class HistorySidebar {
     this._emptyEl.style.display = "none";
     this._listEl.appendChild(this._emptyEl);
 
-    // 底部
-    const footer = document.createElement("div");
-    footer.className = "sidebar__footer";
-
-    const clearAllBtn = document.createElement("button");
-    clearAllBtn.className = "sidebar__clear-all";
-    clearAllBtn.textContent = "清空全部";
-    clearAllBtn.addEventListener("click", async () => {
-      if (this._disabled) return;
-      const ok = await showConfirm("确定清空全部历史对话？此操作不可撤销");
-      if (ok) this.onClearAll?.();
-    });
-    footer.appendChild(clearAllBtn);
-    this._container.appendChild(footer);
+    // 底部（清空全部按钮暂时隐藏，后续移至设置面板）
+    // const footer = document.createElement("div");
+    // footer.className = "sidebar__footer";
+    // const clearAllBtn = ...
   }
 
   /** 渲染会话列表 */

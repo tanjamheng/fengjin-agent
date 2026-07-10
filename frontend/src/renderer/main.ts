@@ -26,6 +26,20 @@ if (api) {
   });
 }
 
+// HMR 热重载检测：后端已在运行则跳过加载页
+async function _checkBackendAlive(): Promise<boolean> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 1500);
+  try {
+    const res = await fetch("http://127.0.0.1:8765/health", { signal: ctrl.signal });
+    clearTimeout(timer);
+    return res.ok;
+  } catch {
+    clearTimeout(timer);
+    return false;
+  }
+}
+
 // ===== 会话加载保护 =====
 let _loadingSession = false;
 let _loadingSessionId: string | null = null;
@@ -47,12 +61,22 @@ const appPanel = document.getElementById("app-panel");
 let launcherRenderer: LauncherRenderer | null = null;
 
 if (api && launcherContainer && appPanel) {
-  launcherRenderer = new LauncherRenderer(launcherContainer);
+  // HMR 热重载：后端已在线则跳过加载页
+  const backendAlive = await _checkBackendAlive();
+  if (backendAlive) {
+    log.info("后端已在运行，跳过加载页 (HMR)");
+    _isLauncherMode = false;
+    launcherContainer.style.display = "none";
+    appPanel.style.display = "flex";
+    appPanel.classList.add("app-panel--visible");
+    initChatModules();
+  } else {
+    launcherRenderer = new LauncherRenderer(launcherContainer);
 
-  // 监听进度状态
-  api.onLauncherState((state: any) => {
-    launcherRenderer?.update(state);
-  });
+    // 监听进度状态
+    api.onLauncherState((state: any) => {
+      launcherRenderer?.update(state);
+    });
 
   // 需要配置 .env
   api.onLauncherNeedConfig(async () => {
@@ -65,10 +89,11 @@ if (api && launcherContainer && appPanel) {
     }
   });
 
-  // 加载完成
-  launcherRenderer.onDone = () => {
-    _transitionToChat();
-  };
+    // 加载完成
+    launcherRenderer.onDone = () => {
+      _transitionToChat();
+    };
+  }
 }
 
 async function _showFirstTimeSettings(): Promise<SettingsData | null> {
@@ -424,10 +449,5 @@ document.getElementById("btn-maximize")?.addEventListener("click", () => {
 });
 document.getElementById("btn-close")?.addEventListener("click", () => {
   window.electronAPI?.close();
-});
-document.getElementById("btn-pin")?.addEventListener("click", () => {
-  window.electronAPI?.toggleAlwaysOnTop();
-  const btn = document.getElementById("btn-pin");
-  if (btn) btn.classList.toggle("titlebar__btn--active");
 });
 
