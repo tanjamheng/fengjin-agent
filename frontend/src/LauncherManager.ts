@@ -55,6 +55,7 @@ const HEALTH_POLL_MS = 2000;                // 2 秒轮询（localhost 几乎零
 export class LauncherManager {
   private _win: BrowserWindow;
   private _projectRoot: string;
+  private _wsToken: string;
   private _backend: ChildProcess | null = null;
   private _state: LauncherState;
   private _watchdogTimer: ReturnType<typeof setTimeout> | null = null;
@@ -86,9 +87,10 @@ export class LauncherManager {
     "engine_init:knowledge": "正在构建知识库...",
   };
 
-  constructor(win: BrowserWindow, projectRoot: string) {
+  constructor(win: BrowserWindow, projectRoot: string, wsToken: string) {
     this._win = win;
     this._projectRoot = projectRoot;
+    this._wsToken = wsToken;
     this._state = {
       phase: "env_check",
       phaseLabel: "",
@@ -208,7 +210,9 @@ export class LauncherManager {
   }
 
   private async _ensureVenv(): Promise<void> {
-    const venvPython = join(this._projectRoot, "venv", "Scripts", "python.exe");
+    const venvPython = process.platform === "win32"
+      ? join(this._projectRoot, "venv", "Scripts", "python.exe")
+      : join(this._projectRoot, "venv", "bin", "python");
     if (existsSync(venvPython)) return; // venv 已存在
 
     return new Promise((resolve, reject) => {
@@ -259,13 +263,15 @@ export class LauncherManager {
   // ── 后端进程管理 ──
 
   private _spawnBackend(): void {
-    const venvPython = join(this._projectRoot, "venv", "Scripts", "python.exe");
+    const venvPython = process.platform === "win32"
+      ? join(this._projectRoot, "venv", "Scripts", "python.exe")
+      : join(this._projectRoot, "venv", "bin", "python");
     const pythonExe = existsSync(venvPython) ? venvPython : "python";
 
     this._log(`Spawning backend: ${pythonExe} -m src.server.server`);
     this._backend = spawn(pythonExe, ["-m", "src.server.server"], {
       cwd: this._projectRoot,
-      env: { ...process.env, FENGJIN_LAUNCHER_MODE: "1" },
+      env: { ...process.env, FENGJIN_LAUNCHER_MODE: "1", FENGJIN_WS_TOKEN: this._wsToken },
       stdio: ["ignore", "pipe", "pipe"], // stdin=ignore, stdout=pipe, stderr=pipe
     });
     this._log(`Backend PID: ${this._backend.pid}`);

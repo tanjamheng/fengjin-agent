@@ -47,10 +47,10 @@ if not exist "%SEVEN_DIR%\7za.cmd" (
     REM 1. 重命名 7za.exe → 7za_real.exe
     if exist "%SEVEN_DIR%\7za.exe" rename "%SEVEN_DIR%\7za.exe" 7za_real.exe >nul
 
-    REM 2. 创建 7za.cmd wrapper：调用真实 7za，始终返回 0
+    REM 2. 创建 7za.cmd wrapper：调用真实 7za，并保留真实退出码
     echo @echo off> "%SEVEN_DIR%\7za.cmd"
     echo "%%~dp07za_real.exe" %%*>> "%SEVEN_DIR%\7za.cmd"
-    echo exit /b 0>> "%SEVEN_DIR%\7za.cmd"
+    echo exit /b %%ERRORLEVEL%%>> "%SEVEN_DIR%\7za.cmd"
 
     REM 3. 修改 7zip-bin 指向 .cmd
     powershell -NoProfile -Command ^
@@ -118,16 +118,17 @@ echo    Copying project files...
 
 xcopy "src" "%RELEASE_DIR%\src\" /E /I /Q >nul
 xcopy "config" "%RELEASE_DIR%\config\" /E /I /Q >nul
-xcopy "数据侧_风堇资料" "%RELEASE_DIR%\数据侧_风堇资料\" /E /I /Q >nul
 copy "requirements.txt" "%RELEASE_DIR%\" >nul
 copy ".env.example" "%RELEASE_DIR%\" >nul
 copy "README.md" "%RELEASE_DIR%\" >nul 2>nul
 copy "LICENSE" "%RELEASE_DIR%\" >nul 2>nul
+copy "THIRD_PARTY_ASSETS.md" "%RELEASE_DIR%\" >nul 2>nul
 
 REM Create empty directories
 mkdir "%RELEASE_DIR%\models" 2>nul
 mkdir "%RELEASE_DIR%\data\sessions" 2>nul
 mkdir "%RELEASE_DIR%\data\chroma" 2>nul
+mkdir "%RELEASE_DIR%\data\memory" 2>nul
 mkdir "%RELEASE_DIR%\logs" 2>nul
 
 echo    OK

@@ -30,6 +30,10 @@ class MemoryWriter:
         self.model = model
         self.storage = storage
         self.log = get_logger("memory_writer")
+        self._core_path = Path(config.core_file)
+        if not self._core_path.is_absolute():
+            from ..utils.helpers import get_project_root
+            self._core_path = get_project_root() / self._core_path
         try:
             self._merge_prompt_template = Path(config.merge.prompt_file).read_text(
                 encoding="utf-8"
@@ -212,11 +216,11 @@ class MemoryWriter:
         text = "# 灰宝的档案\n"
         text += "\n".join(f"- {doc}" for doc, _ in paired)
 
-        Path(self.config.core_file).parent.mkdir(parents=True, exist_ok=True)
+        self._core_path.parent.mkdir(parents=True, exist_ok=True)
         # 原子写入：先写 .tmp 再 os.replace()，防止中途崩溃损坏文件（红线7）
-        tmp_path = str(self.config.core_file) + ".tmp"
+        tmp_path = str(self._core_path) + ".tmp"
         Path(tmp_path).write_text(text, encoding="utf-8")
-        os.replace(tmp_path, self.config.core_file)
+        os.replace(tmp_path, self._core_path)
 
     def _replay_pending(self) -> None:
         """启动时回放上次异常退出遗留的 pending_facts.json"""

@@ -78,9 +78,11 @@ REM  2. Python dependencies
 REM ============================================================
 echo  [2/4] Python dependencies (first install may take ~3 min)...
 echo    Using Tsinghua mirror for faster download
-call venv\Scripts\python.exe -m pip install -r requirements.txt -q -i https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
+call venv\Scripts\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 if errorlevel 1 (
-    echo    WARNING: Some dependencies failed to install, continuing...
+    echo    ERROR: Python dependencies failed to install
+    pause
+    exit /b 1
 )
 echo    OK
 

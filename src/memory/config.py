@@ -57,7 +57,7 @@ class MemoryConfig(BaseModel):
     merge: MergeConfig = MergeConfig()
     thresholds: ThresholdConfig = ThresholdConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
-    core_file: str = "config/prompts/core_memory.md"
+    core_file: str = "data/memory/core_memory.md"
     filter: FilterConfig = FilterConfig()
 
 

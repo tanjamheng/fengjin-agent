@@ -14,7 +14,7 @@ print("=" * 60)
 # 1. 检查环境变量
 print("\n[1] 检查环境变量")
 fengjin_key = os.environ.get("FENGJIN_API_KEY", "未设置")
-print(f"  FENGJIN_API_KEY: {fengjin_key[:20] if fengjin_key != '未设置' else '未设置'}...")
+print(f"  FENGJIN_API_KEY: {'已设置' if fengjin_key != '未设置' else '未设置'}")
 
 # 2. 检查配置文件
 print("\n[2] 检查配置文件")
@@ -26,7 +26,7 @@ if config_path.exists():
     api_config = config_data.get("api", {})
     print(f"  base_url: {api_config.get('base_url', '未配置')}")
     api_key = api_config.get('api_key', '未配置')
-    print(f"  api_key: {api_key[:20] if api_key != '未配置' else '未配置'}...")
+    print(f"  api_key: {'已配置' if api_key != '未配置' else '未配置'}")
 else:
     print("  配置文件不存在!")
 
@@ -42,7 +42,7 @@ try:
     print(f"  SDK初始化成功")
     print(f"  client.base_url: {client.base_url}")
 except Exception as e:
-    print(f"  SDK初始化失败: {e}")
+    print(f"  SDK初始化失败: {type(e).__name__}")
 
 # 4. 测试实际API调用
 print("\n[4] 测试API调用")
@@ -64,14 +64,7 @@ try:
     print(f"  响应: {response.choices[0].message.content[:50]}...")
 
 except Exception as e:
-    print(f"  API调用失败: {e}")
-
-    # 尝试直接打印更多信息
-    print("\n  [详细错误信息]")
-    if hasattr(e, 'response'):
-        print(f"    response: {e.response}")
-    if hasattr(e, '__dict__'):
-        print(f"    error attrs: {e.__dict__}")
+    print(f"  API调用失败: {type(e).__name__}")
 
 # 5. 尝试备用配置
 print("\n[5] 尝试使用标准DashScope接口")
@@ -94,7 +87,7 @@ try:
     print(f"  响应: {response.choices[0].message.content[:50]}...")
 
 except Exception as e:
-    print(f"  备用接口调用失败: {e}")
+    print(f"  备用接口调用失败: {type(e).__name__}")
 
 print("\n" + "=" * 60)
 print("诊断完成")

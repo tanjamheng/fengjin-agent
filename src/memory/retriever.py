@@ -19,7 +19,11 @@ class MemoryRetriever:
     def __init__(self, config: MemoryConfig, storage: MemoryStorage):
         self.config = config
         self.storage = storage
-        self._core_path = Path(config.core_file)
+        core_path = Path(config.core_file)
+        if not core_path.is_absolute():
+            from ..utils.helpers import get_project_root
+            core_path = get_project_root() / core_path
+        self._core_path = core_path
         self.log = get_logger("memory_retriever")
         self._core_cache: str | None = None
         self._core_mtime: float = 0.0

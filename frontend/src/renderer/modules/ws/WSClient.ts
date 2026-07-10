@@ -69,13 +69,15 @@ export class WSClient {
 
   // ===== 连接管理 =====
 
-  connect(url: string): void {
+  connect(url: string, resetRetry = true): void {
     if (this._ws) {
       this.disconnect();
     }
 
     this._url = url;
-    this._retryCount = 0;
+    if (resetRetry) {
+      this._retryCount = 0;
+    }
     this._setStatus("connecting");
     this._parser.resetErrors();
     log.info("Connecting to {}", url);
@@ -251,20 +253,41 @@ export class WSClient {
   private readonly _maxRetries = 10;
   private readonly _retryDelay = 2000; // 2s 间隔，10 次共 20s 覆盖后端启动窗口
 
-  private _onClose(_event: CloseEvent): void {
+  private _closeSocketForReconnect(): void {
     this._stopHeartbeat();
     this._clearReplyTimer();
+    this._cancelled = false;
+    this._replyActive = false;
+    this._cancelledEndPending = false;
+    if (!this._ws) return;
+    this._ws.onopen = null;
+    this._ws.onmessage = null;
+    this._ws.onclose = null;
+    this._ws.onerror = null;
+    if (
+      this._ws.readyState === WebSocket.OPEN ||
+      this._ws.readyState === WebSocket.CONNECTING
+    ) {
+      this._ws.close(4000);
+    }
+    this._ws = null;
+  }
+
+  private _onClose(_event?: CloseEvent): void {
+    this._stopHeartbeat();
+    this._clearReplyTimer();
+    this._ws = null;
     const wasConnected = this._connectedBefore;
     this._connectedBefore = false;
 
-    if (!wasConnected && this._retryCount < this._maxRetries) {
-      // 初始连接失败，自动重试（后端可能还在加载模型）
+    if (this._retryCount < this._maxRetries) {
+      // 初始连接失败或运行中断线，自动重试（后端可能还在加载/重启）
       this._retryCount++;
       log.debug("Connection retry {}/{}", this._retryCount, this._maxRetries);
       if (this._retryTimer !== null) clearTimeout(this._retryTimer);
       this._retryTimer = setTimeout(() => {
         this._retryTimer = null;
-        if (this._url) this.connect(this._url);
+        if (this._url) this.connect(this._url, false);
       }, this._retryDelay);
       return;
     }
@@ -418,7 +441,8 @@ export class WSClient {
     }
     this._serverAliveTimer = setTimeout(() => {
       log.warn("Server ping timeout, disconnecting");
-      this.disconnect();
+      this._closeSocketForReconnect();
+      this._onClose();
     }, this._serverPingTimeout);
   }
 

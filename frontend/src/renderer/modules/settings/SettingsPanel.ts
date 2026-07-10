@@ -442,6 +442,10 @@ export class SettingsPanel {
       if (!inputs) continue;
       for (let i = 0; i < keys.length && i < inputs.length; i++) {
         const val = inputs[i].value.trim();
+        if (keys[i] === "api_key" && val.startsWith("****")) {
+          this._data[sectionKey][keys[i]] = null;
+          continue;
+        }
         // 空值 = null（表示不改）
         this._data[sectionKey][keys[i]] = val || null;
       }

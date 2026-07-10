@@ -7,6 +7,7 @@
 import json
 import os
 import asyncio
+import secrets
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -26,6 +27,10 @@ HEARTBEAT_TIMEOUT = 60       # 秒，超时无 pong 则断连
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    if not _is_ws_request_allowed(websocket):
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
     log.info("WebSocket 客户端已连接")
 
@@ -36,7 +41,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # 每连接独立：会话管理器 + 上下文管理器 + Agent
     from pathlib import Path
-    _sessions_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "sessions")
+    _project_root = Path(__file__).resolve().parent.parent.parent
+    _sessions_dir = str(_project_root / "data" / "sessions")
     session_mgr = SessionManager(data_dir=_sessions_dir)
     memory_mgr = getattr(websocket.app.state, "memory_manager", None)
     context_mgr = ContextManager(
@@ -44,9 +50,52 @@ async def websocket_endpoint(websocket: WebSocket):
         memory_retriever=memory_mgr.retriever if memory_mgr else None,
     )
     tool_registry = getattr(websocket.app.state, "tool_registry", None)
-    mood_engine = getattr(websocket.app.state, "mood_engine", None)
-    bond_tracker = getattr(websocket.app.state, "bond_tracker", None)
-    persona_guard = getattr(websocket.app.state, "persona_guard", None)
+    mood_engine = None
+    bond_tracker = None
+    persona_guard = None
+    persona_embedding_acquired = False
+
+    mood_config = getattr(websocket.app.state, "mood_config", None)
+    if mood_config is not None:
+        try:
+            from ..mood.engine import MoodEngine
+            mood_engine = MoodEngine(mood_config, data_dir=_project_root / "data")
+        except Exception as e:
+            log.warning("连接级情绪引擎创建失败: {}", e)
+
+    bond_config = getattr(websocket.app.state, "bond_config", None)
+    if bond_config is not None:
+        try:
+            from ..bond.tracker import BondTracker
+            bond_tracker = BondTracker(bond_config, data_dir=_project_root / "data")
+        except Exception as e:
+            log.warning("连接级羁绊引擎创建失败: {}", e)
+
+    persona_config = getattr(websocket.app.state, "persona_config", None)
+    persona_model_path = getattr(websocket.app.state, "persona_model_path", "")
+    if persona_config is not None and persona_model_path:
+        try:
+            from ..persona.drift_guard import PersonaDriftGuard
+            from ..rag import embedding_registry as _emb_reg
+            _emb = _emb_reg.acquire(persona_model_path, "cpu")
+            persona_embedding_acquired = True
+            persona_guard = PersonaDriftGuard(_emb, persona_config)
+            if persona_guard.anchor_count < 3:
+                persona_guard.cleanup()
+                persona_guard = None
+                _emb_reg.release()
+                persona_embedding_acquired = False
+        except Exception as e:
+            log.warning("连接级角色漂移检测创建失败: {}", e)
+            if persona_guard:
+                persona_guard.cleanup()
+                persona_guard = None
+            if persona_embedding_acquired:
+                try:
+                    _emb_reg.release()
+                except Exception:
+                    pass
+                persona_embedding_acquired = False
 
     # Agent — CLI/WS 共用的对话入口（chat() 内部处理安全/记忆/上下文/LLM/Tool/落盘）
     agent = Agent(
@@ -365,6 +414,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 log.warning("流任务异常结束: {}", e)
 
         session_mgr.flush()
+        for name, obj in (
+            ("mood_engine", mood_engine),
+            ("bond_tracker", bond_tracker),
+            ("persona_guard", persona_guard),
+        ):
+            if obj and hasattr(obj, "cleanup"):
+                try:
+                    obj.cleanup()
+                except Exception as e:
+                    log.warning("{} 连接级 cleanup 异常: {}", name, e)
+        if persona_embedding_acquired:
+            try:
+                from ..rag import embedding_registry as _emb_reg
+                _emb_reg.release()
+            except Exception as e:
+                log.warning("连接级 persona embedding release 异常: {}", e)
         log.info("WebSocket 连接关闭，会话已保存")
 
 
@@ -389,7 +454,7 @@ async def _handle_user_msg(
 
     trace_id = generate_trace_id()
     logger = log.bind(trace_id=trace_id)
-    logger.info("处理 user_msg: {}", user_content[:50])
+    logger.info("处理 user_msg ({} chars)", len(user_content))
 
     current_sid = session_mgr.get_current_session_id() or ""
 
@@ -533,3 +598,30 @@ def _validate_config(cfg: dict, label: str) -> list[str]:
     if model is not None and (not isinstance(model, str) or not model.strip()):
         errors.append(f"{label} 模型名不能为空")
     return errors
+
+
+def _is_ws_request_allowed(websocket: WebSocket) -> bool:
+    """校验本地 WS 访问来源。Electron 启动时必须携带一次性 token。"""
+    expected = os.environ.get("FENGJIN_WS_TOKEN", "")
+    if expected:
+        supplied = websocket.query_params.get("token", "")
+        if not secrets.compare_digest(supplied, expected):
+            log.warning("拒绝 WS 连接: token 无效")
+            return False
+
+    origin = websocket.headers.get("origin", "")
+    if not origin:
+        return True
+    allowed_prefixes = (
+        "file://",
+        "http://localhost",
+        "http://127.0.0.1",
+        "http://[::1]",
+        "https://localhost",
+        "https://127.0.0.1",
+        "https://[::1]",
+    )
+    if origin.startswith(allowed_prefixes):
+        return True
+    log.warning("拒绝 WS 连接: Origin 不可信 ({})", origin)
+    return False

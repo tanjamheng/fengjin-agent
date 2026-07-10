@@ -2,6 +2,7 @@
 
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -40,7 +41,11 @@ class SessionStore:
 
     def load_session(self, session_id: str) -> Optional[Session]:
         """读取单个会话文件"""
-        path = self._session_path(session_id)
+        try:
+            path = self._session_path(session_id)
+        except ValueError:
+            self.log.warning("非法会话 ID: {}", session_id)
+            return None
         if not path.exists():
             return None
 
@@ -62,7 +67,11 @@ class SessionStore:
 
     def delete_session(self, session_id: str) -> bool:
         """删除单个会话文件"""
-        path = self._session_path(session_id)
+        try:
+            path = self._session_path(session_id)
+        except ValueError:
+            self.log.warning("非法会话 ID: {}", session_id)
+            return False
         if path.exists():
             path.unlink()
             self.log.info("会话已删除: {}", session_id)
@@ -70,7 +79,15 @@ class SessionStore:
         return False
 
     def _session_path(self, session_id: str) -> Path:
-        return self.data_dir / f"{session_id}.json"
+        try:
+            uuid.UUID(str(session_id))
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError("invalid session_id")
+        data_root = self.data_dir.resolve()
+        path = (data_root / f"{session_id}.json").resolve()
+        if path.parent != data_root:
+            raise ValueError("session path escaped data dir")
+        return path
 
     def _cleanup_temp_files(self) -> None:
         """清理崩溃残留的 .tmp 临时文件"""

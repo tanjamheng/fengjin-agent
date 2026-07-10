@@ -87,7 +87,7 @@ def patch_agent(agent: Agent, rag_service: RAGService):
 
         agent.trace_id = generate_trace_id()
         agent.log = get_logger(agent.trace_id)
-        agent.log.info("用户输入: {}...", user_input[:50])
+        agent.log.info("收到用户输入 ({} chars)", len(user_input))
 
         message_content = user_input
         if skills:
@@ -158,7 +158,7 @@ def patch_agent(agent: Agent, rag_service: RAGService):
         if not rag_service._initialized:
             rag_service.initialize()
 
-        rag_service.log.info("RAG 检索: {}...", query[:50])
+        rag_service.log.info("RAG 检索开始 (query={} chars)", len(query))
 
         # 查询增强
         stamp("T2_rag_enhance")

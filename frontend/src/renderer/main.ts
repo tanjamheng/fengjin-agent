@@ -26,6 +26,22 @@ if (api) {
   });
 }
 
+async function _resolveWsUrl(): Promise<string> {
+  if (api?.getWsUrl) {
+    return await api.getWsUrl();
+  }
+  return CONFIG.ws.url;
+}
+
+function _connectWs(ws: WSClient): void {
+  _resolveWsUrl()
+    .then((url) => ws.connect(url))
+    .catch((e) => {
+      log.warn("Failed to resolve secured WS URL: {}", e);
+      ws.connect(CONFIG.ws.url);
+    });
+}
+
 // HMR 热重载检测：后端已在运行则跳过加载页
 async function _checkBackendAlive(): Promise<boolean> {
   const ctrl = new AbortController();
@@ -125,7 +141,9 @@ async function _showAndApplyFirstTimeSettings(): Promise<void> {
 
   const saved = await api.settingsWriteEnv(result);
   if (!saved.success) {
-    log.error("Failed to write .env");
+    const message = saved.error || "写入 .env 失败";
+    log.error("Failed to write .env: {}", message);
+    window.alert(message);
     return;
   }
 
@@ -135,7 +153,7 @@ async function _showAndApplyFirstTimeSettings(): Promise<void> {
   // 等待后端就绪，然后重连 WS
   await _waitForBackend();
   if (_ws) {
-    _ws.connect(CONFIG.ws.url);
+    _connectWs(_ws);
   }
 }
 
@@ -209,6 +227,7 @@ ws.onStreamEnd = (fullText, _action) => {
   chat.finalizeAIMessage(fullText);
   appState.isReplying = false;
   sidebar.setDisabled(false);
+  ws.listSessions();
 };
 ws.onBlocked = (message) => {
   if (_loadingSession) return; // 会话加载中，忽略废弃回复的 blocked 包
@@ -216,6 +235,7 @@ ws.onBlocked = (message) => {
   chat.appendSystemMessage(message, "blocked");
   appState.isReplying = false;
   sidebar.setDisabled(false);
+  ws.listSessions();
 };
 ws.onThinking = () => {
   if (_loadingSession) return; // 会话加载中，忽略废弃思考中状态
@@ -233,6 +253,7 @@ ws.onError = (message) => {
   chat.appendSystemMessage(message, "warning");
   appState.isReplying = false;
   sidebar.setDisabled(false);
+  ws.listSessions();
 };
 
 // WS 会话回调 → HistorySidebar
@@ -508,7 +529,7 @@ sidebar.onOpenSettings = async () => {
 };
 
   // ===== 连接 =====
-  ws.connect(CONFIG.ws.url);
+  _connectWs(ws);
 }
 
 // 非 Electron 环境直接初始化

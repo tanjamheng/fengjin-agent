@@ -189,7 +189,7 @@ class Agent:
         logger = get_logger("core", trace_id=self.trace_id)
         t_total_start = time.monotonic()
 
-        logger.info("用户输入: {}...", user_input[:50])
+        logger.info("收到用户输入 ({} chars)", len(user_input))
 
         # 1. Skill 注入（如有）
         message_content = user_input
@@ -474,6 +474,9 @@ class Agent:
             raise
         finally:
             self._current_controller = None
+
+        if all_text:
+            full_text = all_text + full_text
 
         # 6. 情绪标记提取与更新
         if self.mood_engine and full_text:

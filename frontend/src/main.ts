@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { join, resolve } from "path";
 import { createWriteStream, existsSync, mkdirSync, statSync, renameSync, readFileSync, writeFileSync, copyFileSync } from "fs";
 import type { WriteStream } from "fs";
+import { randomBytes } from "crypto";
 import { LauncherManager } from "./LauncherManager";
 
 // DPI 缩放适配
@@ -10,6 +11,7 @@ app.commandLine.appendSwitch("high-dpi-support", "1");
 let win: BrowserWindow | null = null;
 let logStream: WriteStream | null = null;
 let launcher: LauncherManager | null = null;
+let wsToken = "";
 
 // 单实例锁
 const gotTheLock = app.requestSingleInstanceLock();
@@ -103,7 +105,8 @@ function createWindow(): void {
 async function startLauncher(): Promise<void> {
   if (!win) return;
   const projectRoot = getProjectRoot();
-  launcher = new LauncherManager(win, projectRoot);
+  const token = getOrCreateWsToken();
+  launcher = new LauncherManager(win, projectRoot, token);
 
   // 通知渲染进程进入加载模式
   win.webContents.send("launcher:mode", "loading");
@@ -164,12 +167,65 @@ ipcMain.handle("launcher:getState", () => {
   return launcher?.state || null;
 });
 
+ipcMain.handle("ws:getUrl", () => {
+  return `ws://127.0.0.1:8765/ws?token=${encodeURIComponent(getOrCreateWsToken())}`;
+});
+
+function getOrCreateWsToken(): string {
+  if (wsToken) return wsToken;
+  const tokenPath = join(app.getPath("userData"), "ws-token");
+  try {
+    if (existsSync(tokenPath)) {
+      const existing = readFileSync(tokenPath, "utf-8").trim();
+      if (/^[a-f0-9]{64}$/i.test(existing)) {
+        wsToken = existing;
+        return wsToken;
+      }
+    }
+  } catch {
+    // 读失败时降级为生成新 token，并继续尝试写入。
+  }
+  wsToken = randomBytes(32).toString("hex");
+  try {
+    writeFileSync(tokenPath, wsToken, { encoding: "utf-8" });
+  } catch {
+    // 写失败不阻塞启动；当前进程内 token 仍可用。
+  }
+  return wsToken;
+}
+
+function validateModelConfig(
+  cfg: { api_key: string | null; base_url: string | null; model: string | null },
+  label: string,
+  required: boolean,
+): string[] {
+  const errors: string[] = [];
+  const apiKey = (cfg.api_key || "").trim();
+  const baseUrl = (cfg.base_url || "").trim();
+  const model = (cfg.model || "").trim();
+  if (required && !apiKey) errors.push(`${label} API Key 不能为空`);
+  if (required && !baseUrl) errors.push(`${label} Base URL 不能为空`);
+  if (baseUrl && !baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+    errors.push(`${label} Base URL 格式不正确（需以 http:// 或 https:// 开头）`);
+  }
+  if (required && !model) errors.push(`${label} 模型名不能为空`);
+  return errors;
+}
+
 // 设置面板首次模式：IPC 直写 .env
 ipcMain.handle("settings:writeEnv", async (_event, data: {
   main: { api_key: string | null; base_url: string | null; model: string | null };
   memory: { api_key: string | null; base_url: string | null; model: string | null };
   memory_enabled: boolean;
 }) => {
+  const errors = [
+    ...validateModelConfig(data.main, "主模型", true),
+    ...validateModelConfig(data.memory, "记忆模型", data.memory_enabled),
+  ];
+  if (errors.length > 0) {
+    return { success: false, error: errors.join("\n") };
+  }
+
   const projectRoot = getProjectRoot();
   const envPath = join(projectRoot, ".env");
   const examplePath = join(projectRoot, ".env.example");
@@ -262,7 +318,16 @@ ipcMain.handle("app:openLogs", () => {
 // 打开 URL
 ipcMain.handle("app:openUrl", (_event, url: string) => {
   const { shell } = require("electron");
-  shell.openExternal(url);
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return { success: false, error: "不支持的链接协议" };
+    }
+    shell.openExternal(url);
+    return { success: true };
+  } catch {
+    return { success: false, error: "无效链接" };
+  }
 });
 
 // GPU 崩溃

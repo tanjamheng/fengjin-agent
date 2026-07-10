@@ -28,7 +28,7 @@ memory:
     top_k: 3
 
   # 核心记忆视图文件路径
-  core_file: "config/prompts/core_memory.md"
+  core_file: "data/memory/core_memory.md"
 
   # 规则过滤
   filter:

@@ -145,11 +145,13 @@ async def lifespan(app: FastAPI):
             mood_config = MoodSettings.load(
                 str(_project_root / "config" / "mood.yaml")
             )
-            mood_engine = MoodEngine(mood_config, data_dir=_project_root / "data")
-            app.state.mood_engine = mood_engine
+            MoodEngine(mood_config, data_dir=_project_root / "data")
+            app.state.mood_config = mood_config
+            app.state.mood_engine = None
             log.info("情绪引擎已加载")
         except Exception as e:
             log.warning("情绪引擎加载失败: {}", e)
+            app.state.mood_config = None
             app.state.mood_engine = None
         emit_progress("engine_init:mood", "done")
 
@@ -160,38 +162,54 @@ async def lifespan(app: FastAPI):
             bond_config = BondSettings.load(
                 str(_project_root / "config" / "bond.yaml")
             )
-            bond_tracker = BondTracker(bond_config, data_dir=_project_root / "data")
-            app.state.bond_tracker = bond_tracker
+            BondTracker(bond_config, data_dir=_project_root / "data")
+            app.state.bond_config = bond_config
+            app.state.bond_tracker = None
             log.info("羁绊引擎已加载")
         except Exception as e:
             log.warning("羁绊引擎加载失败: {}", e)
+            app.state.bond_config = None
             app.state.bond_tracker = None
         emit_progress("engine_init:bond", "done")
 
         # ── 7. 角色漂移检测 ──
         emit_progress("engine_init:persona", "start")
+        _persona_emb_acquired = False
         try:
             from ..persona.drift_guard import PersonaSettings, PersonaDriftGuard
             from ..rag import embedding_registry as _emb_reg
             _model_path = str(_project_root / "models" / "bge-m3")
             _emb = _emb_reg.acquire(_model_path, "cpu")
+            _persona_emb_acquired = True
             persona_config = PersonaSettings.load(
                 str(_project_root / "config" / "persona.yaml")
             )
             persona_guard = PersonaDriftGuard(_emb, persona_config)
             if persona_guard.anchor_count >= 3:
-                app.state.persona_guard = persona_guard
-                log.info("角色漂移检测已加载: {} 条锚点", persona_guard.anchor_count)
+                anchor_count = persona_guard.anchor_count
+                persona_guard.cleanup()
+                _emb_reg.release()
+                _persona_emb_acquired = False
+                app.state.persona_config = persona_config
+                app.state.persona_model_path = _model_path
+                app.state.persona_guard = None
+                log.info("角色漂移检测已加载: {} 条锚点", anchor_count)
             else:
                 log.warning("角色锚点不足（<3），漂移检测不可用")
                 persona_guard.cleanup()
                 _emb_reg.release()
+                _persona_emb_acquired = False
+                app.state.persona_config = None
+                app.state.persona_model_path = ""
                 app.state.persona_guard = None
         except Exception as e:
             log.warning("角色漂移检测加载失败: {}", e)
+            app.state.persona_config = None
+            app.state.persona_model_path = ""
             app.state.persona_guard = None
             try:
-                _emb_reg.release()
+                if _persona_emb_acquired:
+                    _emb_reg.release()
             except Exception:
                 pass
         emit_progress("engine_init:persona", "done")
@@ -236,8 +254,7 @@ async def lifespan(app: FastAPI):
             try:
                 # 检查 ChromaDB collection 是否为空
                 if hasattr(rag_service, 'indexer') and rag_service.indexer is not None:
-                    coll = rag_service.indexer.collection
-                    if coll is not None and coll.count() == 0:
+                    if rag_service.indexer.count() == 0:
                         knowledge_dir = _project_root / "数据侧_风堇资料"
                         if knowledge_dir.is_dir():
                             log.info("知识库为空，自动导入: {}", knowledge_dir)

@@ -7,6 +7,16 @@ interface ElectronAPI {
   maximize: () => void;
   close: () => void;
   toggleAlwaysOnTop: () => void;
+  onLauncherState: (callback: (state: unknown) => void) => void;
+  onLauncherMode: (callback: (mode: string) => void) => void;
+  onLauncherNeedConfig: (callback: () => void) => void;
+  launcherRetry: () => Promise<void>;
+  launcherSkip: () => Promise<void>;
+  launcherGetState: () => Promise<unknown>;
+  getWsUrl: () => Promise<string>;
+  settingsWriteEnv: (data: unknown) => Promise<{ success: boolean; error?: string }>;
+  openLogs: () => Promise<void>;
+  openUrl: (url: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 interface Window {

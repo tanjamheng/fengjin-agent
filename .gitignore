@@ -26,6 +26,12 @@ evaluate/*/reports/
 
 # 自动生成的 core 记忆文件（含用户隐私）
 config/prompts/core_memory.md
+data/memory/core_memory.md
+
+# 第三方游戏资料/模型素材：本地可用，不随开源仓库分发
+/数据侧_风堇资料/
+/星穹铁道—风堇*/
+/星穹铁道-风堇*/
 
 # 测试缓存
 .pytest_cache/

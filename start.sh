@@ -66,9 +66,7 @@ echo "  OK ($PYTHON)"
 
 # ── 2. Python dependencies ──
 echo " [2/4] Python dependencies (first install may take ~3 min)..."
-venv/bin/python -m pip install -r requirements.txt -q >/dev/null 2>&1 || {
-    echo "  WARNING: Some dependencies failed to install, continuing..."
-}
+venv/bin/python -m pip install -r requirements.txt
 echo "  OK"
 
 # ── 3. Frontend dependencies ──

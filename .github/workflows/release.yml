@@ -26,6 +26,38 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Patch electron-builder 7za wrapper
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          $sevenDir = "node_modules\7zip-bin\win\x64"
+          $sevenIndex = "node_modules\7zip-bin\index.js"
+          $builderUtil = "node_modules\builder-util\out\util.js"
+          if (-not (Test-Path "$sevenDir\7za.cmd")) {
+            if (Test-Path "$sevenDir\7za.exe") {
+              Rename-Item "$sevenDir\7za.exe" "7za_real.exe"
+            }
+            Set-Content "$sevenDir\7za.cmd" "@echo off`r`n""%~dp07za_real.exe"" %*`r`nexit /b %ERRORLEVEL%`r`n" -Encoding ASCII
+
+            $txt = Get-Content $sevenIndex -Raw
+            $txt = $txt -replace '7za\.exe', '7za.cmd'
+            [System.IO.File]::WriteAllText($sevenIndex, $txt)
+
+            $txt = Get-Content $builderUtil -Raw
+            if ($txt -notmatch 'needsShell') {
+              $old = 'maxBuffer: 1000 * 1024 * 1024,'
+              $new = 'shell: file.endsWith(''.cmd'') || file.endsWith(''.bat''), maxBuffer: 1000 * 1024 * 1024,'
+              $txt = $txt -replace [regex]::Escape($old), $new
+              [System.IO.File]::WriteAllText($builderUtil, $txt)
+            }
+
+            $sevenScript = "node_modules\builder-util\out\7za.js"
+            $txt = Get-Content $sevenScript -Raw
+            $txt = $txt -replace 'const fs_extra_1 = require\("fs-extra"\);', '// patched'
+            $txt = $txt -replace 'await \(0, fs_extra_1\.chmod\)\([^)]+\);', '// patched chmod'
+            [System.IO.File]::WriteAllText($sevenScript, $txt)
+          }
+
       - name: Package Electron exe (electron-builder portable)
         working-directory: frontend
         run: npx electron-builder --win portable
@@ -49,16 +81,13 @@ jobs:
           Copy-Item .env.example      "$releaseDir\"
           Copy-Item README.md         "$releaseDir\" -ErrorAction SilentlyContinue
           Copy-Item LICENSE           "$releaseDir\" -ErrorAction SilentlyContinue
-
-          # 知识库数据（如有）
-          if (Test-Path "数据侧_风堇资料") {
-            Copy-Item "数据侧_风堇资料" "$releaseDir\数据侧_风堇资料" -Recurse
-          }
+          Copy-Item THIRD_PARTY_ASSETS.md "$releaseDir\" -ErrorAction SilentlyContinue
 
           # 空目录（用户首次启动时填充）
           New-Item -ItemType Directory -Force -Path "$releaseDir\models"           | Out-Null
           New-Item -ItemType Directory -Force -Path "$releaseDir\data\sessions"    | Out-Null
           New-Item -ItemType Directory -Force -Path "$releaseDir\data\chroma"      | Out-Null
+          New-Item -ItemType Directory -Force -Path "$releaseDir\data\memory"      | Out-Null
           New-Item -ItemType Directory -Force -Path "$releaseDir\logs"             | Out-Null
 
           # 打 zip

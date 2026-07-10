@@ -128,7 +128,7 @@ class RAGService:
             self.initialize()
 
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
-        log.info("RAG 检索: {}...", query[:50])
+        log.info("RAG 检索开始 (query={} chars)", len(query))
 
         try:
             # 查询增强

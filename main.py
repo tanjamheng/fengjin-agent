@@ -126,6 +126,14 @@ def _print_recent_messages(console: Console, session_mgr: SessionManager, n: int
     console.print("")
 
 
+def _cleanup_persona_guard(persona_guard) -> None:
+    if not persona_guard:
+        return
+    persona_guard.cleanup()
+    from src.rag import embedding_registry as _emb_reg
+    _emb_reg.release()
+
+
 def _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine=None, bond_tracker=None, persona_guard=None):
     """逐组件安全清理：每个组件独立 try/except，单点失败不阻塞其余清理"""
     for name, cleanup_fn in [
@@ -133,7 +141,7 @@ def _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine
         ("Memory", lambda: memory_manager.cleanup() if memory_manager else None),
         ("Mood", lambda: mood_engine.cleanup() if mood_engine else None),
         ("Bond", lambda: bond_tracker.cleanup() if bond_tracker else None),
-        ("Persona", lambda: persona_guard.cleanup() if persona_guard else None),
+        ("Persona", lambda: _cleanup_persona_guard(persona_guard)),
         ("RAG", lambda: rag_service.cleanup() if rag_service else None),
         ("Safety", lambda: safety_engine.cleanup() if safety_engine else None),
     ]:
@@ -452,7 +460,7 @@ def main():
                 get_logger("main").warning("BondTracker 清理异常: {}", cleanup_ex)
         if persona_guard:
             try:
-                persona_guard.cleanup()
+                _cleanup_persona_guard(persona_guard)
             except Exception as cleanup_ex:
                 get_logger("main").warning("PersonaDriftGuard 清理异常: {}", cleanup_ex)
         try:
@@ -702,7 +710,7 @@ def main():
             break
         except Exception as e:
             _log = get_logger("main", trace_id=trace_id)
-            _log.opt(exception=True).error("对话循环异常 [input={}]: {}", user_input[:50], e)
+            _log.opt(exception=True).error("对话循环异常 (input_len={}): {}", len(user_input), e)
             console.print()
             console.print("[red]对话处理出错，请重试。详情见日志文件。[/red]\n")
 

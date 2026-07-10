@@ -49,7 +49,7 @@ class Retriever:
 
     def retrieve(self, query: str) -> List[SearchResult]:
         """检索"""
-        self.log.info("检索查询: {}...", query[:50])
+        self.log.info("检索查询开始 (query={} chars)", len(query))
         strategy = self._get_strategy()
         results = strategy.retrieve(query)
         self.log.info("检索到 {} 个相关文档", len(results))
