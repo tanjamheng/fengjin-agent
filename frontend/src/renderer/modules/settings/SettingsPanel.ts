@@ -300,7 +300,7 @@ export class SettingsPanel {
     const helpBubble = document.createElement("span");
     helpBubble.className = "help-bubble";
     helpBubble.textContent = "?";
-    helpBubble.title = "开启后，风堇会记住你们之间的对话，变得越来越懂你";
+    helpBubble.title = "开启后，风堇会记住和你的点滴，会越来越懂你。需配置记忆模型 API；可与主模型使用相同配置。未配置全时将跳过记忆功能。";
 
     const toggle = document.createElement("button");
     toggle.className = `toggle-switch ${this._data.memory_enabled ? "toggle-switch--on" : ""}`;

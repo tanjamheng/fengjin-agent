@@ -282,8 +282,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         agent.mood_engine.reset_state()
                     if agent.bond_tracker:
                         agent.bond_tracker.reset_state()
-                if memory_mgr and target_id:
-                    memory_mgr.delete_session_memories(target_id)
                 await websocket.send_json({
                     "type": "session_deleted",
                     "session_id": target_id,
@@ -329,10 +327,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 memory_cfg = data.get("memory", {})
                 memory_enabled = bool(data.get("memory_enabled", False))
 
-                # 校验主模型
+                # 记忆模型缺少配置时允许保存，由后端记录警告并跳过记忆初始化。
                 errors = _validate_config(main_cfg, "主模型")
-                if memory_enabled:
-                    errors.extend(_validate_config(memory_cfg, "记忆模型"))
 
                 if errors:
                     await websocket.send_json({

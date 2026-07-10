@@ -171,12 +171,18 @@ class ConfigManager:
             try:
                 if memory_enabled:
                     # 不调 _reload_dotenv()——connection.py 已在 rebuild 前 apply_to_os_environ
-                    mem_settings = MemorySettings.load(
-                        str(_PROJECT_ROOT / "config" / "memory.yaml")
-                    ).memory
-                    from ..memory.manager import MemoryManager
-                    app.state.memory_manager = MemoryManager(mem_settings)
-                    log.info("记忆管理器已重建（启用）")
+                    missing = [key for key in ("MEMO_API_KEY", "MEMO_BASE_URL", "MEMO_MODEL")
+                               if not os.environ.get(key, "").strip()]
+                    if missing:
+                        app.state.memory_manager = None
+                        log.warning("记忆已启用但配置不完整，跳过记忆初始化: {}", ", ".join(missing))
+                    else:
+                        mem_settings = MemorySettings.load(
+                            str(_PROJECT_ROOT / "config" / "memory.yaml")
+                        ).memory
+                        from ..memory.manager import MemoryManager
+                        app.state.memory_manager = MemoryManager(mem_settings)
+                        log.info("记忆管理器已重建（启用）")
                 else:
                     app.state.memory_manager = None
                     log.info("记忆管理器已关闭")
@@ -216,12 +222,12 @@ class ConfigManager:
         main_ak = os.environ.get("FENGJIN_API_KEY", "")
         memo_ak = os.environ.get("MEMO_API_KEY", "")
 
-        # 记忆开关: 优先读 MEMORY_ENABLED 持久化值，回退到 API Key 推断
+        # 记忆开关默认关闭，只有显式开启时才初始化记忆系统。
         mem_enabled_str = os.environ.get("MEMORY_ENABLED", "")
         if mem_enabled_str:
             memory_enabled = mem_enabled_str.lower() == "true"
         else:
-            memory_enabled = memo_ak != ""
+            memory_enabled = False
 
         return {
             "main": {

@@ -48,7 +48,7 @@ class MemoryManager:
         return self.retriever.retrieve(user_input, trace_id=trace_id)
 
     def extract_async(self, user_input: str, assistant_message: str,
-                      trace_id: str = "", session_id: str = "") -> None:
+                      trace_id: str = "") -> None:
         """异步提取记忆并写入（不阻塞主流程）"""
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
 
@@ -59,9 +59,6 @@ class MemoryManager:
                 facts = self.extractor.extract(user_input, assistant_message, trace_id=trace_id)
                 t_extract = (time.time() - t_start) * 1000
                 if facts:
-                    if session_id:
-                        for fact in facts:
-                            fact["session_id"] = session_id
                     if self.writer._running:
                         self.writer.write(facts)
                         log.info("异步记忆提取完成: {} 条事实 ({:.0f}ms)", len(facts), t_extract)
@@ -80,12 +77,6 @@ class MemoryManager:
         with self._lock:
             self._extract_threads.append(thread)
         thread.start()
-
-    def delete_session_memories(self, session_id: str) -> None:
-        """删除指定会话派生出的长期记忆。"""
-        if not session_id or not self.writer:
-            return
-        self.writer.delete_session_memories(session_id)
 
     def cleanup(self) -> None:
         """停止写入线程并关闭存储（防御部分初始化：任意属性缺失时跳过对应步骤）"""

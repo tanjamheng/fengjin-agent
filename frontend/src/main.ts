@@ -237,7 +237,6 @@ ipcMain.handle("settings:writeEnv", async (_event, data: {
 }) => {
   const errors = [
     ...validateModelConfig(data.main, "主模型", true),
-    ...validateModelConfig(data.memory, "记忆模型", data.memory_enabled),
   ];
   if (errors.length > 0) {
     return { success: false, error: errors.join("\n") };

@@ -293,8 +293,6 @@ def _handle_command(cmd: str, args: str, console: Console,
         current_id_before = session_mgr.get_current_session_id()
         deleted = session_mgr.delete_session(target["session_id"])
         if deleted:
-            if memory_manager:
-                memory_manager.delete_session_memories(target["session_id"])
             console.print(f"[green]已删除会话: {target['title']}[/green]")
         else:
             console.print(f"[yellow]会话「{target['title']}」已不存在（可能已被删除）[/yellow]")
