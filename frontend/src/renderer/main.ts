@@ -65,6 +65,37 @@ const appPanel = document.getElementById("app-panel");
 let launcherRenderer: LauncherRenderer | null = null;
 
 if (api && launcherContainer && appPanel) {
+  // 立刻创建加载页 + 注册 IPC 监听——放在 _checkBackendAlive() 之前，
+  // 否则 await 的 1.5s 内后端已发出大量进度消息，全部丢失
+  launcherRenderer = new LauncherRenderer(launcherContainer);
+  let _doneArrivedEarly = false;
+  let _doneHandlerSet = false;
+
+  api.onLauncherState((state: any) => {
+    launcherRenderer?.update(state);
+    if (state.phase === "done" && !_doneHandlerSet) {
+      _doneArrivedEarly = true;
+    }
+  });
+
+  api.onLauncherNeedConfig(() => {
+    if (_isLauncherMode) {
+      _pendingFirstTimeConfig = true;
+    } else {
+      _showAndApplyFirstTimeSettings();
+    }
+  });
+
+  launcherRenderer.onDone = () => {
+    _transitionToChat();
+  };
+  _doneHandlerSet = true;
+  // 如果 done 状态在 onDone 注册前就已到达，补调一次
+  if (_doneArrivedEarly) {
+    _doneArrivedEarly = false;
+    _transitionToChat();
+  }
+
   // HMR 热重载：后端已在线则跳过加载页
   const backendAlive = await _checkBackendAlive();
   if (backendAlive) {
@@ -74,28 +105,6 @@ if (api && launcherContainer && appPanel) {
     appPanel.style.display = "flex";
     appPanel.classList.add("app-panel--visible");
     initChatModules();
-  } else {
-    launcherRenderer = new LauncherRenderer(launcherContainer);
-
-    // 监听进度状态
-    api.onLauncherState((state: any) => {
-      launcherRenderer?.update(state);
-    });
-
-  // 需要配置 .env（launcher 模式下先标记，等过渡到聊天后再弹窗）
-  api.onLauncherNeedConfig(() => {
-    if (_isLauncherMode) {
-      _pendingFirstTimeConfig = true;
-    } else {
-      // 已在聊天模式（如 retry 后再次缺配置），直接弹窗
-      _showAndApplyFirstTimeSettings();
-    }
-  });
-
-    // 加载完成
-    launcherRenderer.onDone = () => {
-      _transitionToChat();
-    };
   }
 }
 

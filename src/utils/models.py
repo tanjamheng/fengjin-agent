@@ -107,7 +107,7 @@ def _download_with_progress(
         current = _get_dir_size(target_path)
         if current > initial_size and estimated_bytes > 0:
             pct = min(99, int((current - initial_size) / estimated_bytes * 100))
-            if pct > 0 and pct - last_pct >= 5:  # 每 ~5% 推送一次
+            if pct > 0 and pct - last_pct >= 1:  # 每 1% 推送一次
                 last_pct = pct
                 _progress(model_name, op, "progress", pct)
         time.sleep(0.8)
@@ -125,7 +125,7 @@ def _quantize_with_progress(
     _progress: Callable[[str, str, str, Optional[int]], None],
     _emit: Callable[[str], None],
 ) -> bool:
-    """在后台线程量化，主线程监控临时目录大小推送百分比。"""
+    """在后台线程量化，时间估算 + 临时目录大小双重保障百分比推送。"""
     import glob as glob_mod
 
     result = [False]
@@ -135,26 +135,38 @@ def _quantize_with_progress(
         result[0] = _safe_quantize(name, model_type, target_path, _emit)
         done.set()
 
-    # 预估输出大小：FP16 ≈ FP32 的 55%（含 tokenizer 等额外文件）
     original_size = _get_dir_size(target_path)
+    original_gb = original_size / (1024 ** 3) if original_size > 0 else 0
     estimated_output = int(original_size * 0.55) if original_size > 0 else 0
+    # 时间估算：每 GB 原始模型约需 5 秒量化
+    estimated_seconds = max(5, original_gb * 5)
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
 
-    # glob 会在量化线程创建临时目录后自动匹配到
+    t_start = time.monotonic()
     last_pct = -1
     tmp_pattern = str(MODELS_DIR / ".tmp" / f"q-{name}*")
 
     while not done.is_set():
+        elapsed = time.monotonic() - t_start
+
+        # 时间估算（加载+量化全程平滑推进）
+        time_pct = min(90, int(elapsed / estimated_seconds * 100))
+
+        # 目录大小（临时目录写入阶段更精准）
+        size_pct = 0
         if estimated_output > 0:
             matches = glob_mod.glob(tmp_pattern)
             if matches:
                 temp_size = _get_dir_size(Path(matches[0]))
-                pct = min(99, int(temp_size / estimated_output * 100))
-                if pct > 0 and pct - last_pct >= 5:
-                    last_pct = pct
-                    _progress(name, "quantize", "progress", pct)
+                size_pct = min(95, int(temp_size / estimated_output * 100))
+
+        # 取较大者：加载阶段靠时间估算，写入阶段靠目录大小
+        pct = max(time_pct, size_pct)
+        if pct > 0 and pct - last_pct >= 1:
+            last_pct = pct
+            _progress(name, "quantize", "progress", pct)
         time.sleep(0.8)
 
     thread.join()

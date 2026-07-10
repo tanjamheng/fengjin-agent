@@ -187,8 +187,8 @@ export class LauncherRenderer {
         this._animFrame = null;
         return;
       }
-      // ease-out: 每帧移动剩余距离的 40%
-      const next = cur + diff * 0.4;
+      // ease-out: 每帧移动剩余距离的 85%（快速追赶，避免画面延迟感）
+      const next = cur + diff * 0.85;
       this._progressFill.style.width = `${next}%`;
       this._percentText.textContent = `${Math.round(next)}%`;
       this._animFrame = requestAnimationFrame(step);

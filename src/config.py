@@ -133,25 +133,19 @@ class Config(BaseModel):
     # API配置从环境变量读取（不在配置文件中）
     @property
     def api_key(self) -> str:
-        """从环境变量获取API Key"""
-        key = os.getenv("FENGJIN_API_KEY")
-        if not key:
-            raise ValueError("请在 .env 文件中设置 FENGJIN_API_KEY")
-        return key
+        """从环境变量获取API Key。缺 Key 不抛异常——由前端 _checkAndNotifyConfig 兜底"""
+        return os.getenv("FENGJIN_API_KEY") or ""
 
     @property
-    def base_url(self):
+    def base_url(self) -> str | None:
         """从环境变量获取Base URL，空字符串回退到 None（使用 SDK 默认值）"""
         url = os.getenv("FENGJIN_BASE_URL", "")
         return url if url else None
 
     @property
     def model(self) -> str:
-        """从环境变量获取模型名称"""
-        model = os.getenv("FENGJIN_MODEL")
-        if not model:
-            raise ValueError("请在 .env 文件中设置 FENGJIN_MODEL")
-        return model
+        """从环境变量获取模型名称。缺值不抛异常——由前端 _checkAndNotifyConfig 兜底"""
+        return os.getenv("FENGJIN_MODEL") or ""
 
     @classmethod
     def load(cls, config_path: str = "config/config.yaml") -> "Config":

@@ -40,15 +40,11 @@ export interface LauncherState {
   showLogs: boolean;
 }
 
-// ── 步骤名 → 用户可见文案 ──
+// ── 步骤名 → 用户可见文案（model_* 步骤动态生成）──
 
-const STEP_LABELS: Record<string, string> = {
-  "model_download:bge-m3": "正在下载 AI 模型...",
-  "model_quantize:bge-m3": "正在优化 AI 模型...",
-  "model_download:bge-reranker-v2-m3": "正在下载 AI 模型...",
-  "model_quantize:bge-reranker-v2-m3": "正在优化 AI 模型...",
-  "model_download:Llama-Guard-3-1B": "正在下载安全模型...",
-  "model_quantize:Llama-Guard-3-1B": "正在优化安全模型...",
+const OP_LABELS: Record<string, string> = {
+  download: "正在下载",
+  quantize: "正在量化",
 };
 
 // ── 常量 ──
@@ -459,14 +455,14 @@ export class LauncherManager {
         return;
       }
       const content = readFileSync(envPath, "utf-8");
-      const required: string[] = [];
       for (const key of ["FENGJIN_API_KEY", "FENGJIN_BASE_URL", "FENGJIN_MODEL"]) {
-        const m = content.match(new RegExp(`^${key}\\s*=\\s*(.*)$`, "m"));
-        if (!m || m[1].trim() === "") required.push(key);
-      }
-      if (required.length > 0) {
-        this._log(`Missing/empty fields: ${required.join(", ")}, dispatching needConfig`);
-        this._win.webContents.send("launcher:needConfig");
+        // [^\S\r\n] = 空格/制表符但排除换行符。\.env 可能被写为 LF，\s 会吞 \n 越界
+        const m = content.match(new RegExp(`^${key}[^\\S\\r\\n]*=[^\\S\\r\\n]*(.*)$`, "m"));
+        if (!m || m[1].trim() === "") {
+          this._log(`Missing/empty: ${key}, dispatching needConfig`);
+          this._win.webContents.send("launcher:needConfig");
+          return;
+        }
       }
     } catch (e) {
       this._log(`Config check error: ${e}`);
@@ -590,8 +586,17 @@ export class LauncherManager {
 
   // ── 辅助 ──
 
+  /** 将 step id 转为用户可见文案。model_download:bge-m3 → "正在下载 bge-m3..." */
   private _labelForStep(step: string): string {
-    return STEP_LABELS[step] || this.ENGINE_LABELS[step] || step;
+    // engine_init:* → 使用硬编码映射
+    if (this.ENGINE_LABELS[step]) return this.ENGINE_LABELS[step];
+    // model_{op}:{name} → 动态生成如 "正在下载 bge-m3..."
+    const m = step.match(/^model_(download|quantize):(.+)$/);
+    if (m) {
+      const op = OP_LABELS[m[1]] || m[1];
+      return `${op} ${m[2]}...`;
+    }
+    return step;
   }
 
   private _emitState(): void {

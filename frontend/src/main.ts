@@ -231,7 +231,7 @@ ipcMain.handle("settings:writeEnv", async (_event, data: {
 
   // 原子写入
   const tmpPath = envPath + ".tmp";
-  writeFileSync(tmpPath, newLines.join("\n"), "utf-8");
+  writeFileSync(tmpPath, newLines.join("\r\n"), "utf-8");
   const { renameSync: mv } = require("fs");
   mv(tmpPath, envPath);
 
