@@ -147,6 +147,16 @@ class Config(BaseModel):
         """从环境变量获取模型名称。缺值不抛异常——由前端 _checkAndNotifyConfig 兜底"""
         return os.getenv("FENGJIN_MODEL") or ""
 
+    def validate_main_model_config(self) -> None:
+        """校验主对话模型必填配置。Base URL 允许为空以使用 SDK 默认值。"""
+        missing = []
+        if not self.api_key.strip():
+            missing.append("FENGJIN_API_KEY")
+        if not self.model.strip():
+            missing.append("FENGJIN_MODEL")
+        if missing:
+            raise ValueError(f"请在 .env 文件中设置 {', '.join(missing)}")
+
     @classmethod
     def load(cls, config_path: str = "config/config.yaml") -> "Config":
         """从 YAML 文件加载配置

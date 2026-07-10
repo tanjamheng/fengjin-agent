@@ -435,6 +435,13 @@ async def _handle_user_msg(
             "session_id": current_sid,
         })
 
+    except ValueError as e:
+        await websocket.send_json({
+            "type": "error",
+            "message": str(e),
+            "session_id": current_sid,
+        })
+
     except asyncio.CancelledError:
         raise
 

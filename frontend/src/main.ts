@@ -209,7 +209,8 @@ ipcMain.handle("settings:writeEnv", async (_event, data: {
 
   // 逐行替换写入
   const content = readFileSync(envPath, "utf-8");
-  const lines = content.split("\n");
+  const normalizedContent = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalizedContent.split("\n");
   const processed = new Set<string>();
   const newLines = lines.map((line) => {
     const trimmed = line.trim();

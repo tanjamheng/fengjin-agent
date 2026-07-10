@@ -103,12 +103,16 @@ class Agent:
         self._pending_anchor: Optional[str] = None
 
         # AsyncOpenAI — 可注入（WS 从 app.state 共享）或自动创建（CLI）
-        self.client = client or AsyncOpenAI(
-            api_key=config.api_key,
-            base_url=config.base_url,
-            timeout=120.0,
-            max_retries=3,
-        )
+        if client is None:
+            config.validate_main_model_config()
+            self.client = AsyncOpenAI(
+                api_key=config.api_key,
+                base_url=config.base_url,
+                timeout=120.0,
+                max_retries=3,
+            )
+        else:
+            self.client = client
 
         # 三大能力管理器
         self.registry = get_registry()
@@ -179,6 +183,7 @@ class Agent:
             raise ValueError(
                 f"输入过长（{len(user_input)}字符），请限制在 {MAX_INPUT_LENGTH} 字符以内"
             )
+        self.config.validate_main_model_config()
 
         self.trace_id = trace_id or generate_trace_id()
         logger = get_logger("core", trace_id=self.trace_id)

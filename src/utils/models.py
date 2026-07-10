@@ -303,7 +303,7 @@ def ensure_models(
 
         # ── 立即量化 ──
         _progress(local_name, "quantize", "start")
-        ok = _safe_quantize(local_name, model_type, target_path, _emit)
+        ok = _quantize_with_progress(local_name, model_type, target_path, _progress, _emit)
         _progress(local_name, "quantize", "done")  # 无论成败都推进进度条
         if not ok:
             all_ok = False

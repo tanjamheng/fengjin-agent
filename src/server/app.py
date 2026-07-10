@@ -17,6 +17,8 @@ from ..utils.progress import (
 
 log = get_logger("server")
 
+_MISSING_API_KEY_PLACEHOLDER = "launcher-missing-api-key"
+
 # ── 模型清单（与 src/utils/models.py 保持同步）──
 _MODEL_SPECS = [
     ("bge-m3", True),               # (目录名, 必需)
@@ -105,7 +107,7 @@ async def lifespan(app: FastAPI):
         config = Config.load(str(_project_root / "config" / "config.yaml"))
         app.state.config = config
         app.state.client = AsyncOpenAI(
-            api_key=config.api_key,
+            api_key=config.api_key or _MISSING_API_KEY_PLACEHOLDER,
             base_url=config.base_url,
             timeout=120.0,
             max_retries=3,
