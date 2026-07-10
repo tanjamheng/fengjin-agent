@@ -173,8 +173,10 @@ ipcMain.handle("ws:getUrl", () => {
 
 function getOrCreateWsToken(): string {
   if (wsToken) return wsToken;
-  const tokenPath = join(app.getPath("userData"), "ws-token");
+  const dataDir = join(getProjectRoot(), "data");
+  const tokenPath = join(dataDir, "ws-token");
   try {
+    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
     if (existsSync(tokenPath)) {
       const existing = readFileSync(tokenPath, "utf-8").trim();
       if (/^[a-f0-9]{64}$/i.test(existing)) {

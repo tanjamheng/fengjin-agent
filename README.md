@@ -225,4 +225,4 @@ Windows 桌面客户端，Electron 28 + TypeScript + 原生 HTML/CSS。不引入
 
 ## 许可证
 
-MIT License
+原创代码与原创文档采用 MIT License。第三方角色、图片、模型、剧情文本、语音文本及知识库资料不属于 MIT 授权范围，详见 `THIRD_PARTY_ASSETS.md`。

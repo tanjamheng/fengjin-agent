@@ -80,7 +80,7 @@ export class WSClient {
     }
     this._setStatus("connecting");
     this._parser.resetErrors();
-    log.info("Connecting to {}", url);
+    log.info("Connecting to {}", this._redactUrl(url));
 
     try {
       this._ws = new WebSocket(url);
@@ -219,6 +219,10 @@ export class WSClient {
       this._status = status;
       this.onStatusChange?.(status);
     }
+  }
+
+  private _redactUrl(url: string): string {
+    return url.replace(/([?&]token=)[^&]+/i, "$1<redacted>");
   }
 
   // ---- 事件处理 ----

@@ -4,7 +4,7 @@
   "description": "风堇AI桌面NPC — 治愈晨昏",
   "main": "./out/main/index.js",
   "author": "tanjamheng",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",

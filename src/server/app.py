@@ -2,6 +2,7 @@
 
 import os
 from contextlib import asynccontextmanager
+import inspect
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -25,6 +26,19 @@ _MODEL_SPECS = [
     ("bge-reranker-v2-m3", True),
     ("Llama-Guard-3-1B", False),    # 仅 FENGJIN_GUARD_MODEL_ENABLED=true 时启用
 ]
+
+
+async def _cleanup_resource(name: str, resource) -> None:
+    """清理单个资源，兼容 async close() 与 sync cleanup()。"""
+    try:
+        if hasattr(resource, "close"):
+            result = resource.close()
+            if inspect.isawaitable(result):
+                await result
+        elif hasattr(resource, "cleanup"):
+            resource.cleanup()
+    except Exception as e:
+        log.warning("{} 清理异常: {}", name, e)
 
 
 def _scan_preprocess_plan(project_root: Path) -> list[str]:
@@ -93,6 +107,9 @@ async def lifespan(app: FastAPI):
 
         def _model_progress(step_id: str, status: str, percent: int | None = None):
             """ensure_models 的进度回调 → 发射 JSON 到 stdout"""
+            if status == "failed":
+                emit_warn(step_id, f"{step_id} 失败，已跳过")
+                return
             emit_progress(step_id, status, percent)
 
         _all_ok = _ensure_models(
@@ -318,10 +335,9 @@ async def lifespan(app: FastAPI):
     yield
 
     # 关闭：释放资源
-    try:
-        await app.state.client.close()
-    except Exception as e:
-        log.warning("OpenAI client 关闭异常: {}", e)
+    await _cleanup_resource("OpenAI client", app.state.client)
+    for idx, resource in enumerate(getattr(app.state, "_retired_resources", []), start=1):
+        await _cleanup_resource(f"retired_resource[{idx}]", resource)
     if getattr(app.state, "mcp_manager", None):
         try:
             app.state.mcp_manager.cleanup_all()

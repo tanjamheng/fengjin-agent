@@ -296,21 +296,26 @@ class GuardModel:
     def _resolve_model_path(self) -> str:
         """解析模型路径：本地路径 / ModelScope 缓存 / HuggingFace"""
         model_id = self.config.model_id
+        project_root = Path(__file__).resolve().parent.parent.parent
 
         if self.config.source == "local":
             path = Path(model_id)
             if not path.is_absolute():
-                path = Path(__file__).parent.parent.parent / path
+                path = project_root / path
             if not path.exists():
                 raise FileNotFoundError(f"本地模型路径不存在: {path}")
             self.log.info("从本地加载: {}", path)
             return str(path)
 
         if self.config.source == "modelscope":
-            from modelscope.hub.snapshot_download import snapshot_download
-            cache_dir = snapshot_download(model_id)
-            self.log.info("从 ModelScope 加载: {}", cache_dir)
-            return cache_dir
+            local_name = model_id.rstrip("/").split("/")[-1]
+            project_model = project_root / "models" / local_name
+            if project_model.exists():
+                self.log.info("从项目模型目录加载: {}", project_model)
+                return str(project_model)
+            raise FileNotFoundError(
+                f"项目模型目录不存在: {project_model}，请先运行启动器预处理模型"
+            )
 
         # huggingface 源：model_id 直接传给 transformers
         return model_id

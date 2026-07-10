@@ -93,7 +93,11 @@ def _download_with_progress(
 
     def _run():
         try:
-            snapshot_download(ms_id, local_dir=str(target_path))
+            os.environ.setdefault("MODELSCOPE_LOG_LEVEL", "ERROR")
+            try:
+                snapshot_download(ms_id, local_dir=str(target_path), show_progress=False)
+            except TypeError:
+                snapshot_download(ms_id, local_dir=str(target_path))
         except Exception as e:
             download_error.append(e)
         finally:
@@ -273,9 +277,11 @@ def ensure_models(
             _emit(f"  ⟳ {local_name} (FP32 → FP16) ...")
             _progress(local_name, "quantize", "start")
             ok = _quantize_with_progress(local_name, model_type, target_path, _progress, _emit)
-            _progress(local_name, "quantize", "done")  # 无论成败都推进进度条
             if not ok:
+                _progress(local_name, "quantize", "failed")
                 all_ok = False
+            else:
+                _progress(local_name, "quantize", "done")
             continue
 
         # ── 其他：需要下载（含续传） ──
@@ -291,7 +297,7 @@ def ensure_models(
         except Exception as e:
             _emit(f"    ✗ 下载失败: {e}")
             _emit(f"    （目录已保留，下次启动自动续传）")
-            _progress(local_name, "download", "done")  # 通知前端推进进度条
+            _progress(local_name, "download", "failed")
             all_ok = False
             continue
 
@@ -304,9 +310,11 @@ def ensure_models(
         # ── 立即量化 ──
         _progress(local_name, "quantize", "start")
         ok = _quantize_with_progress(local_name, model_type, target_path, _progress, _emit)
-        _progress(local_name, "quantize", "done")  # 无论成败都推进进度条
         if not ok:
+            _progress(local_name, "quantize", "failed")
             all_ok = False
+        else:
+            _progress(local_name, "quantize", "done")
 
     # 清理临时目录
     if TMP_DIR.exists():

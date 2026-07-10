@@ -55,6 +55,7 @@ export class SettingsPanel {
 
   private _saveLabel: string;
   private _hintText: string | null;
+  onSave?: (data: SettingsData) => void;
 
   constructor(initialData: SettingsData, triggerEl?: HTMLElement, saveLabel?: string, hintText?: string) {
     this._data = JSON.parse(JSON.stringify(initialData));
@@ -458,6 +459,11 @@ export class SettingsPanel {
     // 无任何修改（含纯记忆字段保存时 _dirty 已由 _markDirty 设为 true）
     if (!this._dirty) {
       this._close(null); // 无修改则直接关闭面板
+      return;
+    }
+
+    if (this.onSave) {
+      this.onSave(JSON.parse(JSON.stringify(this._data)));
       return;
     }
 

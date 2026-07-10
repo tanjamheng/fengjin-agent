@@ -17,6 +17,10 @@ import os
 import sys
 from typing import Optional
 
+from .logger import get_logger
+
+log = get_logger("progress")
+
 
 def _is_launcher_mode() -> bool:
     return os.environ.get("FENGJIN_LAUNCHER_MODE") == "1"
@@ -69,6 +73,6 @@ def _write(obj: dict) -> None:
         line = json.dumps(obj, ensure_ascii=False) + "\n"
         sys.stdout.write(line)
         sys.stdout.flush()
-    except Exception:
-        # 进度发射失败不应阻塞启动——静默忽略
-        pass
+    except Exception as e:
+        # 进度发射失败不应阻塞启动，但 launcher 模式必须留下可诊断日志。
+        log.warning("启动进度发射失败: {}", e)

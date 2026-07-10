@@ -157,12 +157,8 @@ class ConfigManager:
                     app.state.client = old_client
                 raise
             finally:
-                # 仅在新客户端成功替换后才关闭旧客户端（回滚时保留）
                 if old_client and app.state.client is not old_client:
-                    try:
-                        await old_client.close()
-                    except Exception as e:
-                        log.warning("关闭旧客户端异常: {}", e)
+                    ConfigManager._retire_resource(app, old_client)
 
         # ── 记忆管理器 ──
         need_rebuild_memory = memory_enabled != (getattr(app.state, "memory_manager", None) is not None)
@@ -189,10 +185,7 @@ class ConfigManager:
                 app.state.memory_manager = old_mgr  # 回滚
             finally:
                 if old_mgr and old_mgr is not app.state.memory_manager:
-                    try:
-                        old_mgr.cleanup()
-                    except Exception as e:
-                        log.warning("清理旧记忆管理器异常: {}", e)
+                    ConfigManager._retire_resource(app, old_mgr)
 
         # ── 如果记忆管理器变了，也需要重建 context_manager 的引用 ──
         if need_rebuild_memory:
@@ -242,6 +235,15 @@ class ConfigManager:
             },
             "memory_enabled": memory_enabled,
         }
+
+    @staticmethod
+    def _retire_resource(app, resource) -> None:
+        """延迟清理被热更新替换的资源，避免其他 WS 连接持有已关闭对象。"""
+        retired = getattr(app.state, "_retired_resources", None)
+        if retired is None:
+            retired = []
+            app.state._retired_resources = retired
+        retired.append(resource)
 
 
 def _reload_dotenv():

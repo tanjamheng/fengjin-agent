@@ -8,6 +8,7 @@ import json
 import os
 import asyncio
 import secrets
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -23,6 +24,8 @@ log = get_logger("ws")
 
 SERVER_PING_INTERVAL = 25    # 秒，服务端主动发 ping（asyncio，不受浏览器节流影响）
 HEARTBEAT_TIMEOUT = 60       # 秒，超时无 pong 则断连
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_WS_TOKEN_FILE = _PROJECT_ROOT / "data" / "ws-token"
 
 
 @router.websocket("/ws")
@@ -40,8 +43,7 @@ async def websocket_endpoint(websocket: WebSocket):
     safety = websocket.app.state.safety
 
     # 每连接独立：会话管理器 + 上下文管理器 + Agent
-    from pathlib import Path
-    _project_root = Path(__file__).resolve().parent.parent.parent
+    _project_root = _PROJECT_ROOT
     _sessions_dir = str(_project_root / "data" / "sessions")
     session_mgr = SessionManager(data_dir=_sessions_dir)
     memory_mgr = getattr(websocket.app.state, "memory_manager", None)
@@ -602,8 +604,14 @@ def _validate_config(cfg: dict, label: str) -> list[str]:
 
 def _is_ws_request_allowed(websocket: WebSocket) -> bool:
     """校验本地 WS 访问来源。Electron 启动时必须携带一次性 token。"""
-    expected = os.environ.get("FENGJIN_WS_TOKEN", "")
-    if expected:
+    expected = _get_ws_token()
+    if not expected:
+        if os.environ.get("FENGJIN_WS_ALLOW_UNAUTH_DEV", "").lower() in ("1", "true", "yes"):
+            log.warning("WS 无鉴权开发模式已启用，仅建议本地临时调试使用")
+        else:
+            log.warning("拒绝 WS 连接: token 未配置")
+            return False
+    else:
         supplied = websocket.query_params.get("token", "")
         if not secrets.compare_digest(supplied, expected):
             log.warning("拒绝 WS 连接: token 无效")
@@ -625,3 +633,29 @@ def _is_ws_request_allowed(websocket: WebSocket) -> bool:
         return True
     log.warning("拒绝 WS 连接: Origin 不可信 ({})", origin)
     return False
+
+
+def _get_ws_token() -> str:
+    """获取本地 WS token。优先环境变量，否则读/生成 data/ws-token。"""
+    token = os.environ.get("FENGJIN_WS_TOKEN", "").strip()
+    if token:
+        return token
+
+    try:
+        if _WS_TOKEN_FILE.exists():
+            existing = _WS_TOKEN_FILE.read_text(encoding="utf-8").strip()
+            if len(existing) >= 32:
+                os.environ["FENGJIN_WS_TOKEN"] = existing
+                return existing
+    except Exception as e:
+        log.warning("读取 WS token 失败: {}", e)
+
+    try:
+        _WS_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(32)
+        _WS_TOKEN_FILE.write_text(token, encoding="utf-8")
+        os.environ["FENGJIN_WS_TOKEN"] = token
+        return token
+    except Exception as e:
+        log.warning("生成 WS token 失败: {}", e)
+        return ""

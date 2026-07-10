@@ -140,6 +140,7 @@ async function _showAndApplyFirstTimeSettings(): Promise<void> {
   }
 
   const saved = await api.settingsWriteEnv(result);
+  panel.close();
   if (!saved.success) {
     const message = saved.error || "写入 .env 失败";
     log.error("Failed to write .env: {}", message);
@@ -253,7 +254,9 @@ ws.onError = (message) => {
   chat.appendSystemMessage(message, "warning");
   appState.isReplying = false;
   sidebar.setDisabled(false);
-  ws.listSessions();
+  if (ws.status === "connected") {
+    ws.listSessions();
+  }
 };
 
 // WS 会话回调 → HistorySidebar
@@ -361,8 +364,6 @@ ws.onConfigUpdated = (result) => {
   } else if (result.errors) {
     hint.style.color = "var(--color-status-offline)";
     hint.textContent = result.errors?.join("; ") ?? "配置更新失败";
-    _settingsPanelVisible = false; // 错误时允许重新打开设置
-		_settingsPanelClose?.(); _settingsPanelClose = null;
   }
   actions.insertBefore(hint, actions.firstChild);
   if (result.success) {
@@ -506,26 +507,34 @@ sidebar.onOpenSettings = async () => {
   };
   const triggerBtn = document.querySelector<HTMLElement>(".sidebar__settings-btn") ?? undefined;
   const panel = new SettingsPanel(initial, triggerBtn);
-  _settingsPanelClose = () => panel.close();
+  let closedAfterSave = false;
+  _settingsPanelClose = () => {
+    closedAfterSave = true;
+    panel.close();
+  };
+  panel.onSave = (result) => {
+    const main = {
+      api_key: result.main.api_key,
+      base_url: result.main.base_url,
+      model: result.main.model,
+    };
+    const memory = {
+      api_key: result.memory.api_key,
+      base_url: result.memory.base_url,
+      model: result.memory.model,
+    };
+    ws.updateConfig(main, memory, result.memory_enabled);
+  };
 
   const result = await panel.show();
   if (!result) {
-    log.info("Settings panel closed (cancelled)");
+    if (!closedAfterSave) {
+      log.info("Settings panel closed (cancelled)");
+    }
     _settingsPanelVisible = false;
+    _settingsPanelClose = null;
     return;
   }
-
-  const main = {
-    api_key: result.main.api_key,
-    base_url: result.main.base_url,
-    model: result.main.model,
-  };
-  const memory = {
-    api_key: result.memory.api_key,
-    base_url: result.memory.base_url,
-    model: result.memory.model,
-  };
-  ws.updateConfig(main, memory, result.memory_enabled);
 };
 
   // ===== 连接 =====
