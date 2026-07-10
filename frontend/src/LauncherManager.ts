@@ -7,7 +7,8 @@
 
 import { spawn, exec, ChildProcess } from "child_process";
 import { join } from "path";
-import { readFileSync, existsSync, copyFileSync, mkdirSync } from "fs";
+import { readFileSync, existsSync, copyFileSync, mkdirSync, createWriteStream } from "fs";
+import type { WriteStream } from "fs";
 import { BrowserWindow } from "electron";
 
 // ── 类型 ──
@@ -17,6 +18,7 @@ export interface ProgressMessage {
   steps?: string[];
   step?: string;
   status?: string;
+  percent?: number;  // 步骤内百分比 (0-99)，status='progress' 时有效
   error?: string;
   detail?: string;
 }
@@ -28,6 +30,7 @@ export interface LauncherState {
   phaseLabel: string;        // "正在预处理..." / "正在加载系统..."
   stepText: string;          // "正在下载 AI 模型..."
   progressPercent: number;   // 0-100
+  stepPercent: number;       // 当前步骤内百分比 (0-100)，0=无子进度
   showComfort: boolean;      // 是否显示安抚文字
   preprocessSteps: string[]; // 预处理步骤清单
   currentStepIndex: number;  // 当前步骤在清单中的位置
@@ -51,8 +54,7 @@ const STEP_LABELS: Record<string, string> = {
 // ── 常量 ──
 
 const WATCHDOG_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟
-const HEALTH_TIMEOUT_MS = 120_000;          // 120 秒
-const HEALTH_POLL_MS = 1000;                // 每秒轮询
+const HEALTH_POLL_MS = 2000;                // 2 秒轮询（localhost 几乎零开销）
 
 export class LauncherManager {
   private _win: BrowserWindow;
@@ -63,6 +65,8 @@ export class LauncherManager {
   private _healthTimer: ReturnType<typeof setTimeout> | null = null;
   private _warnTimer: ReturnType<typeof setTimeout> | null = null;
   private _healthGen: number = 0; // retry 时递增，防止旧轮询污染新后端
+  private _healthPollActive = false; // 防重入
+  private _logStream: WriteStream | null = null;
 
   // 阶段二硬编码：7 个 engine_init 步骤
   private readonly ENGINE_STEPS = [
@@ -94,6 +98,7 @@ export class LauncherManager {
       phaseLabel: "",
       stepText: "",
       progressPercent: 0,
+      stepPercent: 0,
       showComfort: false,
       preprocessSteps: [],
       currentStepIndex: 0,
@@ -102,6 +107,19 @@ export class LauncherManager {
       showSkip: false,
       showLogs: false,
     };
+
+    // 打开 launcher 专用日志
+    try {
+      const logsDir = join(projectRoot, "logs");
+      if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true });
+      this._logStream = createWriteStream(join(logsDir, "launcher.log"), { flags: "a" });
+    } catch { /* 日志打不开不影响功能 */ }
+  }
+
+  private _log(message: string): void {
+    const ts = new Date().toISOString();
+    const line = `[${ts}] ${message}\n`;
+    try { this._logStream?.write(line); } catch { /* ignore */ }
   }
 
   // ── 公共 API ──
@@ -112,6 +130,7 @@ export class LauncherManager {
 
   /** 完整启动流程 */
   async start(): Promise<void> {
+    this._log("========== Launcher start ==========");
     try {
       // 0. 窗口打开瞬间 → 立即显示"正在检查资源..." + 进度条 0%
       this._state.phase = "scanning";
@@ -120,33 +139,44 @@ export class LauncherManager {
       this._state.progressPercent = 0;
       this._emitState();
 
-      // 1. 环境检查（静默）
+      // 1. 环境检查
+      this._log("Step 1: checkPython...");
       this._checkPython();
+      this._log("Step 2: ensureVenv...");
       await this._ensureVenv();
-      this._checkEnvConfig();
+      this._log("Step 3: ensureEnvFile...");
+      this._ensureEnvFile();
+      this._log("Step 4: ensureDirectories...");
       this._ensureDirectories();
 
-      // 2. spawn 后端 — 后端扫描模型状态 → preprocess_plan → 切换阶段
+      // 2. spawn 后端 — 后端扫描模型状态 → preprocess_plan → 下载/量化 → engine_init → ready
+      //    API Key 检查延后到 ready 之后（模型下载不需要 API Key，不应被拦截）
+      this._log("Step 5: spawnBackend...");
       this._spawnBackend();
     } catch (e: any) {
-      if (e.message === "NEED_CONFIG") throw e; // 向上传播给 main.ts 弹出设置面板
+      this._log(`FATAL: ${e.message || "启动失败"}`);
       this._setError(e.message || "启动失败", true, false, true);
     }
   }
 
   /** 重试：kill 后端 → 重新 spawn */
   async retry(): Promise<void> {
+    this._log("========== Launcher retry ==========");
     this._clearError();
     this._killBackend();
     this._healthGen++; // 使旧轮询失效，防止误触发 _handleReady
     this._state.preprocessSteps = [];
     this._state.currentStepIndex = 0;
+    this._state.phase = "scanning";
+    this._state.phaseLabel = "正在检查资源...";
+    this._state.stepText = "";
+    this._state.progressPercent = 0;
+    this._emitState();
     try {
       this._checkPython();
-      this._checkEnvConfig();
       this._spawnBackend();
     } catch (e: any) {
-      if (e.message === "NEED_CONFIG") throw e; // 向上传播给 main.ts 弹出设置面板
+      this._log(`Retry FATAL: ${e.message || "重试失败"}`);
       this._setError(e.message || "重试失败", true, false, true);
     }
   }
@@ -159,8 +189,10 @@ export class LauncherManager {
 
   /** 清理资源 */
   cleanup(): void {
+    this._log("========== Launcher cleanup ==========");
     this._clearTimers();
     this._killBackend();
+    try { this._logStream?.end(); } catch { /* ignore */ }
   }
 
   // ── 环境检查 ──
@@ -203,21 +235,16 @@ export class LauncherManager {
     });
   }
 
-  private _checkEnvConfig(): void {
+  /** 确保 .env 文件存在（首次启动从 .env.example 复制） */
+  private _ensureEnvFile(): void {
     const envPath = join(this._projectRoot, ".env");
     const examplePath = join(this._projectRoot, ".env.example");
 
     if (!existsSync(envPath)) {
       if (existsSync(examplePath)) {
         copyFileSync(examplePath, envPath);
+        this._log(".env created from .env.example");
       }
-    }
-
-    // 检查 API Key 是否为占位值
-    const content = readFileSync(envPath, "utf-8");
-    const hasPlaceholder = /FENGJIN_API_KEY\s*=\s*your-api-key-here/i.test(content);
-    if (hasPlaceholder) {
-      throw new Error("NEED_CONFIG"); // 特殊标记，由 main.ts 触发设置面板
     }
   }
 
@@ -239,11 +266,13 @@ export class LauncherManager {
     const venvPython = join(this._projectRoot, "venv", "Scripts", "python.exe");
     const pythonExe = existsSync(venvPython) ? venvPython : "python";
 
+    this._log(`Spawning backend: ${pythonExe} -m src.server.server`);
     this._backend = spawn(pythonExe, ["-m", "src.server.server"], {
       cwd: this._projectRoot,
       env: { ...process.env, FENGJIN_LAUNCHER_MODE: "1" },
       stdio: ["ignore", "pipe", "pipe"], // stdin=ignore, stdout=pipe, stderr=pipe
     });
+    this._log(`Backend PID: ${this._backend.pid}`);
 
     let stdoutBuffer = "";
 
@@ -299,6 +328,9 @@ export class LauncherManager {
   // ── 进度解析 ──
 
   private _handleLine(line: string): void {
+    this._log(`[backend stdout] ${line}`);
+    // 任何 stdout 输出都证明后端存活，重置看门狗
+    this._resetWatchdog();
     let msg: ProgressMessage;
     try {
       msg = JSON.parse(line);
@@ -328,6 +360,7 @@ export class LauncherManager {
 
   private _handlePreprocessPlan(msg: ProgressMessage): void {
     const steps = msg.steps || [];
+    this._log(`preprocess_plan: ${steps.length} steps — [${steps.join(", ")}]`);
     this._state.preprocessSteps = steps;
     this._state.currentStepIndex = 0;
 
@@ -354,12 +387,31 @@ export class LauncherManager {
   private _handleProgress(msg: ProgressMessage): void {
     const step = msg.step || "";
     if (msg.status === "done") {
+      this._state.stepPercent = 0;
       this._advanceProgress();
-      this._resetWatchdog();
+    } else if (msg.status === "progress" && msg.percent !== undefined) {
+      // 步骤内子进度 → 更新百分比，用于进度条平滑过渡
+      this._state.stepPercent = msg.percent;
+      this._updateProgressBar();
+      this._emitState();
     } else {
       // start → 更新文字
       this._state.stepText = this._labelForStep(step);
+      this._state.stepPercent = 0;
       this._emitState();
+    }
+  }
+
+  /** 综合 stepIndex + stepPercent 计算阶段内进度百分比 */
+  private _updateProgressBar(): void {
+    const idx = this._state.currentStepIndex;
+    const sub = this._state.stepPercent;
+    if (this._state.phase === "preprocess") {
+      const total = this._state.preprocessSteps.length || 1;
+      this._state.progressPercent = Math.round((idx * 100 + sub) / total);
+    } else if (this._state.phase === "system_load") {
+      const total = this.ENGINE_STEPS.length;
+      this._state.progressPercent = Math.round((idx * 100 + sub) / total);
     }
   }
 
@@ -385,12 +437,40 @@ export class LauncherManager {
 
   private _handleReady(): void {
     if (this._state.phase === "done" || this._state.phase === "error") return; // 防竞态 + 防覆盖致命错误
+    this._log("Backend ready — transitioning to done");
     this._state.phase = "done";
     this._state.phaseLabel = "";
     this._state.stepText = "";
     this._state.progressPercent = 100;
     this._clearTimers();
     this._emitState();
+
+    // 后端就绪后检查 API Key，占位值则弹首次配置
+    this._checkAndNotifyConfig();
+  }
+
+  /** 后端就绪后检查主模型三个字段（API Key / Base URL / 模型名）是否为空 */
+  private _checkAndNotifyConfig(): void {
+    try {
+      const envPath = join(this._projectRoot, ".env");
+      if (!existsSync(envPath)) {
+        this._log(".env not found, dispatching needConfig");
+        this._win.webContents.send("launcher:needConfig");
+        return;
+      }
+      const content = readFileSync(envPath, "utf-8");
+      const required: string[] = [];
+      for (const key of ["FENGJIN_API_KEY", "FENGJIN_BASE_URL", "FENGJIN_MODEL"]) {
+        const m = content.match(new RegExp(`^${key}\\s*=\\s*(.*)$`, "m"));
+        if (!m || m[1].trim() === "") required.push(key);
+      }
+      if (required.length > 0) {
+        this._log(`Missing/empty fields: ${required.join(", ")}, dispatching needConfig`);
+        this._win.webContents.send("launcher:needConfig");
+      }
+    } catch (e) {
+      this._log(`Config check error: ${e}`);
+    }
   }
 
   private _advanceProgress(): void {
@@ -402,18 +482,20 @@ export class LauncherManager {
         this._enterSystemLoad();
         return;
       }
-      this._state.progressPercent = Math.round((this._state.currentStepIndex / total) * 100);
       const nextStep = this._state.preprocessSteps[this._state.currentStepIndex];
       this._state.stepText = this._labelForStep(nextStep);
+      this._state.stepPercent = 0;
+      this._updateProgressBar();
     } else if (this._state.phase === "system_load") {
       this._state.currentStepIndex++;
       const total = this.ENGINE_STEPS.length;
       if (this._state.currentStepIndex >= total) {
         this._state.progressPercent = 100;
       } else {
-        this._state.progressPercent = Math.round((this._state.currentStepIndex / total) * 100);
         const nextStep = this.ENGINE_STEPS[this._state.currentStepIndex];
         this._state.stepText = this.ENGINE_LABELS[nextStep] || nextStep;
+        this._state.stepPercent = 0;
+        this._updateProgressBar();
       }
     }
     this._emitState();
@@ -429,11 +511,14 @@ export class LauncherManager {
     this._state.preprocessSteps = [];
     this._state.stepText = this.ENGINE_LABELS["engine_init:safety"];
     this._emitState();
+    // 进入系统加载阶段后才启动健康轮询（uvicorn 即将就绪）
+    this.startHealthPoll();
   }
 
   // ── 错误处理 ──
 
   private _setError(msg: string, retry: boolean, skip: boolean, logs: boolean): void {
+    this._log(`ERROR: ${msg} (retry=${retry} skip=${skip})`);
     this._state.phase = "error";
     this._state.error = msg;
     this._state.showRetry = retry;
@@ -447,10 +532,12 @@ export class LauncherManager {
     this._state.phase = "scanning";
     this._state.phaseLabel = "正在检查资源...";
     this._state.progressPercent = 0;
+    this._state.stepPercent = 0;
     this._state.error = null;
     this._state.showRetry = false;
     this._state.showSkip = false;
     this._state.showLogs = false;
+    this._healthPollActive = false; // 允许 retry 后重新启动健康轮询
     this._emitState();
   }
 
@@ -458,33 +545,36 @@ export class LauncherManager {
 
   private _resetWatchdog(): void {
     if (this._watchdogTimer) clearTimeout(this._watchdogTimer);
+    // 预处理阶段不设看门狗——模型下载耗时取决于网速，可能超过 5 分钟
+    if (this._state.phase === "preprocess") return;
     this._watchdogTimer = setTimeout(() => {
       this._setError("似乎卡住了，请检查网络后重试", true, false, true);
     }, WATCHDOG_TIMEOUT_MS);
   }
 
   startHealthPoll(): void {
+    if (this._healthPollActive) return; // 防重入
+    this._healthPollActive = true;
     const myGen = this._healthGen;
-    const startTime = Date.now();
     const poll = () => {
-      if (this._healthGen !== myGen) return; // 旧代轮询，停止
-      if (this._state.phase === "done" || this._state.phase === "error") return;
-      if (Date.now() - startTime > HEALTH_TIMEOUT_MS) {
-        this._setError("启动超时，请查看日志后重试", true, false, true);
+      if (this._healthGen !== myGen) { this._healthPollActive = false; return; }
+      if (this._state.phase === "done" || this._state.phase === "error") {
+        this._healthPollActive = false;
         return;
       }
       fetch("http://127.0.0.1:8765/health")
         .then((r) => r.json())
         .then((data) => {
-          if (this._healthGen !== myGen) return; // 旧代响应，丢弃
+          if (this._healthGen !== myGen) { this._healthPollActive = false; return; }
           if (data.status === "ready" && this._state.phase !== "done") {
+            this._healthPollActive = false;
             this._handleReady();
           } else {
             this._healthTimer = setTimeout(poll, HEALTH_POLL_MS);
           }
         })
         .catch(() => {
-          if (this._healthGen !== myGen) return; // 旧代响应，丢弃
+          if (this._healthGen !== myGen) { this._healthPollActive = false; return; }
           this._healthTimer = setTimeout(poll, HEALTH_POLL_MS);
         });
     };
@@ -495,6 +585,7 @@ export class LauncherManager {
     if (this._watchdogTimer) { clearTimeout(this._watchdogTimer); this._watchdogTimer = null; }
     if (this._healthTimer) { clearTimeout(this._healthTimer); this._healthTimer = null; }
     if (this._warnTimer) { clearTimeout(this._warnTimer); this._warnTimer = null; }
+    this._healthPollActive = false;
   }
 
   // ── 辅助 ──
@@ -504,6 +595,7 @@ export class LauncherManager {
   }
 
   private _emitState(): void {
+    this._log(`emitState → phase=${this._state.phase} label="${this._state.phaseLabel}" step="${this._state.stepText}" pct=${this._state.progressPercent}% error="${this._state.error || ""}"`);
     this._win.webContents.send("launcher:state", { ...this._state });
   }
 

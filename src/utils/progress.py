@@ -29,11 +29,17 @@ def emit_preprocess_plan(steps: list[str]) -> None:
     _write({"type": "preprocess_plan", "steps": steps})
 
 
-def emit_progress(step: str, status: str) -> None:
-    """发送步骤进度。step 如 'model_download:bge-m3'，status 为 'start' 或 'done'。"""
+def emit_progress(step: str, status: str, percent: Optional[int] = None) -> None:
+    """发送步骤进度。step 如 'model_download:bge-m3'，status 为 'start'/'done'/'progress'。
+
+    status='progress' 时必须提供 percent (0-99)，表示当前步骤的百分比。
+    """
     if not _is_launcher_mode():
         return
-    _write({"type": "progress", "step": step, "status": status})
+    payload: dict = {"type": "progress", "step": step, "status": status}
+    if percent is not None:
+        payload["percent"] = percent
+    _write(payload)
 
 
 def emit_warn(step: str, error: str) -> None:

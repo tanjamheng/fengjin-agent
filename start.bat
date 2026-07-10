@@ -43,16 +43,16 @@ powershell -Command ^
 echo.
 
 REM ============================================================
-REM  离线加速：关闭代理 + 国内镜像源
-REM  （仅影响本脚本，不影响系统设置）
+REM  Offline acceleration: clear proxy + use China mirrors
+REM  (only affects this script, not system settings)
 REM ============================================================
-REM 如果开着翻墙工具，走国内镜像反而被代理绕一圈变慢——先清掉
+REM Clear proxy to avoid mirror traffic being routed through VPN
 set http_proxy=
 set https_proxy=
 set HTTP_PROXY=
 set HTTPS_PROXY=
 
-REM Electron 二进制也走国内镜像
+REM Use China mirror for Electron binary download
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 set ELECTRON_CACHE=frontend\.cache\electron

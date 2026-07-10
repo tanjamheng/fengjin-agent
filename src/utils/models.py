@@ -26,6 +26,7 @@ import gc
 import os
 import shutil
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -49,6 +50,115 @@ MODELS = [
 _STATE_FILE = ".state"
 _STATE_FP32 = "fp32"
 _STATE_FP16 = "fp16"
+
+# 模型预估下载大小（GB，FP32 原始精度）——用于百分比进度估算
+_KNOWN_MODEL_SIZES_GB = {
+    "bge-m3": 4.5,
+    "bge-reranker-v2-m3": 2.8,
+    "Llama-Guard-3-1B": 3.5,
+}
+
+
+def _get_dir_size(path: Path) -> int:
+    """目录总大小 (bytes)。不存在返回 0。"""
+    if not path.exists():
+        return 0
+    total = 0
+    for f in path.rglob("*"):
+        if f.is_file():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _download_with_progress(
+    ms_id: str,
+    target_path: Path,
+    model_name: str,
+    op: str,  # "download" 或 "quantize"
+    _progress: Callable[[str, str, str, Optional[int]], None],
+    _emit: Callable[[str], None],
+) -> None:
+    """在后台线程执行 snapshot_download，主线程轮询目录大小推送百分比。"""
+    from modelscope.hub.snapshot_download import snapshot_download
+
+    estimated_gb = _KNOWN_MODEL_SIZES_GB.get(model_name, 3.0)
+    estimated_bytes = int(estimated_gb * 1024 ** 3)
+    initial_size = _get_dir_size(target_path)
+
+    download_done = threading.Event()
+    download_error: list = []
+
+    def _run():
+        try:
+            snapshot_download(ms_id, local_dir=str(target_path))
+        except Exception as e:
+            download_error.append(e)
+        finally:
+            download_done.set()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    last_pct = -1
+    while not download_done.is_set():
+        current = _get_dir_size(target_path)
+        if current > initial_size and estimated_bytes > 0:
+            pct = min(99, int((current - initial_size) / estimated_bytes * 100))
+            if pct > 0 and pct - last_pct >= 5:  # 每 ~5% 推送一次
+                last_pct = pct
+                _progress(model_name, op, "progress", pct)
+        time.sleep(0.8)
+
+    thread.join()
+
+    if download_error:
+        raise download_error[0]
+
+
+def _quantize_with_progress(
+    name: str,
+    model_type: str,
+    target_path: Path,
+    _progress: Callable[[str, str, str, Optional[int]], None],
+    _emit: Callable[[str], None],
+) -> bool:
+    """在后台线程量化，主线程监控临时目录大小推送百分比。"""
+    import glob as glob_mod
+
+    result = [False]
+    done = threading.Event()
+
+    def _run():
+        result[0] = _safe_quantize(name, model_type, target_path, _emit)
+        done.set()
+
+    # 预估输出大小：FP16 ≈ FP32 的 55%（含 tokenizer 等额外文件）
+    original_size = _get_dir_size(target_path)
+    estimated_output = int(original_size * 0.55) if original_size > 0 else 0
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    # glob 会在量化线程创建临时目录后自动匹配到
+    last_pct = -1
+    tmp_pattern = str(MODELS_DIR / ".tmp" / f"q-{name}*")
+
+    while not done.is_set():
+        if estimated_output > 0:
+            matches = glob_mod.glob(tmp_pattern)
+            if matches:
+                temp_size = _get_dir_size(Path(matches[0]))
+                pct = min(99, int(temp_size / estimated_output * 100))
+                if pct > 0 and pct - last_pct >= 5:
+                    last_pct = pct
+                    _progress(name, "quantize", "progress", pct)
+        time.sleep(0.8)
+
+    thread.join()
+    return result[0]
 
 
 def _recover_orphaned_quantizations(emit: Callable[[str], None]) -> None:
@@ -112,18 +222,16 @@ def ensure_models(
         else:
             log.info(text)
 
-    def _progress(model_name: str, op: str, status: str):
+    def _progress(model_name: str, op: str, status: str, percent: Optional[int] = None):
         """发送进度：step_id = 'model_{op}:{model_name}'"""
         if progress_callback:
             step_id = f"model_{op}:{model_name}"
-            progress_callback(step_id, status)
+            progress_callback(step_id, status, percent)
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     # 恢复上次量化完成但未 swap 的临时目录（原子替换窗口崩溃）
     _recover_orphaned_quantizations(_emit)
-
-    from modelscope.hub.snapshot_download import snapshot_download
 
     all_ok = True
 
@@ -152,7 +260,7 @@ def ensure_models(
         if current_state == _STATE_FP32:
             _emit(f"  ⟳ {local_name} (FP32 → FP16) ...")
             _progress(local_name, "quantize", "start")
-            ok = _safe_quantize(local_name, model_type, target_path, _emit)
+            ok = _quantize_with_progress(local_name, model_type, target_path, _progress, _emit)
             _progress(local_name, "quantize", "done")  # 无论成败都推进进度条
             if not ok:
                 all_ok = False
@@ -166,9 +274,8 @@ def ensure_models(
         _progress(local_name, "download", "start")
         target_path.mkdir(parents=True, exist_ok=True)
         try:
-            # 直写目标目录：ModelScope 按文件校验 MD5
-            # 已存在的完整文件跳过，损坏/缺失的重新下载（= 断点续传）
-            snapshot_download(ms_id, local_dir=str(target_path))
+            # 后台线程下载 + 主线程轮询目录大小推送百分比
+            _download_with_progress(ms_id, target_path, local_name, "download", _progress, _emit)
         except Exception as e:
             _emit(f"    ✗ 下载失败: {e}")
             _emit(f"    （目录已保留，下次启动自动续传）")

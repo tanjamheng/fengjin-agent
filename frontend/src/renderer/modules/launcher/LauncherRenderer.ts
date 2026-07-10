@@ -10,6 +10,7 @@ interface LauncherState {
   phaseLabel: string;
   stepText: string;
   progressPercent: number;
+  stepPercent: number;       // 当前步骤内百分比 (0-100)，0=无子进度
   showComfort: boolean;
   preprocessSteps: string[];
   currentStepIndex: number;
@@ -106,8 +107,10 @@ export class LauncherRenderer {
       this._lastPhase = state.phaseLabel;
     }
 
-    // 步骤文字
-    this._stepText.textContent = state.stepText;
+    // 步骤文字 — 有子进度时追加 (XX%)
+    this._stepText.textContent = state.stepPercent > 0
+      ? `${state.stepText} (${state.stepPercent}%)`
+      : state.stepText;
 
     // 进度条 + 百分比（平滑动画，防止同步批量 done 消息导致瞬时跳变）
     this._animateProgress(pct);

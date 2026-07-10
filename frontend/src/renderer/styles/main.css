@@ -1015,6 +1015,19 @@ html, body {
   padding: 14px 24px 10px;
 }
 
+/* 首次配置提示横幅 */
+.settings-hint-banner {
+  margin: 0 24px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #FFF0F5 0%, #FDE8F0 100%);
+  border: 1px solid rgba(255, 186, 204, 0.4);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #8B5E7A;
+  text-align: center;
+  line-height: 1.6;
+}
+
 /* 左侧 Tab + 右侧内容 */
 .settings-body {
   display: flex;

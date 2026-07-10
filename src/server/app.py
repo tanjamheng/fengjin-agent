@@ -89,9 +89,9 @@ async def lifespan(app: FastAPI):
         # ── 1. 模型检查：下载 + FP16 量化 ──
         from ..utils.models import ensure_models as _ensure_models
 
-        def _model_progress(step_id: str, status: str):
+        def _model_progress(step_id: str, status: str, percent: int | None = None):
             """ensure_models 的进度回调 → 发射 JSON 到 stdout"""
-            emit_progress(step_id, status)
+            emit_progress(step_id, status, percent)
 
         _all_ok = _ensure_models(
             msg=lambda text: log.info(text),

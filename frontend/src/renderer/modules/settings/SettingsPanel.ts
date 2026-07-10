@@ -54,11 +54,13 @@ export class SettingsPanel {
   private _focusedIndex = -1;
 
   private _saveLabel: string;
+  private _hintText: string | null;
 
-  constructor(initialData: SettingsData, triggerEl?: HTMLElement, saveLabel?: string) {
+  constructor(initialData: SettingsData, triggerEl?: HTMLElement, saveLabel?: string, hintText?: string) {
     this._data = JSON.parse(JSON.stringify(initialData));
     this._triggerEl = triggerEl || null;
     this._saveLabel = saveLabel || "保存并应用";
+    this._hintText = hintText || null;
   }
 
   /** 显示面板。返回 null 表示取消，返回 SettingsData 表示确认 */
@@ -116,6 +118,14 @@ export class SettingsPanel {
     h.id = "settings-dialog-title";
     this._overlay.setAttribute("aria-labelledby", "settings-dialog-title");
     header.appendChild(h);
+
+    // 首次配置提示横幅
+    if (this._hintText) {
+      const hintBanner = document.createElement("div");
+      hintBanner.className = "settings-hint-banner";
+      hintBanner.textContent = this._hintText;
+      card.appendChild(hintBanner);
+    }
 
     // 主体：左侧 Tab + 右侧内容
     const body = document.createElement("div");

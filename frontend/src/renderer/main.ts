@@ -45,6 +45,10 @@ let _loadingSession = false;
 let _loadingSessionId: string | null = null;
 let _loadTimer: ReturnType<typeof setTimeout> | null = null;
 
+// ===== 首次配置标记 =====
+let _pendingFirstTimeConfig = false;
+let _ws: WSClient | null = null;
+
 // ===== 初始化 =====
 
 // 1. CharacterDisplay（左侧角色展示 — 始终显示）
@@ -78,14 +82,13 @@ if (api && launcherContainer && appPanel) {
       launcherRenderer?.update(state);
     });
 
-  // 需要配置 .env
-  api.onLauncherNeedConfig(async () => {
-    const result = await _showFirstTimeSettings();
-    if (result) {
-      const saved = await api.settingsWriteEnv(result);
-      if (saved.success) {
-        api.launcherRetry(); // 保存成功 → 重试启动
-      }
+  // 需要配置 .env（launcher 模式下先标记，等过渡到聊天后再弹窗）
+  api.onLauncherNeedConfig(() => {
+    if (_isLauncherMode) {
+      _pendingFirstTimeConfig = true;
+    } else {
+      // 已在聊天模式（如 retry 后再次缺配置），直接弹窗
+      _showAndApplyFirstTimeSettings();
     }
   });
 
@@ -96,13 +99,58 @@ if (api && launcherContainer && appPanel) {
   }
 }
 
-async function _showFirstTimeSettings(): Promise<SettingsData | null> {
+/** 显示首次配置面板 → 保存 .env → 重试启动后端 → 等待就绪 → 重连 WS */
+async function _showAndApplyFirstTimeSettings(): Promise<void> {
   const panel = new SettingsPanel({
     main: { api_key: "", base_url: "", model: "" },
     memory: { api_key: "", base_url: "", model: "" },
     memory_enabled: false,
-  }, undefined, "保存并启动");
-  return panel.show();
+  }, undefined, "保存并启动", "配置 API 才能让风堇说话哦");
+
+  const result = await panel.show();
+  if (!result) {
+    // 用户取消 — 风堇不会说话，但界面可正常浏览
+    log.info("First-time settings cancelled by user");
+    return;
+  }
+
+  const saved = await api.settingsWriteEnv(result);
+  if (!saved.success) {
+    log.error("Failed to write .env");
+    return;
+  }
+
+  // 重试启动后端
+  await api.launcherRetry();
+
+  // 等待后端就绪，然后重连 WS
+  await _waitForBackend();
+  if (_ws) {
+    _ws.connect(CONFIG.ws.url);
+  }
+}
+
+/** 轮询后端健康检查，直到就绪（最长等 60s） */
+async function _waitForBackend(): Promise<void> {
+  const maxWait = 60_000;
+  const interval = 1500;
+  const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2000);
+      const res = await fetch("http://127.0.0.1:8765/health", { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        log.info("Backend is ready after config save");
+        return;
+      }
+    } catch {
+      // 后端未就绪，继续等
+    }
+    await new Promise((r) => setTimeout(r, interval));
+  }
+  log.warn("Backend did not become ready within 60s after config save");
 }
 
 function _transitionToChat(): void {
@@ -118,6 +166,11 @@ function _transitionToChat(): void {
     _isLauncherMode = false;
     // 初始化聊天模块
     initChatModules();
+    // 加载完成后，如需首次配置则弹出设置面板
+    if (_pendingFirstTimeConfig) {
+      _pendingFirstTimeConfig = false;
+      _showAndApplyFirstTimeSettings();
+    }
   }, 300);
 }
 
@@ -135,6 +188,7 @@ if (!api) {
 function initChatModules(): void {
   // 2. WSClient
   const ws = new WSClient();
+  _ws = ws;
 
 // WS 回调 → ChatUI
 ws.onStreamChunk = (text) => {

@@ -110,27 +110,22 @@ async function startLauncher(): Promise<void> {
 
   try {
     await launcher.start();
-    // 启动健康检查轮询
-    launcher.startHealthPoll();
+    // 健康检查轮询延后到 _enterSystemLoad() 中启动
+    // （预处理阶段 uvicorn 未就绪，轮询无意义）
   } catch (e: any) {
-    if (e.message === "NEED_CONFIG") {
-      // .env 缺 API Key → 弹设置面板
-      win.webContents.send("launcher:needConfig");
-    } else {
-      win.webContents.send("launcher:state", {
-        phase: "error",
-        phaseLabel: "",
-        stepText: "",
-        progressPercent: 0,
-        showComfort: false,
-        preprocessSteps: [],
-        currentStepIndex: 0,
-        error: e.message || "启动失败",
-        showRetry: true,
-        showSkip: false,
-        showLogs: true,
-      });
-    }
+    win.webContents.send("launcher:state", {
+      phase: "error",
+      phaseLabel: "",
+      stepText: "",
+      progressPercent: 0,
+      showComfort: false,
+      preprocessSteps: [],
+      currentStepIndex: 0,
+      error: e.message || "启动失败",
+      showRetry: true,
+      showSkip: false,
+      showLogs: true,
+    });
   }
 }
 
@@ -145,23 +140,19 @@ ipcMain.handle("launcher:retry", async () => {
     await launcher.retry();
     launcher.startHealthPoll();
   } catch (e: any) {
-    if (e.message === "NEED_CONFIG") {
-      win?.webContents.send("launcher:needConfig");
-    } else {
-      win?.webContents.send("launcher:state", {
-        phase: "error",
-        phaseLabel: "",
-        stepText: "",
-        progressPercent: 0,
-        showComfort: false,
-        preprocessSteps: [],
-        currentStepIndex: 0,
-        error: e.message || "重试失败",
-        showRetry: true,
-        showSkip: false,
-        showLogs: true,
-      });
-    }
+    win?.webContents.send("launcher:state", {
+      phase: "error",
+      phaseLabel: "",
+      stepText: "",
+      progressPercent: 0,
+      showComfort: false,
+      preprocessSteps: [],
+      currentStepIndex: 0,
+      error: e.message || "重试失败",
+      showRetry: true,
+      showSkip: false,
+      showLogs: true,
+    });
   }
 });
 
