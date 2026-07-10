@@ -17,7 +17,7 @@ interface LauncherState {
   error: string | null;
   showRetry: boolean;
   showSkip: boolean;
-  showLogs: boolean;
+
 }
 
 export class LauncherRenderer {
@@ -32,7 +32,7 @@ export class LauncherRenderer {
   private _errorText: HTMLElement;
   private _btnRetry: HTMLElement;
   private _btnSkip: HTMLElement;
-  private _btnLogs: HTMLElement;
+
   private _lastPhase: string = "";
   private _comfortIndex: number = -1;
   private _comfortPrev: number[] = []; // 前两次的 index，避免重复
@@ -77,7 +77,7 @@ export class LauncherRenderer {
     this._errorText = container.querySelector("#launcher-error-text")!;
     this._btnRetry = container.querySelector("#launcher-btn-retry")!;
     this._btnSkip = container.querySelector("#launcher-btn-skip")!;
-    this._btnLogs = container.querySelector("#launcher-btn-logs")!;
+
 
     // 随机初始安抚语
     this._pickNextComfort();
@@ -138,7 +138,7 @@ export class LauncherRenderer {
     // 按钮
     this._btnRetry.style.display = state.showRetry ? "" : "none";
     this._btnSkip.style.display = state.showSkip ? "" : "none";
-    this._btnLogs.style.display = state.showLogs ? "" : "none";
+
 
     // 完成
     if (state.phase === "done") {
@@ -158,10 +158,6 @@ export class LauncherRenderer {
     this._btnSkip.addEventListener("click", () => {
       (window as any).electronAPI?.launcherSkip();
     });
-    this._btnLogs.addEventListener("click", () => {
-      (window as any).electronAPI?.openLogs();
-    });
-
     // 点击安抚语随机切换（避免与前2次重复）
     this._comfortText.addEventListener("click", () => {
       this._pickNextComfort();

@@ -15,7 +15,6 @@ interface ElectronAPI {
   launcherGetState: () => Promise<unknown>;
   getWsUrl: () => Promise<string>;
   settingsWriteEnv: (data: unknown) => Promise<{ success: boolean; error?: string }>;
-  openLogs: () => Promise<void>;
   openUrl: (url: string) => Promise<{ success: boolean; error?: string }>;
 }
 

@@ -31,6 +31,5 @@ contextBridge.exposeInMainWorld("electronAPI", {
   settingsWriteEnv: (data: any) => ipcRenderer.invoke("settings:writeEnv", data),
 
   // 工具
-  openLogs: () => ipcRenderer.invoke("app:openLogs"),
   openUrl: (url: string) => ipcRenderer.invoke("app:openUrl"),
 });

@@ -38,7 +38,7 @@ export interface LauncherState {
   error: string | null;
   showRetry: boolean;
   showSkip: boolean;
-  showLogs: boolean;
+
 }
 
 // ── 步骤名 → 用户可见文案（model_* 步骤动态生成）──
@@ -70,7 +70,7 @@ export class LauncherManager {
   private _healthPollActive = false; // 防重入
   private _logStream: WriteStream | null = null;
 
-  // 阶段二硬编码：7 个 engine_init 步骤
+  // 阶段二硬编码：6 个 engine_init 步骤
   private readonly ENGINE_STEPS = [
     "engine_init:safety",
     "engine_init:memory",
@@ -78,7 +78,6 @@ export class LauncherManager {
     "engine_init:bond",
     "engine_init:persona",
     "engine_init:rag",
-    "engine_init:knowledge",
   ];
 
   // 阶段二步骤名映射
@@ -89,7 +88,6 @@ export class LauncherManager {
     "engine_init:bond": "正在初始化羁绊追踪...",
     "engine_init:persona": "正在初始化角色检测...",
     "engine_init:rag": "正在加载知识库引擎...",
-    "engine_init:knowledge": "正在构建知识库...",
   };
 
   constructor(win: BrowserWindow, projectRoot: string, wsToken: string) {
@@ -108,7 +106,7 @@ export class LauncherManager {
       error: null,
       showRetry: false,
       showSkip: false,
-      showLogs: false,
+
     };
 
     // 打开 launcher 专用日志
@@ -160,7 +158,7 @@ export class LauncherManager {
       this._spawnBackend();
     } catch (e: any) {
       this._log(`FATAL: ${e.message || "启动失败"}`);
-      this._setError(e.message || "启动失败", true, false, true);
+      this._setError(e.message || "启动失败", true, false);
     }
   }
 
@@ -184,7 +182,7 @@ export class LauncherManager {
       this._spawnBackend();
     } catch (e: any) {
       this._log(`Retry FATAL: ${e.message || "重试失败"}`);
-      this._setError(e.message || "重试失败", true, false, true);
+      this._setError(e.message || "重试失败", true, false);
     }
   }
 
@@ -359,13 +357,13 @@ export class LauncherManager {
     });
 
     this._backend.on("error", (err) => {
-      this._setError(`无法启动后端: ${err.message}`, true, false, true);
+      this._setError(`无法启动后端: ${err.message}`, true, false);
     });
 
     this._backend.on("close", (code) => {
       if (this._state.phase !== "done" && this._state.phase !== "error") {
         this._setError(
-          `后端异常退出 (code=${code})`, true, false, true
+          `后端异常退出 (code=${code})`, true, false
         );
       }
     });
@@ -417,7 +415,7 @@ export class LauncherManager {
         this._handleWarn(msg);
         break;
       case "fatal":
-        this._setError(msg.detail || msg.error || "致命错误", true, false, true);
+        this._setError(msg.detail || msg.error || "致命错误", true, false);
         break;
       case "ready":
         this._handleReady();
@@ -491,7 +489,6 @@ export class LauncherManager {
     if (this._state.phase !== "preprocess") return;
     this._state.showRetry = true;
     this._state.showSkip = true;
-    this._state.showLogs = true;
     this._emitState();
     if (this._warnTimer) clearTimeout(this._warnTimer);
     this._warnTimer = setTimeout(() => {
@@ -584,13 +581,12 @@ export class LauncherManager {
 
   // ── 错误处理 ──
 
-  private _setError(msg: string, retry: boolean, skip: boolean, logs: boolean): void {
+  private _setError(msg: string, retry: boolean, skip: boolean): void {
     this._log(`ERROR: ${msg} (retry=${retry} skip=${skip})`);
     this._state.phase = "error";
     this._state.error = msg;
     this._state.showRetry = retry;
     this._state.showSkip = skip;
-    this._state.showLogs = logs;
     this._clearTimers();
     this._emitState();
   }
@@ -603,7 +599,6 @@ export class LauncherManager {
     this._state.error = null;
     this._state.showRetry = false;
     this._state.showSkip = false;
-    this._state.showLogs = false;
     this._healthPollActive = false; // 允许 retry 后重新启动健康轮询
     this._emitState();
   }
@@ -615,7 +610,7 @@ export class LauncherManager {
     // 预处理阶段不设看门狗——模型下载耗时取决于网速，可能超过 5 分钟
     if (this._state.phase === "preprocess") return;
     this._watchdogTimer = setTimeout(() => {
-      this._setError("似乎卡住了，请检查网络后重试", true, false, true);
+      this._setError("似乎卡住了，请检查网络后重试", true, false);
     }, WATCHDOG_TIMEOUT_MS);
   }
 
@@ -662,6 +657,8 @@ export class LauncherManager {
   private _labelForStep(step: string): string {
     // engine_init:* → 使用硬编码映射
     if (this.ENGINE_LABELS[step]) return this.ENGINE_LABELS[step];
+    // knowledge_build → 预处理阶段知识库构建
+    if (step === "knowledge_build") return "正在构建知识库...";
     // model_{op}:{name} → 动态生成如 "正在下载 bge-m3..."
     const m = step.match(/^model_(download|quantize):(.+)$/);
     if (m) {

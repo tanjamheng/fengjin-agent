@@ -77,12 +77,24 @@ REM ============================================================
 REM  2. Python dependencies
 REM ============================================================
 echo  [2/4] Python dependencies (first install may take ~3 min)...
-echo    Using Tsinghua mirror for faster download
-call venv\Scripts\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-if errorlevel 1 (
-    echo    ERROR: Python dependencies failed to install
-    pause
-    exit /b 1
+REM Only install if requirements.txt changed (or first run)
+set NEED_PIP=0
+if not exist "venv\.requirements-installed" (
+    set NEED_PIP=1
+) else (
+    powershell -Command ^
+      "if ((Get-Item 'requirements.txt').LastWriteTime -gt (Get-Item 'venv\.requirements-installed').LastWriteTime) { exit 1 } else { exit 0 }"
+    if errorlevel 1 set NEED_PIP=1
+)
+if %NEED_PIP%==1 (
+    echo    Using Tsinghua mirror for faster download
+    call venv\Scripts\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+    if errorlevel 1 (
+        echo    ERROR: Python dependencies failed to install
+        pause
+        exit /b 1
+    )
+    echo %date% %time%> "venv\.requirements-installed"
 )
 echo    OK
 

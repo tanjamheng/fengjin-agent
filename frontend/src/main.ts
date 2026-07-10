@@ -45,9 +45,10 @@ function createWindow(): void {
     resizable: true,
     frame: false,
     titleBarStyle: "hidden",
-    icon: app.isPackaged
-      ? join(__dirname, "../renderer/assets/avatar-fengjin.png")
-      : join(app.getAppPath(), "src/renderer/assets/avatar-fengjin.png"),
+    icon: join(__dirname,
+      app.isPackaged
+        ? "../renderer/assets/icon.ico"
+        : "../../src/renderer/assets/icon.ico"),
     show: false, // 先隐藏，ready-to-show 再显示
     webPreferences: {
       contextIsolation: true,
@@ -127,7 +128,6 @@ async function startLauncher(): Promise<void> {
       error: e.message || "启动失败",
       showRetry: true,
       showSkip: false,
-      showLogs: true,
     });
   }
 }
@@ -153,7 +153,6 @@ ipcMain.handle("launcher:retry", async () => {
       error: e.message || "重试失败",
       showRetry: true,
       showSkip: false,
-      showLogs: true,
     });
   }
 });
@@ -320,15 +319,6 @@ ipcMain.on("window-maximize", () => {
 ipcMain.on("window-close", () => win?.close());
 ipcMain.on("window-toggle-top", () => {
   if (win) win.setAlwaysOnTop(!win.isAlwaysOnTop());
-});
-
-// 打开日志
-ipcMain.handle("app:openLogs", () => {
-  const { shell } = require("electron");
-  const logPath = join(getProjectRoot(), "logs", "app.log");
-  if (existsSync(logPath)) {
-    shell.openPath(logPath);
-  }
 });
 
 // 打开 URL

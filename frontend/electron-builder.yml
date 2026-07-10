@@ -6,7 +6,7 @@ directories:
 
 win:
   target: portable
-  icon: null
+  icon: src/renderer/assets/icon.ico
   sign: null
 
 portable:

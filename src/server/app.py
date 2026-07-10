@@ -22,6 +22,9 @@ log = get_logger("server")
 
 _MISSING_API_KEY_PLACEHOLDER = "launcher-missing-api-key"
 
+# ── 知识库源目录（翁法罗斯世界观资料）──
+_KNOWLEDGE_SRC_DIR = "数据侧_风堇资料"
+
 # ── 模型清单（与 src/utils/models.py 保持同步）──
 _MODEL_SPECS = [
     ("bge-m3", True),               # (目录名, 必需)
@@ -84,6 +87,19 @@ def _scan_preprocess_plan(project_root: Path) -> list[str]:
             steps.append(f"model_download:{dir_name}")
             steps.append(f"model_quantize:{dir_name}")
 
+    # ── 知识库预构建检查 ──
+    # 与模型检查保持同一规范：检查持久化标记是否存在。
+    # ChromaDB PersistentClient 初始化时必须创建 chroma.sqlite3，
+    # 即使 collection 为空。因此 sqlite3 存在 = 已初始化。
+    #   - chroma.sqlite3 不存在 → 需构建知识库
+    #   - chroma.sqlite3 存在 → 已构建（或已初始化空库），跳过
+    chroma_db = project_root / "data" / "chroma" / "chroma.sqlite3"
+    knowledge_src = project_root / _KNOWLEDGE_SRC_DIR
+    if knowledge_src.is_dir():
+        if not chroma_db.exists():
+            steps.append("knowledge_build")
+        # else: chroma.sqlite3 存在 → 跳过，system_load 阶段快速验证即可
+
     return steps
 
 
@@ -121,6 +137,52 @@ async def lifespan(app: FastAPI):
         if not _all_ok:
             log.warning("部分模型加载失败，对话功能可能受限")
             emit_warn("model_check", "部分模型加载失败，对话功能可能受限。查看日志了解详情。")
+
+        # ── 1.5 知识库预构建（属于预处理阶段，无看门狗限制）──
+        if "knowledge_build" in preprocess_steps:
+            emit_progress("knowledge_build", "start")
+            try:
+                from ..rag.rag_service import RAGService as _RAGService
+                # 临时初始化 RAG 服务（仅用于构建知识库，构建完即释放，
+                # 避免与后续 system_load 阶段的正式 RAG 初始化耦合）
+                _rag_build = _RAGService(
+                    config=RAGSettings.load(str(_project_root / "config" / "rag.yaml")),
+                    llm_client=None,
+                )
+                _rag_build.initialize()
+                _knowledge_src = _project_root / _KNOWLEDGE_SRC_DIR
+                if _knowledge_src.is_dir() and _rag_build.indexer is not None:
+                    if _rag_build.indexer.count() == 0:
+                        log.info("预处理阶段：知识库为空，自动导入: {}", _knowledge_src)
+                        # ① 加载 + 切分（快速），统计总 chunk 数
+                        _docs = _rag_build.loader.load_directory_recursive(str(_knowledge_src))
+                        _doc_chunks: list[tuple] = []  # [(doc, chunks), ...]
+                        _total_chunks = 0
+                        for _doc in _docs:
+                            _chunks = _rag_build.splitter.split_document(_doc)
+                            _doc_chunks.append((_doc, _chunks))
+                            _total_chunks += len(_chunks)
+                        # ② 逐文档嵌入，按 chunk 比例发射进度（进度条平缓增长）
+                        if _total_chunks > 0:
+                            _chunks_done = 0
+                            for _doc, _chunks in _doc_chunks:
+                                _rag_build.indexer.add(_chunks)
+                                _chunks_done += len(_chunks)
+                                emit_progress("knowledge_build", "progress",
+                                              percent=round(_chunks_done / _total_chunks * 100))
+                        log.info("预处理阶段：知识库构建完成: {} 文档, {} chunks",
+                                 len(_docs), _total_chunks)
+                    else:
+                        log.info("预处理阶段：知识库非空 ({} 条)，跳过构建",
+                                 _rag_build.indexer.count())
+                _rag_build.cleanup()
+                emit_progress("knowledge_build", "done")
+            except Exception as e:
+                log.warning("预处理阶段：知识库构建失败（将在系统加载阶段重试）: {}", e)
+                emit_warn("knowledge_build", f"知识库构建失败: {e}")
+                # done 不在此发送——warn 的 2s 自动推进是失败路径的唯一推进机制。
+                # 若同时发送 warn + done，前端 done 立即推进 → 进入 system_load，
+                # 但 warn 的 2s 定时器又触发一次 _advanceProgress → 跳过 system_load 首步骤。
 
         # ── 2. 配置 + 客户端 ──
         config = Config.load(str(_project_root / "config" / "config.yaml"))
@@ -261,6 +323,39 @@ async def lifespan(app: FastAPI):
             app.state.mcp_manager = mcp_manager
             app.state.rag_service = rag_service
             log.info("RAG 知识库 + Tool 注册表已加载（{} 个工具）", len(app.state.tool_definitions))
+
+            # ── 知识库验证 + 兜底补建（内嵌于 rag 步骤，不做独立步骤）──
+            if rag_service is not None:
+                try:
+                    if hasattr(rag_service, 'indexer') and rag_service.indexer is not None:
+                        _kb_count = rag_service.indexer.count()
+                        if _kb_count == 0:
+                            # 预处理阶段未构建，此处兜底导入
+                            _kb_dir = _project_root / _KNOWLEDGE_SRC_DIR
+                            if _kb_dir.is_dir():
+                                log.info("知识库为空，rag 步骤兜底导入: {}", _kb_dir)
+                                _docs = rag_service.loader.load_directory_recursive(str(_kb_dir))
+                                _doc_chunks: list[tuple] = []
+                                _total_chunks = 0
+                                for _doc in _docs:
+                                    _chunks = rag_service.splitter.split_document(_doc)
+                                    _doc_chunks.append((_doc, _chunks))
+                                    _total_chunks += len(_chunks)
+                                _chunks_done = 0
+                                if _total_chunks > 0:
+                                    for _doc, _chunks in _doc_chunks:
+                                        rag_service.indexer.add(_chunks)
+                                        _chunks_done += len(_chunks)
+                                        emit_progress("engine_init:rag", "progress",
+                                                      percent=round(_chunks_done / _total_chunks * 100))
+                                log.info("知识库兜底构建完成: {} 文档, {} chunks",
+                                         len(_doc_chunks), _total_chunks)
+                            else:
+                                log.warning("知识库目录不存在: {}", _kb_dir)
+                        else:
+                            log.info("知识库已就绪: {} 条记录", _kb_count)
+                except Exception as e:
+                    log.warning("知识库验证失败（不影响对话）: {}", e)
         except Exception as e:
             log.warning("RAG 知识库加载失败，WS 路径无知识检索: {}", e)
             app.state.tool_definitions = None
@@ -268,32 +363,6 @@ async def lifespan(app: FastAPI):
             app.state.mcp_manager = None
             app.state.rag_service = None
         emit_progress("engine_init:rag", "done")
-
-        # ── 9. 知识库自动构建（仅首次，需 RAGService 已初始化）──
-        emit_progress("engine_init:knowledge", "start")
-        _knowledge_docs = 0
-        _knowledge_chunks = 0
-        if rag_service is not None:
-            try:
-                # 检查 ChromaDB collection 是否为空
-                if hasattr(rag_service, 'indexer') and rag_service.indexer is not None:
-                    if rag_service.indexer.count() == 0:
-                        knowledge_dir = _project_root / "数据侧_风堇资料"
-                        if knowledge_dir.is_dir():
-                            log.info("知识库为空，自动导入: {}", knowledge_dir)
-                            result = rag_service.ingest_directory(
-                                str(knowledge_dir), recursive=True
-                            )
-                            _knowledge_docs = result.get("document_count", 0)
-                            _knowledge_chunks = result.get("total_chunks", 0)
-                            log.info("知识库构建完成: {} 文档, {} chunks",
-                                     _knowledge_docs, _knowledge_chunks)
-                        else:
-                            log.warning("知识库目录不存在: {}", knowledge_dir)
-            except Exception as e:
-                log.warning("知识库自动构建失败（不影响对话）: {}", e)
-                emit_warn("engine_init:knowledge", f"知识库构建失败: {e}")
-        emit_progress("engine_init:knowledge", "done")
 
         log.info("应用级单例加载完成")
         emit_ready()
