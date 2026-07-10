@@ -20,7 +20,8 @@ from ..utils.logger import get_logger, generate_trace_id
 router = APIRouter()
 log = get_logger("ws")
 
-HEARTBEAT_TIMEOUT = 45       # 秒，必须大于前端 ping 间隔(30s) + pong 超时(10s)
+SERVER_PING_INTERVAL = 25    # 秒，服务端主动发 ping（asyncio，不受浏览器节流影响）
+HEARTBEAT_TIMEOUT = 60       # 秒，超时无 pong 则断连
 
 
 @router.websocket("/ws")
@@ -70,15 +71,22 @@ async def websocket_endpoint(websocket: WebSocket):
     # 流任务状态
     current_stream: Optional[asyncio.Task] = None
 
-    # 心跳追踪
+    # 心跳：服务端主动发 ping（asyncio，不受浏览器 JS 定时器节流影响）
     last_pong = asyncio.get_event_loop().time()
 
-    async def _heartbeat_checker():
-        """后台心跳超时检测：每 15s 检查一次，超过 HEARTBEAT_TIMEOUT 无 pong 则断开
-        注意：前端 ping 间隔 30s，后端超时阈值必须 > 30s 避免竞态断连
-        """
+    async def _heartbeat_sender():
+        """每 SERVER_PING_INTERVAL 秒发送 ping，直至连接关闭"""
         while True:
-            await asyncio.sleep(15)
+            await asyncio.sleep(SERVER_PING_INTERVAL)
+            try:
+                await websocket.send_json({"type": "ping"})
+            except Exception:
+                break  # 连接已关闭，退出
+
+    async def _heartbeat_checker():
+        """每 10s 检查一次，超过 HEARTBEAT_TIMEOUT 无 pong 则断连"""
+        while True:
+            await asyncio.sleep(10)
             elapsed = asyncio.get_event_loop().time() - last_pong
             if elapsed > HEARTBEAT_TIMEOUT:
                 log.warning("心跳超时（{:.0f}s），关闭连接", elapsed)
@@ -88,7 +96,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     log.debug("心跳关闭连接异常: {}", e)
                 break
 
-    heartbeat_task = asyncio.create_task(_heartbeat_checker())
+    heartbeat_sender = asyncio.create_task(_heartbeat_sender())
+    heartbeat_checker = asyncio.create_task(_heartbeat_checker())
 
     try:
         async for raw in websocket.iter_text():
@@ -100,9 +109,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
             msg_type = data.get("type")
 
-            # ── ping ──
-            if msg_type == "ping":
-                await websocket.send_json({"type": "pong"})
+            # ── pong ──（客户端响应服务端 ping）
+            if msg_type == "pong":
                 last_pong = asyncio.get_event_loop().time()
 
             # ── user_msg ──
@@ -310,11 +318,12 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         log.opt(exception=True).error("WebSocket 异常: {}", e)
     finally:
-        heartbeat_task.cancel()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:
-            pass
+        for task in (heartbeat_sender, heartbeat_checker):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
         if current_stream and not current_stream.done():
             agent.cancel()  # 协作式旗标：让 Agent.chat() 优雅停止

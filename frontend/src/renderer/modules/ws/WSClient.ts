@@ -25,11 +25,9 @@ export class WSClient {
   private _sessionId: string = "";
   private _parser = new MessageParser();
 
-  // 心跳
-  private _pingTimer: ReturnType<typeof setInterval> | null = null;
-  private _pongTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly _pingInterval = CONFIG.timeouts.pingInterval;
-  private readonly _pongTimeout = CONFIG.timeouts.pongTimeout;
+  // 心跳：服务端主导发 ping，前端只响应 pong + 看守服务器存活
+  private _serverAliveTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly _serverPingTimeout = 35000; // 35s 未收到服务端 ping 则判定断线
 
   // 回复超时
   private _replyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -300,8 +298,10 @@ export class WSClient {
         this.onConnected?.(msg.session_id);
         break;
 
-      case "pong":
-        this._onPongReceived();
+      case "ping":
+        // 服务端主导心跳 → 客户端回复 pong + 重置看门狗
+        this._send({ type: "pong" });
+        this._resetServerAliveWatchdog();
         break;
 
       case "thinking":
@@ -391,37 +391,25 @@ export class WSClient {
 
   private _startHeartbeat(): void {
     this._stopHeartbeat();
-    this._pingTimer = setInterval(() => {
-      this._send({ type: "ping" });
-      // 先清除上次的 pong 超时定时器，防止 pongTimeout > pingInterval 时残留
-      if (this._pongTimer !== null) {
-        clearTimeout(this._pongTimer);
-        this._pongTimer = null;
-      }
-      this._pongTimer = setTimeout(() => {
-        // 10s 未收到 pong，判定断线
-        log.warn("Heartbeat timeout, disconnecting");
-        this.disconnect();
-      }, this._pongTimeout);
-    }, this._pingInterval);
+    this._resetServerAliveWatchdog();
   }
 
   private _stopHeartbeat(): void {
-    if (this._pingTimer !== null) {
-      clearInterval(this._pingTimer);
-      this._pingTimer = null;
-    }
-    if (this._pongTimer !== null) {
-      clearTimeout(this._pongTimer);
-      this._pongTimer = null;
+    if (this._serverAliveTimer !== null) {
+      clearTimeout(this._serverAliveTimer);
+      this._serverAliveTimer = null;
     }
   }
 
-  private _onPongReceived(): void {
-    if (this._pongTimer !== null) {
-      clearTimeout(this._pongTimer);
-      this._pongTimer = null;
+  /** 收到服务端 ping 时重置看门狗 */
+  private _resetServerAliveWatchdog(): void {
+    if (this._serverAliveTimer !== null) {
+      clearTimeout(this._serverAliveTimer);
     }
+    this._serverAliveTimer = setTimeout(() => {
+      log.warn("Server ping timeout, disconnecting");
+      this.disconnect();
+    }, this._serverPingTimeout);
   }
 
   // ---- 回复超时 ----

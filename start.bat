@@ -15,11 +15,15 @@ powershell -Command ^
   "$c = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
   "if ($c) {" ^
   "  foreach ($l in $c) {" ^
-  "    $p = $l.ToString().Trim() -split '\s+' | Select-Object -Last 1;" ^
-  "    if ($p -ne '0' -and $p -ne '4') {" ^
+  "    $p = ($l.ToString().Trim() -split '\s+' | Select-Object -Last 1);" ^
+  "    if ($p -eq '0' -or $p -eq '4') { continue }" ^
+  "    $name = (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName;" ^
+  "    if ($name -eq 'python' -or $name -eq 'pythonw') {" ^
   "      try { Stop-Process -Id $p -Force -ErrorAction Stop; Write-Host '  Stopped old backend (PID:' $p ')' } catch {" ^
-  "        Write-Host '  WARNING: Port 8765 in use, unable to stop'" ^
+  "        Write-Host '  WARNING: Unable to stop old backend (PID:' $p ')'" ^
   "      }" ^
+  "    } else {" ^
+  "      Write-Host '  Port 8765 in use by' $name '(not ours, skipping)'" ^
   "    }" ^
   "  }" ^
   "} else { Write-Host '  No existing instance' }"
