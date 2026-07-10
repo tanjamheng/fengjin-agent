@@ -7,7 +7,7 @@ echo     =*= Fengjin AI - Cure the Twilight =*=
 echo.
 
 REM ============================================================
-REM  0. Restart: kill old backend if already running
+REM  0. Restart: kill old instances if already running
 REM ============================================================
 echo  [0/4] Checking for running instances...
 
@@ -26,9 +26,37 @@ powershell -Command ^
   "      Write-Host '  Port 8765 in use by' $name '(not ours, skipping)'" ^
   "    }" ^
   "  }" ^
-  "} else { Write-Host '  No existing instance' }"
+  "} else { Write-Host '  No existing backend' }"
+
+REM Also close frontend window
+echo  [0/4] Closing old frontend window...
+powershell -Command ^
+  "$front = Get-Process -Name 'electron' -ErrorAction SilentlyContinue | Where-Object {" ^
+  "  $_.MainWindowTitle -like '*风堇*' -or $_.MainWindowTitle -like '*Fengjin*'" ^
+  "};" ^
+  "if ($front) {" ^
+  "  try { $front | Stop-Process -Force -ErrorAction Stop; Write-Host '  Closed frontend window' } catch {" ^
+  "    Write-Host '  WARNING: Unable to close frontend'" ^
+  "  }" ^
+  "} else { Write-Host '  No existing frontend' }"
 
 echo.
+
+REM ============================================================
+REM  离线加速：关闭代理 + 国内镜像源
+REM  （仅影响本脚本，不影响系统设置）
+REM ============================================================
+REM 如果开着翻墙工具，走国内镜像反而被代理绕一圈变慢——先清掉
+set http_proxy=
+set https_proxy=
+set HTTP_PROXY=
+set HTTPS_PROXY=
+
+REM Electron 二进制也走国内镜像
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+set ELECTRON_CACHE=frontend\.cache\electron
+if not exist "%ELECTRON_CACHE%" mkdir "%ELECTRON_CACHE%"
 
 REM ============================================================
 REM  1. Python venv
@@ -48,8 +76,9 @@ echo    OK
 REM ============================================================
 REM  2. Python dependencies
 REM ============================================================
-echo  [2/4] Python dependencies...
-call venv\Scripts\python.exe -m pip install -r requirements.txt -q >nul 2>&1
+echo  [2/4] Python dependencies (first install may take ~3 min)...
+echo    Using Tsinghua mirror for faster download
+call venv\Scripts\python.exe -m pip install -r requirements.txt -q -i https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
 if errorlevel 1 (
     echo    WARNING: Some dependencies failed to install, continuing...
 )
@@ -58,11 +87,11 @@ echo    OK
 REM ============================================================
 REM  3. Frontend dependencies
 REM ============================================================
-echo  [3/4] Frontend dependencies...
+echo  [3/4] Frontend dependencies (first install may take ~2 min)...
 if not exist "frontend\node_modules\" (
     echo    Installing...
     cd frontend
-    call npm install
+    call npm install --registry=https://registry.npmmirror.com
     cd ..
     if errorlevel 1 (
         echo    ERROR: npm install failed
