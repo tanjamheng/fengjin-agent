@@ -183,6 +183,7 @@ class ConfigManager:
             except Exception as e:
                 log.opt(exception=True).error("重建记忆管理器失败: {}", e)
                 app.state.memory_manager = old_mgr  # 回滚
+                raise
             finally:
                 if old_mgr and old_mgr is not app.state.memory_manager:
                     ConfigManager._retire_resource(app, old_mgr)

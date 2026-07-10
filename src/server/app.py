@@ -1,6 +1,7 @@
 """FastAPI 应用工厂"""
 
 import os
+import hashlib
 from contextlib import asynccontextmanager
 import inspect
 from pathlib import Path
@@ -12,6 +13,7 @@ from openai import AsyncOpenAI
 from ..config import Config, ContextSettings, RAGSettings
 from ..safety import SafetyManager
 from ..utils.logger import get_logger
+from ..utils.ws_token import get_or_create_ws_token
 from ..utils.progress import (
     emit_preprocess_plan, emit_progress, emit_warn, emit_fatal, emit_ready,
 )
@@ -393,7 +395,9 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ready"}
+        token = get_or_create_ws_token(log)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest() if token else ""
+        return {"status": "ready", "token_hash": token_hash}
 
     from ..ws.connection import router
     app.include_router(router)

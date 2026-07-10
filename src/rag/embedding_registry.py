@@ -20,8 +20,8 @@ _model_path: Optional[str] = None
 _refcount: int = 0
 
 
-def acquire(model_path: str, device: str = "cpu") -> "SentenceTransformer":
-    """获取嵌入模型实例（引用计数+1）
+def acquire_handle(model_path: str, device: str = "cpu") -> tuple["SentenceTransformer", bool]:
+    """获取嵌入模型实例和共享标记（引用计数+1）
 
     首次调用时加载模型；后续调用若路径和设备相同则返回缓存实例。
     若路径或设备不同，发出警告并返回独立新实例（不回退到共享模式）。
@@ -33,14 +33,14 @@ def acquire(model_path: str, device: str = "cpu") -> "SentenceTransformer":
             if model_path == _model_path:
                 _refcount += 1
                 log.info("复用已加载的嵌入模型: {} (refcount={})", model_path, _refcount)
-                return _model
+                return _model, True
             # 路径不同：创建独立实例（不覆写全局状态，调用方自行管理生命周期）
             log.warning(
                 "嵌入模型路径不匹配（已有: {}, 请求: {}），创建独立实例（不参与引用计数）",
                 _model_path, model_path,
             )
             from sentence_transformers import SentenceTransformer
-            return SentenceTransformer(model_path, device=device)
+            return SentenceTransformer(model_path, device=device), False
 
         # 首次加载：确保模型是 FP16（应由 ensure_models 预处理，此处为防御性兜底）
         import torch
@@ -65,7 +65,13 @@ def acquire(model_path: str, device: str = "cpu") -> "SentenceTransformer":
             log.info("FP16 模型已保存至 {}", model_path)
         _model_path = model_path
         _refcount = 1
-        return _model
+        return _model, True
+
+
+def acquire(model_path: str, device: str = "cpu") -> "SentenceTransformer":
+    """获取嵌入模型实例（引用计数+1）。"""
+    model, _is_shared = acquire_handle(model_path, device)
+    return model
 
 
 def release() -> None:
@@ -106,7 +112,7 @@ class SharedEmbeddingFunction:
         self._model_path = model_path
         self._device = device
         # acquire() 在 __init__ 中调用，对应 release() 在 cleanup 中调用
-        self._model = acquire(model_path, device)
+        self._model, self._is_shared = acquire_handle(model_path, device)
 
     @staticmethod
     def name() -> str:
@@ -128,6 +134,10 @@ class SharedEmbeddingFunction:
         return embeddings.tolist()
 
     def cleanup(self) -> None:
-        """释放共享模型的引用"""
-        release()
+        """释放模型引用；独立实例不触碰全局引用计数。"""
+        if self._model is None:
+            return
+        if self._is_shared:
+            release()
         self._model = None
+        self._is_shared = False

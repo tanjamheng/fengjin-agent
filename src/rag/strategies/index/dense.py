@@ -68,11 +68,15 @@ class DenseIndex(IndexStrategy):
     def _init_chroma(self):
         """初始化 ChromaDB（通过共享注册表，避免重复创建客户端连接）"""
         try:
+            from ....utils.helpers import get_project_root
             from ...chroma_registry import acquire as chroma_acquire
 
-            Path(self.persist_directory).mkdir(parents=True, exist_ok=True)
+            persist_dir = Path(self.persist_directory)
+            if not persist_dir.is_absolute():
+                persist_dir = get_project_root() / persist_dir
+            persist_dir.mkdir(parents=True, exist_ok=True)
 
-            self._store = chroma_acquire(str(Path(self.persist_directory).resolve()))
+            self._store = chroma_acquire(str(persist_dir.resolve()))
             self._chroma_shared = True
             self._collection = self._store.get_or_create_collection(
                 name=self.collection_name,

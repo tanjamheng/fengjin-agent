@@ -15,10 +15,23 @@ echo     =*= Fengjin AI - Release Builder =*=
 echo.
 
 REM ============================================================
-REM  1. Build frontend
+REM  1. Install frontend deps + build frontend
 REM ============================================================
-echo  [1/4] Building frontend...
+echo  [1/4] Installing frontend dependencies...
 cd frontend
+if exist package-lock.json (
+    call npm ci
+) else (
+    call npm install
+)
+if errorlevel 1 (
+    echo    ERROR: Frontend dependency install failed
+    cd ..
+    pause
+    exit /b 1
+)
+
+echo  [1/4] Building frontend...
 call npm run build
 if errorlevel 1 (
     echo    ERROR: Frontend build failed

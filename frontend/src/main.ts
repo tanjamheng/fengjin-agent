@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { join, resolve } from "path";
 import { createWriteStream, existsSync, mkdirSync, statSync, renameSync, readFileSync, writeFileSync, copyFileSync } from "fs";
 import type { WriteStream } from "fs";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { LauncherManager } from "./LauncherManager";
 
 // DPI 缩放适配
@@ -168,6 +168,22 @@ ipcMain.handle("launcher:getState", () => {
 
 ipcMain.handle("ws:getUrl", () => {
   return `ws://127.0.0.1:8765/ws?token=${encodeURIComponent(getOrCreateWsToken())}`;
+});
+
+ipcMain.handle("backend:isAlive", async () => {
+  const tokenHash = createHash("sha256").update(getOrCreateWsToken()).digest("hex");
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 1500);
+  try {
+    const res = await fetch("http://127.0.0.1:8765/health", { signal: ctrl.signal });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data?.status === "ready" && data?.token_hash === tokenHash;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 });
 
 function getOrCreateWsToken(): string {

@@ -9,6 +9,7 @@ import { spawn, exec, ChildProcess } from "child_process";
 import { join } from "path";
 import { readFileSync, existsSync, copyFileSync, mkdirSync, createWriteStream, statSync, writeFileSync } from "fs";
 import type { WriteStream } from "fs";
+import { createHash } from "crypto";
 import { BrowserWindow } from "electron";
 
 // ── 类型 ──
@@ -51,6 +52,10 @@ const OP_LABELS: Record<string, string> = {
 
 const WATCHDOG_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟
 const HEALTH_POLL_MS = 2000;                // 2 秒轮询（localhost 几乎零开销）
+
+function sha256Hex(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
 
 export class LauncherManager {
   private _win: BrowserWindow;
@@ -625,10 +630,11 @@ export class LauncherManager {
         return;
       }
       fetch("http://127.0.0.1:8765/health")
-        .then((r) => r.json())
+        .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
           if (this._healthGen !== myGen) { this._healthPollActive = false; return; }
-          if (data.status === "ready" && this._state.phase !== "done") {
+          const expectedHash = sha256Hex(this._wsToken);
+          if (data?.status === "ready" && data.token_hash === expectedHash && this._state.phase !== "done") {
             this._healthPollActive = false;
             this._handleReady();
           } else {

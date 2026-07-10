@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   launcherSkip: () => ipcRenderer.invoke("launcher:skip"),
   launcherGetState: () => ipcRenderer.invoke("launcher:getState"),
   getWsUrl: () => ipcRenderer.invoke("ws:getUrl"),
+  isBackendAlive: () => ipcRenderer.invoke("backend:isAlive"),
 
   // 设置面板（首次模式：直写 .env）
   settingsWriteEnv: (data: any) => ipcRenderer.invoke("settings:writeEnv", data),

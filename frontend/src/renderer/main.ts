@@ -42,14 +42,34 @@ function _connectWs(ws: WSClient): void {
     });
 }
 
+async function _sha256Hex(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function _expectedHealthTokenHash(): Promise<string> {
+  const wsUrl = await _resolveWsUrl();
+  const token = new URL(wsUrl).searchParams.get("token") || "";
+  return _sha256Hex(token);
+}
+
 // HMR 热重载检测：后端已在运行则跳过加载页
 async function _checkBackendAlive(): Promise<boolean> {
+  if (api?.isBackendAlive) {
+    return await api.isBackendAlive();
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 1500);
   try {
+    const expectedHash = await _expectedHealthTokenHash();
     const res = await fetch("http://127.0.0.1:8765/health", { signal: ctrl.signal });
     clearTimeout(timer);
-    return res.ok;
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.status === "ready" && data.token_hash === expectedHash;
   } catch {
     clearTimeout(timer);
     return false;
@@ -165,11 +185,17 @@ async function _waitForBackend(): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < maxWait) {
     try {
+      if (api?.isBackendAlive && await api.isBackendAlive()) {
+        log.info("Backend is ready after config save");
+        return;
+      }
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 2000);
+      const expectedHash = await _expectedHealthTokenHash();
       const res = await fetch("http://127.0.0.1:8765/health", { signal: ctrl.signal });
       clearTimeout(timer);
-      if (res.ok) {
+      const data = res.ok ? await res.json() : null;
+      if (data?.status === "ready" && data.token_hash === expectedHash) {
         log.info("Backend is ready after config save");
         return;
       }

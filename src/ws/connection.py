@@ -18,6 +18,7 @@ from ..config import Config
 from ..agent.context_manager import ContextManager
 from ..agent.core import Agent, BlockedError, MAX_INPUT_LENGTH
 from ..utils.logger import get_logger, generate_trace_id
+from ..utils.ws_token import get_or_create_ws_token
 
 router = APIRouter()
 log = get_logger("ws")
@@ -25,7 +26,6 @@ log = get_logger("ws")
 SERVER_PING_INTERVAL = 25    # 秒，服务端主动发 ping（asyncio，不受浏览器节流影响）
 HEARTBEAT_TIMEOUT = 60       # 秒，超时无 pong 则断连
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_WS_TOKEN_FILE = _PROJECT_ROOT / "data" / "ws-token"
 
 
 @router.websocket("/ws")
@@ -265,8 +265,16 @@ async def websocket_endpoint(websocket: WebSocket):
             # ── delete_session ──
             elif msg_type == "delete_session":
                 target_id = data.get("session_id", "")
+                is_current_session = bool(target_id and target_id == session_mgr.get_current_session_id())
+                deleted = session_mgr.delete_session(target_id)
+                if not deleted:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "会话不存在，删除失败",
+                    })
+                    continue
                 # 若删除的是当前会话，清理漂移保护状态（对齐 CLI /delete 行为）
-                if target_id and target_id == session_mgr.get_current_session_id():
+                if is_current_session:
                     agent._pending_anchor = None
                     if persona_guard:
                         persona_guard.reset_state()
@@ -274,7 +282,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         agent.mood_engine.reset_state()
                     if agent.bond_tracker:
                         agent.bond_tracker.reset_state()
-                session_mgr.delete_session(target_id)
                 if memory_mgr and target_id:
                     memory_mgr.delete_session_memories(target_id)
                 await websocket.send_json({
@@ -609,7 +616,7 @@ def _validate_config(cfg: dict, label: str) -> list[str]:
 
 def _is_ws_request_allowed(websocket: WebSocket) -> bool:
     """校验本地 WS 访问来源。Electron 启动时必须携带一次性 token。"""
-    expected = _get_ws_token()
+    expected = get_or_create_ws_token(log)
     if not expected:
         if os.environ.get("FENGJIN_WS_ALLOW_UNAUTH_DEV", "").lower() in ("1", "true", "yes"):
             log.warning("WS 无鉴权开发模式已启用，仅建议本地临时调试使用")
@@ -638,29 +645,3 @@ def _is_ws_request_allowed(websocket: WebSocket) -> bool:
         return True
     log.warning("拒绝 WS 连接: Origin 不可信 ({})", origin)
     return False
-
-
-def _get_ws_token() -> str:
-    """获取本地 WS token。优先环境变量，否则读/生成 data/ws-token。"""
-    token = os.environ.get("FENGJIN_WS_TOKEN", "").strip()
-    if token:
-        return token
-
-    try:
-        if _WS_TOKEN_FILE.exists():
-            existing = _WS_TOKEN_FILE.read_text(encoding="utf-8").strip()
-            if len(existing) >= 32:
-                os.environ["FENGJIN_WS_TOKEN"] = existing
-                return existing
-    except Exception as e:
-        log.warning("读取 WS token 失败: {}", e)
-
-    try:
-        _WS_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        token = secrets.token_hex(32)
-        _WS_TOKEN_FILE.write_text(token, encoding="utf-8")
-        os.environ["FENGJIN_WS_TOKEN"] = token
-        return token
-    except Exception as e:
-        log.warning("生成 WS token 失败: {}", e)
-        return ""
