@@ -13,3 +13,6 @@ system_prompt_file: "system_prompt.md"
 server:
   websocket_host: "127.0.0.1"
   websocket_port: 8765
+  # 主端口不可用（例如被 Windows 排除）时按顺序尝试；仅影响当次进程。
+  # 均低于 Windows 默认动态端口区（49152+）；当前未被本机监听或排除。
+  websocket_fallback_ports: [8888, 18888, 28888, 38888, 40888, 45888, 48888]

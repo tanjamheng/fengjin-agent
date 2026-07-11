@@ -423,7 +423,8 @@ async def lifespan(app: FastAPI):
         emit_progress("engine_init:rag", "done")
 
         log.info("应用级单例加载完成")
-        emit_ready()
+        active_port = int(os.environ.get("FENGJIN_ACTIVE_WS_PORT", "8765"))
+        emit_ready(active_port)
 
     except Exception as e:
         log.opt(exception=True).error("应用级单例加载失败，服务无法启动: {}", e)

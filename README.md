@@ -132,7 +132,7 @@ cp .env.example .env   # 编辑填入 API Key
 python main.py
 
 # 桌面客户端：先起后端，再起前端
-python -m src.server.server &    # 后端（127.0.0.1:8765）
+python -m src.server.server &    # 后端（主/备用端口见 config/config.yaml）
 npm --prefix frontend run dev    # 前端（Electron 窗口）
 ```
 

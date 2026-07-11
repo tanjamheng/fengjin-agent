@@ -166,15 +166,17 @@ ipcMain.handle("launcher:getState", () => {
 });
 
 ipcMain.handle("ws:getUrl", () => {
-  return `ws://127.0.0.1:8765/ws?token=${encodeURIComponent(getOrCreateWsToken())}`;
+  const port = launcher?.backendPort ?? 8765;
+  return `ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(getOrCreateWsToken())}`;
 });
 
 ipcMain.handle("backend:isAlive", async () => {
+  const port = launcher?.backendPort ?? 8765;
   const tokenHash = createHash("sha256").update(getOrCreateWsToken()).digest("hex");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 1500);
   try {
-    const res = await fetch("http://127.0.0.1:8765/health", { signal: ctrl.signal });
+    const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: ctrl.signal });
     if (!res.ok) return false;
     const data = await res.json();
     return data?.status === "ready" && data?.token_hash === tokenHash;

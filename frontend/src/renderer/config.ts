@@ -23,8 +23,11 @@ export const CONFIG = {
 
   /** WebSocket 连接 */
   ws: {
-    /** 后端 WebSocket 地址 */
-    url: "ws://127.0.0.1:8765/ws",
+    /**
+     * 仅供脱离 Electron 的浏览器调试使用。
+     * 正式 Electron 运行时必须通过主进程取得实际端口，不能读取此值。
+     */
+    browserDevelopmentUrl: "ws://127.0.0.1:8765/ws",
   },
 
   /** 超时设置 (ms) */

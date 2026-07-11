@@ -11,22 +11,7 @@ REM  0. Restart: kill old instances if already running
 REM ============================================================
 echo  [0/4] Checking for running instances...
 
-powershell -Command ^
-  "$c = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
-  "if ($c) {" ^
-  "  foreach ($l in $c) {" ^
-  "    $p = ($l.ToString().Trim() -split '\s+' | Select-Object -Last 1);" ^
-  "    if ($p -eq '0' -or $p -eq '4') { continue }" ^
-  "    $name = (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName;" ^
-  "    if ($name -eq 'python' -or $name -eq 'pythonw') {" ^
-  "      try { Stop-Process -Id $p -Force -ErrorAction Stop; Write-Host '  Stopped old backend (PID:' $p ')' } catch {" ^
-  "        Write-Host '  WARNING: Unable to stop old backend (PID:' $p ')'" ^
-  "      }" ^
-  "    } else {" ^
-  "      Write-Host '  Port 8765 in use by' $name '(not ours, skipping)'" ^
-  "    }" ^
-  "  }" ^
-  "} else { Write-Host '  No existing backend' }"
+call :stop_tracked_backend
 
 REM Also close frontend window
 echo  [0/4] Closing old frontend window...
@@ -153,7 +138,7 @@ echo.
 echo    ====================================
 echo    Fengjin AI is running!
 echo.
-echo    Backend:  http://127.0.0.1:8765
+echo    Backend:  configured port ^(automatic fallback enabled^)
 echo    Logs:     logs\app.log
 echo.
 echo    Close this window to stop all services.
@@ -164,7 +149,19 @@ pause
 REM Cleanup
 echo.
 echo    Shutting down...
-powershell -Command ^
-  "$c = netstat -ano 2>$null | Select-String ':8765 .*LISTENING';" ^
-  "if ($c) { foreach ($l in $c) { $p = ($l.ToString().Trim() -split '\s+')[-1]; try { Stop-Process -Id $p -Force -ErrorAction Stop } catch {} } }"
+call :stop_tracked_backend
 echo    Goodbye.
+goto :eof
+
+:stop_tracked_backend
+powershell -Command ^
+  "$pidPath = Join-Path (Get-Location) 'logs\backend.pid';" ^
+  "if (-not (Test-Path -LiteralPath $pidPath)) { Write-Host '  No tracked backend'; exit 0 }" ^
+  "$raw = (Get-Content -LiteralPath $pidPath -Raw).Trim(); $pid = 0;" ^
+  "if (-not [int]::TryParse($raw, [ref]$pid)) { Remove-Item -LiteralPath $pidPath -Force; Write-Host '  Removed invalid backend PID file'; exit 0 }" ^
+  "$proc = Get-CimInstance Win32_Process -Filter ('ProcessId = {0}' -f $pid) -ErrorAction SilentlyContinue;" ^
+  "if ($proc -and $proc.Name -match '^pythonw?\.exe$' -and $proc.CommandLine -match '(^|\s)-m\s+src\.server\.server(\s|$)') {" ^
+  "  try { Stop-Process -Id $pid -Force -ErrorAction Stop; Write-Host '  Stopped tracked backend (PID:' $pid ')' } catch { Write-Host '  WARNING: Unable to stop tracked backend (PID:' $pid ')' }" ^
+  "} elseif ($proc) { Write-Host '  WARNING: Tracked PID no longer matches this backend; skipping' } else { Write-Host '  Removed stale backend PID file' }" ^
+  "Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue"
+exit /b

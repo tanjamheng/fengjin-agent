@@ -28,6 +28,30 @@ def _check_listen_endpoint(host: str, port: int) -> str | None:
     return None
 
 
+def _select_listen_port(host: str, primary_port: int, fallback_ports: list[object]) -> tuple[int | None, list[str]]:
+    """按配置顺序选择可监听端口；失败详情仅用于最终的可见诊断。"""
+    errors: list[str] = []
+    candidates = [primary_port, *fallback_ports]
+    seen: set[int] = set()
+    for candidate in candidates:
+        try:
+            port = int(candidate)
+        except (TypeError, ValueError):
+            errors.append(f"端口配置无效: {candidate!r}")
+            continue
+        if not 1 <= port <= 65535:
+            errors.append(f"端口超出范围: {port}")
+            continue
+        if port in seen:
+            continue
+        seen.add(port)
+        error = _check_listen_endpoint(host, port)
+        if error is None:
+            return port, errors
+        errors.append(error)
+    return None, errors
+
+
 def main() -> int:
     # ── Launcher 模式检测 ──
     _is_launcher = os.environ.get("FENGJIN_LAUNCHER_MODE") == "1"
@@ -52,12 +76,21 @@ def main() -> int:
         ws_config = data.get("server", {})
 
     host = ws_config.get("websocket_host", "127.0.0.1")
-    port = int(ws_config.get("websocket_port", 8765))
-    port_error = _check_listen_endpoint(host, port)
-    if port_error:
-        log.error("启动前端口预检失败: {}", port_error)
-        emit_fatal("port_unavailable", port_error)
+    primary_port = int(ws_config.get("websocket_port", 8765))
+    fallback_ports = ws_config.get("websocket_fallback_ports", [])
+    if not isinstance(fallback_ports, list):
+        fallback_ports = []
+        log.warning("websocket_fallback_ports 必须为列表，已忽略无效配置")
+
+    port, port_errors = _select_listen_port(host, primary_port, fallback_ports)
+    if port is None:
+        detail = "；".join(port_errors) or "未找到可用端口"
+        log.error("启动前端口预检失败: {}", detail)
+        emit_fatal("port_unavailable", detail)
         return 1
+    if port != primary_port:
+        log.warning("主端口 {} 不可用，已使用备用端口 {}", primary_port, port)
+    os.environ["FENGJIN_ACTIVE_WS_PORT"] = str(port)
 
     # Launcher 模式：uvicorn 日志也重定向到 loguru（文件），不污染 stdout
     _uvicorn_log_config = None

@@ -7,7 +7,7 @@
 
 import { spawn, exec, ChildProcess } from "child_process";
 import { join } from "path";
-import { readFileSync, existsSync, copyFileSync, mkdirSync, createWriteStream, statSync, renameSync, writeFileSync } from "fs";
+import { readFileSync, existsSync, copyFileSync, mkdirSync, createWriteStream, statSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import type { WriteStream } from "fs";
 import { createHash } from "crypto";
 import { BrowserWindow } from "electron";
@@ -22,6 +22,7 @@ export interface ProgressMessage {
   percent?: number;  // 步骤内百分比 (0-99)，status='progress' 时有效
   error?: string;
   detail?: string;
+  port?: number;
 }
 
 export type LauncherPhase = "env_check" | "scanning" | "preprocess" | "system_load" | "done" | "error";
@@ -71,6 +72,7 @@ export class LauncherManager {
   private _healthPollActive = false; // 防重入
   private _logStream: WriteStream | null = null;
   private _backendStopRequested = false;
+  private _backendPort = 8765;
 
   // 阶段二硬编码：6 个 engine_init 步骤
   private readonly ENGINE_STEPS = [
@@ -139,6 +141,10 @@ export class LauncherManager {
 
   get state(): LauncherState {
     return this._state;
+  }
+
+  get backendPort(): number {
+    return this._backendPort;
   }
 
   /** 完整启动流程 */
@@ -394,6 +400,7 @@ export class LauncherManager {
       stdio: ["ignore", "pipe", "pipe"], // stdin=ignore, stdout=pipe, stderr=pipe
     });
     this._log(`Backend PID: ${this._backend.pid}`);
+    this._writeBackendPid(this._backend.pid);
 
     let stdoutBuffer = "";
 
@@ -420,6 +427,7 @@ export class LauncherManager {
     backend.on("close", (code, signal) => {
       const exitDetail = `code=${code ?? "null"}, signal=${signal ?? "none"}`;
       this._log(`Backend process closed (${exitDetail}, requested=${this._backendStopRequested})`);
+      this._removeBackendPid(backend.pid);
       if (this._backend === backend) this._backend = null;
 
       // 已显示“就绪”不是允许后端静默死亡的理由。只有 launcher 明确停止时才忽略。
@@ -436,19 +444,52 @@ export class LauncherManager {
     if (this._backend) {
       this._backendStopRequested = true;
       this._log(`Requesting backend stop (pid=${this._backend.pid})`);
+      const backendPid = this._backend.pid;
       // 移除事件监听器，防止 kill 后异步 close 事件污染 retry() 新状态
       this._backend.removeAllListeners();
       try {
         // Windows: 杀子进程树
         if (process.platform === "win32") {
-          exec(`taskkill /pid ${this._backend.pid} /T /F`, () => {});
+          exec(`taskkill /pid ${backendPid} /T /F`, (error) => {
+            if (error) {
+              this._log(`Unable to stop backend PID ${backendPid}: ${error.message}`);
+              return;
+            }
+            this._removeBackendPid(backendPid);
+          });
         } else {
           this._backend.kill("SIGKILL");
+          this._removeBackendPid(backendPid);
         }
       } catch (e) {
         // 忽略
       }
       this._backend = null;
+    }
+  }
+
+  /**
+   * 仅记录本启动器创建的后端 PID，供 start 脚本安全清理异常遗留进程。
+   * 不以端口识别进程，避免备用端口遗漏或误杀其他本地服务。
+   */
+  private _writeBackendPid(pid: number | undefined): void {
+    if (!pid) return;
+    try {
+      writeFileSync(join(this._projectRoot, "logs", "backend.pid"), String(pid), "utf-8");
+    } catch (e) {
+      this._log(`Unable to write backend PID file: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  private _removeBackendPid(pid: number | undefined): void {
+    if (!pid) return;
+    const pidPath = join(this._projectRoot, "logs", "backend.pid");
+    try {
+      if (existsSync(pidPath) && readFileSync(pidPath, "utf-8").trim() === String(pid)) {
+        unlinkSync(pidPath);
+      }
+    } catch (e) {
+      this._log(`Unable to remove backend PID file: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -480,6 +521,10 @@ export class LauncherManager {
         this._setError(msg.detail || msg.error || "致命错误", true, false);
         break;
       case "ready":
+        if (Number.isInteger(msg.port) && msg.port! >= 1 && msg.port! <= 65535) {
+          this._backendPort = msg.port!;
+          this._log(`Backend selected port: ${this._backendPort}`);
+        }
         this._handleBackendInitialized();
         break;
     }
@@ -653,8 +698,6 @@ export class LauncherManager {
     this._state.preprocessSteps = [];
     this._state.stepText = this.ENGINE_LABELS["engine_init:safety"];
     this._emitState();
-    // 进入系统加载阶段后才启动健康轮询（uvicorn 即将就绪）
-    this.startHealthPoll();
   }
 
   // ── 错误处理 ──
@@ -705,7 +748,7 @@ export class LauncherManager {
         this._healthPollActive = false;
         return;
       }
-      fetch("http://127.0.0.1:8765/health")
+      fetch(`http://127.0.0.1:${this._backendPort}/health`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
           if (this._healthGen !== myGen) { this._healthPollActive = false; return; }

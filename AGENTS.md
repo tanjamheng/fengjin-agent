@@ -88,7 +88,7 @@ Windows 桌面客户端，Electron ≥ 28.x + TypeScript + 原生 HTML/CSS，Web
 - **不引入 CSS 框架**（Tailwind 等）— 手写 CSS，CSS 变量统一管理配色
 - **不引入状态管理库** — 全局状态极少，用中心状态对象 + 回调
 - **TypeScript 禁止滥用 `any`** — 所有后端通信数据必须有 Interface 定义
-- **前后端通信只走 WebSocket** — `ws://127.0.0.1:8765/ws`，不引入 REST API
+- **前后端通信只走 WebSocket** — 由 `config/config.yaml` 定义主端口与备用端口；Electron 必须使用启动器回传的实际本地端口，不引入 REST API
 - **布局比例固定** — 左 38%（角色展示）+ 中 45%（对话区）+ 右 17%（历史侧边栏），V2 不变
 - **窗口** — 默认 960×680，最小 800×520，自定义粉蓝渐变标题栏（`#FFBACC → #9AC2FF`）
 - **单实例锁** — `app.requestSingleInstanceLock()`，防止多窗口 WebSocket 冲突
@@ -197,8 +197,9 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | Core Memory | 核心记忆——从对话中提取的用户长期信息，存储在 core_memory.md + ChromaDB |
 | BlockedError | 安全拦截异常——安全检测 BLOCK 时由 Agent.chat() 抛出，CLI/WS 各自捕获展示 |
 | FENGJIN_LAUNCHER_MODE | 启动器模式标记——Electron spawn 后端时设为 1，后端看到后 stdout 专用于 JSON 进度行、日志只写文件 |
+| FENGJIN_ACTIVE_WS_PORT | 本次后端进程实际监听的端口——`server.py` 从配置的主/备用端口中选择后写入，仅进程内传递，不写回 `.env` |
 | preprocess_plan | 预处理步骤清单——后端启动后扫描模型/知识库状态，发给前端动态渲染步骤列表。空数组 = 跳过预处理 |
-| LauncherManager | Electron 主进程启动管理器——环境检查→spawn后端→解析stdout JSON进度→IPC推渲染进程→健康检查 |
+| LauncherManager | Electron 主进程启动管理器——环境检查→spawn后端→解析 stdout JSON 进度和实际端口→IPC 推渲染进程→按实际端口健康检查 |
 | 阶段一（预处理） | 启动第一阶段——仅当 preprocess_plan 非空时出现，逐项下载/量化缺失模型 |
 | 阶段二（系统加载） | 启动第二阶段——每次启动都走，初始化安全/记忆/情绪/羁绊/漂移/RAG/知识库 7 个组件 |
 
@@ -309,7 +310,7 @@ AI风堇_治愈晨昏/
 │   ├── .cache/                       # 打包缓存（Electron 二进制，.gitignore）
 │   ├── src/
 │   │   ├── main.ts                  # Electron 主进程入口（含 LauncherManager 启动管理）
-│   │   ├── LauncherManager.ts       # 启动管理器 — 环境检查/spawn后端/进度解析/健康检查
+│   │   ├── LauncherManager.ts       # 启动管理器 — 环境检查/spawn后端/进度解析/实际端口健康检查
 │   │   ├── preload.ts               # preload 脚本（IPC 桥接：窗口控制+启动器+设置）
 │   │       ├── index.html           # 入口 HTML
 │   │       ├── main.ts              # 渲染进程入口，串联五大模块

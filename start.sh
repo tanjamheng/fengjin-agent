@@ -11,25 +11,29 @@ echo
 # ── 0. 关闭旧的运行实例 ──
 echo " [0/4] Checking for running instances..."
 
-# 0a. 杀后端（8765 端口）
-if command -v lsof &>/dev/null; then
-    EXISTING=$(lsof -ti :8765 2>/dev/null || true)
-    if [ -n "$EXISTING" ]; then
-        for pid in $EXISTING; do
-            PNAME=$(ps -p "$pid" -o comm= 2>/dev/null || true)
-            if echo "$PNAME" | grep -qi 'python'; then
-                kill "$pid" 2>/dev/null || true
-                echo "  Stopped old backend (PID: $pid)"
-            else
-                echo "  Port 8765 in use by $PNAME (not ours, skipping)"
-            fi
-        done
-    else
-        echo "  No existing backend"
+# 0a. 仅清理本项目启动器记录的后端，不按端口扫描或误杀其他服务。
+stop_tracked_backend() {
+    local pid_file="logs/backend.pid"
+    [ -f "$pid_file" ] || { echo "  No tracked backend"; return; }
+    local pid command
+    pid=$(tr -d '[:space:]' < "$pid_file")
+    if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+        rm -f "$pid_file"
+        echo "  Removed invalid backend PID file"
+        return
     fi
-else
-    echo "  (lsof not found, skipping port check)"
-fi
+    command=$(ps -p "$pid" -o command= 2>/dev/null || true)
+    if [[ "$command" == *" -m src.server.server"* ]]; then
+        kill "$pid" 2>/dev/null || true
+        echo "  Stopped tracked backend (PID: $pid)"
+    elif [ -n "$command" ]; then
+        echo "  WARNING: Tracked PID no longer matches this backend; skipping"
+    else
+        echo "  Removed stale backend PID file"
+    fi
+    rm -f "$pid_file"
+}
+stop_tracked_backend
 
 # 0b. 关前端窗口
 pkill -f "electron.*fengjin\|electron.*风堇" 2>/dev/null && echo "  Closed frontend window" || echo "  No existing frontend"
@@ -124,7 +128,7 @@ cat << 'EOF'
     ====================================
     Fengjin AI is running!
 
-    Backend:  http://127.0.0.1:8765
+    Backend:  configured port (automatic fallback enabled)
     Logs:     logs/app.log
 
     Close this terminal to stop all services.
@@ -137,9 +141,5 @@ wait $ELECTRON_PID 2>/dev/null || true
 
 echo
 echo "    Shutting down..."
-# Kill any remaining process on 8765
-if command -v lsof &>/dev/null; then
-    REMAINING=$(lsof -ti :8765 2>/dev/null || true)
-    [ -n "$REMAINING" ] && kill "$REMAINING" 2>/dev/null || true
-fi
+stop_tracked_backend
 echo "    Goodbye."

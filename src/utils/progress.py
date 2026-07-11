@@ -60,11 +60,14 @@ def emit_fatal(error: str, detail: str) -> None:
     _write({"type": "fatal", "error": error, "detail": detail})
 
 
-def emit_ready() -> None:
+def emit_ready(port: int | None = None) -> None:
     """全部就绪。"""
     if not _is_launcher_mode():
         return
-    _write({"type": "ready"})
+    payload: dict = {"type": "ready"}
+    if port is not None:
+        payload["port"] = port
+    _write(payload)
 
 
 def _write(obj: dict) -> None:
