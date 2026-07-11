@@ -40,7 +40,7 @@ class CrossEncoderReranker(RerankerStrategy):
             from ....utils.helpers import resolve_device
 
             # 自动检测 GPU 可用性
-            effective_device = resolve_device(self.device)
+            effective_device = resolve_device(self.device, "bge-reranker-v2-m3")
 
             model_path = self.model_name
             # 相对路径解析为项目根目录下的绝对路径
@@ -50,23 +50,45 @@ class CrossEncoderReranker(RerankerStrategy):
 
             _model_dir = Path(model_path)
             _state_file = _model_dir / ".state"
-            if _state_file.exists() and _state_file.read_text().strip() == "fp16":
-                self.log.info("加载重排序模型: {} (device={}, dtype=float16)", model_path, effective_device)
-                self._model = CrossEncoder(
-                    model_path,
-                    device=effective_device,
-                    automodel_args={"torch_dtype": torch.float16},
-                )
-            else:
+
+            def _load_ce(fp16_ready: bool, dev: str):
+                if fp16_ready:
+                    return CrossEncoder(
+                        model_path, device=dev,
+                        automodel_args={"torch_dtype": torch.float16},
+                    )
                 # 防御路径：ensure_models 未运行或中途崩溃，现场量化
                 self.log.warning("重排序模型 {} 未预量化为 FP16，现场处理...", model_path)
-                self._model = CrossEncoder(model_path, device=effective_device)
-                self._model.model.half()
-                self._model.model.save_pretrained(model_path, safe_serialization=True)
-                if hasattr(self._model, "tokenizer") and self._model.tokenizer is not None:
-                    self._model.tokenizer.save_pretrained(model_path)
+                m = CrossEncoder(model_path, device=dev)
+                m.model.half()
+                m.model.save_pretrained(model_path, safe_serialization=True)
+                if hasattr(m, "tokenizer") and m.tokenizer is not None:
+                    m.tokenizer.save_pretrained(model_path)
                 _state_file.write_text("fp16")
-                self.log.info("FP16 重排序模型已保存至 {}", model_path)
+                return m
+
+            _fp16_ok = _state_file.exists() and _state_file.read_text().strip() == "fp16"
+            try:
+                self._model = _load_ce(_fp16_ok, effective_device)
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                self.log.warning("重排序模型 GPU 加载 OOM，降级 CPU: {}", model_path)
+                try:
+                    self._model = _load_ce(_fp16_ok, "cpu")
+                except MemoryError:
+                    self.log.error("重排序模型 CPU 加载 OOM，RAG 重排序不可用")
+                    self._model = None
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    torch.cuda.empty_cache()
+                    self.log.warning("重排序模型 GPU 加载 OOM (RuntimeError)，降级 CPU: {}", model_path)
+                    try:
+                        self._model = _load_ce(_fp16_ok, "cpu")
+                    except MemoryError:
+                        self.log.error("重排序模型 CPU 加载 OOM，RAG 重排序不可用")
+                        self._model = None
+                else:
+                    raise
         except ImportError:
             raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")
 

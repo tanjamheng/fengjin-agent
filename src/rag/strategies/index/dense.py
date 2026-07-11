@@ -46,7 +46,7 @@ class DenseIndex(IndexStrategy):
             model_path = self.embedding_model_name
             if not Path(model_path).is_absolute():
                 model_path = str(get_project_root() / model_path)
-            effective_device = resolve_device(self.device)
+            effective_device = resolve_device(self.device, "bge-m3")
             self._embedding_model = _reg.acquire(model_path, effective_device)
             # 判断是否为共享实例（通过模块属性动态读取，避免按值捕获）
             self._embedding_is_shared = (

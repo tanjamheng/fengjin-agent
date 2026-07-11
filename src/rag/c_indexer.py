@@ -29,7 +29,7 @@ class Indexer:
             "persist_directory": "data/chroma",
             "collection_name": "default",
             "store_type": "chroma",
-            "device": "cpu"
+            "device": "auto"
         }
         self.log = get_logger("rag_indexer")
 

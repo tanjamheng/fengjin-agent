@@ -15,15 +15,31 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
-def resolve_device(device: str) -> str:
-    """解析设备字符串：auto→CUDA(可用时)否则CPU；cuda→CUDA(可用时)否则CPU"""
+def resolve_device(device: str, model_name: str | None = None) -> str:
+    """解析设备字符串。device="auto" 时委托 GPUBudgetManager 决策。
+
+    - device 明确指定 (cpu/cuda) → 原样返回
+    - device == "auto" + model_name → budget.allocate(model_name) (优先级预算)
+    - device == "auto" + 无 model_name → torch.cuda.is_available() 兜底
+    """
+    if device != "auto":
+        if device == "cuda":
+            try:
+                import torch
+                if not torch.cuda.is_available():
+                    return "cpu"
+            except ImportError:
+                return "cpu"
+        return device
+
+    if model_name:
+        from .gpu_budget import _budget_manager
+        if _budget_manager:
+            return _budget_manager.allocate(model_name)
+
+    # 兜底：无 budget 实例或旧式调用
     try:
         import torch
-        cuda_ok = torch.cuda.is_available()
+        return "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:
-        cuda_ok = False
-    if device in ("cuda", "auto") and not cuda_ok:
         return "cpu"
-    if device == "auto" and cuda_ok:
-        return "cuda"
-    return device

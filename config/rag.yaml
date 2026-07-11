@@ -34,7 +34,7 @@ rag:
       persist_directory: "data/chroma"
       collection_name: "fengjin_knowledge"
       store_type: "chroma"
-      device: "auto"  # CUDA 可用自动 GPU，否则 CPU
+      device: "auto"  # auto = 由 GPU 预算管理器按优先级分配 (P0→P1→P2)
       dense_weight: 0.7
       sparse_weight: 0.3
 
@@ -63,4 +63,4 @@ rag:
     params:
       model: "models/bge-reranker-v2-m3"
       top_n: 4
-      device: "auto"  # cuda 不可用时自动降级 cpu
+      device: "auto"  # auto = 由 GPU 预算管理器按优先级分配，预算不足降级 CPU

@@ -48,21 +48,41 @@ def acquire_handle(model_path: str, device: str = "cpu") -> tuple["SentenceTrans
 
         _model_dir = Path(model_path)
         _state_file = _model_dir / ".state"
-        if _state_file.exists() and _state_file.read_text().strip() == "fp16":
-            log.info("加载嵌入模型: {} (device={}, dtype=float16)", model_path, device)
-            _model = SentenceTransformer(
-                model_path,
-                device=device,
-                model_kwargs={"torch_dtype": torch.float16},
-            )
-        else:
-            # 防御路径：ensure_models 未运行或中途崩溃，现场量化
-            log.warning("嵌入模型 {} 未预量化为 FP16，现场处理...", model_path)
-            _model = SentenceTransformer(model_path, device=device)
-            _model.half()
-            _model.save(model_path, safe_serialization=True)
+
+        def _load_st(fp16: bool, dev: str):
+            if fp16:
+                return SentenceTransformer(
+                    model_path, device=dev,
+                    model_kwargs={"torch_dtype": torch.float16},
+                )
+            m = SentenceTransformer(model_path, device=dev)
+            m.half()
+            m.save(model_path, safe_serialization=True)
             _state_file.write_text("fp16")
-            log.info("FP16 模型已保存至 {}", model_path)
+            return m
+
+        _fp16_ready = _state_file.exists() and _state_file.read_text().strip() == "fp16"
+        try:
+            _model = _load_st(_fp16_ready, device)
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            log.warning("嵌入模型 GPU 加载 OOM，降级 CPU: {}", model_path)
+            try:
+                _model = _load_st(_fp16_ready, "cpu")
+            except MemoryError:
+                log.error("嵌入模型 CPU 加载 OOM，知识检索和记忆功能不可用")
+                return None, True
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                torch.cuda.empty_cache()
+                log.warning("嵌入模型 GPU 加载 OOM (RuntimeError)，降级 CPU: {}", model_path)
+                try:
+                    _model = _load_st(_fp16_ready, "cpu")
+                except MemoryError:
+                    log.error("嵌入模型 CPU 加载 OOM，知识检索和记忆功能不可用")
+                    return None, True
+            else:
+                raise
         _model_path = model_path
         _refcount = 1
         return _model, True

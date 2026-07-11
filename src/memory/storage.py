@@ -48,7 +48,7 @@ class MemoryStorage:
             # 自动检测 GPU 可用性（通过共享注册表，避免与 RAG DenseIndex 重复加载）
             from ..utils.helpers import resolve_device
             from ..rag.embedding_registry import SharedEmbeddingFunction
-            effective_device = resolve_device(config.chroma.device)
+            effective_device = resolve_device(config.chroma.device, "bge-m3")
 
             self._embedding_fn = SharedEmbeddingFunction(
                 model_path=embedding_model,

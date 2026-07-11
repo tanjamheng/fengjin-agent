@@ -48,7 +48,7 @@ class IndexConfig(BaseModel):
         "persist_directory": "data/chroma",
         "collection_name": "fengjin_knowledge",
         "store_type": "chroma",
-        "device": "cpu",
+        "device": "auto",
         "dense_weight": 0.7,
         "sparse_weight": 0.3
     })

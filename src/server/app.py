@@ -130,7 +130,27 @@ async def lifespan(app: FastAPI):
     try:
         _project_root = Path(__file__).resolve().parent.parent.parent
 
-        # ── 0. 扫描 + 发送预处理计划 ──
+        # ── 0-. 无损 GPU 优化（任何 CUDA 操作之前）──
+        try:
+            import torch
+            torch.backends.cudnn.enabled = False  # 禁 cuDNN (Transformer 不用)
+            os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            log.info("GPU 无损优化: cuDNN=off, expandable_segments=on")
+        except ImportError:
+            pass  # PyTorch 未安装，无需优化
+        except Exception as _e:
+            log.debug("GPU 无损优化跳过 (非致命): {}", _e)
+
+        # ── 0. 系统内存 + GPU 预算 ──
+        from ..utils.gpu_budget import init_budget, check_system_memory
+        mem_status = check_system_memory()
+        if mem_status == "refuse":
+            log.error("系统可用内存不足 1GB，拒绝加载本地模型（云端对话仍可用）")
+        elif mem_status == "degraded":
+            log.warning("系统可用内存不足 2GB，仅加载核心模型")
+        init_budget(mem_status=mem_status)
+
+        # ── 0+. 扫描 + 发送预处理计划 ──
         preprocess_steps = _scan_preprocess_plan(_project_root)
         emit_preprocess_plan(preprocess_steps)
 

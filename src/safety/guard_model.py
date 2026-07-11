@@ -108,6 +108,10 @@ class GuardModel:
             self.enabled = False
             return SafetyResult()
 
+        # _ensure_loaded() 可能因 skip 设置 self.enabled=False 但未抛异常
+        if self._model is None:
+            return SafetyResult()
+
         try:
             # content 必须是 [{"type":"text","text":"..."}] 格式，
             # 否则 Jinja 模板的 selectattr('type', 'equalto', 'text') 匹配不到，对话区域为空
@@ -188,20 +192,55 @@ class GuardModel:
             }
             torch_dtype = dtype_map.get(self.config.dtype, torch.float16)
 
+            # 通过 GPU 预算管理器决定设备：
+            #   budget=cuda → HF device_map="auto" (保留跨设备分载能力)
+            #   budget=cpu  → device_map="cpu"
+            from ..utils.helpers import resolve_device
+            _budget_device = resolve_device(self.config.device, "llama-guard-3-1b")
+            _device_map = "auto" if _budget_device == "cuda" else "cpu"
+
             # 抑制 transformers 加载时的 stderr 噪音（如 "meta device" 警告）
-            with open(os.devnull, "w") as devnull:
-                with contextlib.redirect_stderr(devnull):
-                    self._model = AutoModelForCausalLM.from_pretrained(
-                        model_path,
-                        torch_dtype=torch_dtype,
-                        device_map=self.config.device,
-                        use_safetensors=True,
-                        local_files_only=True,
-                    )
+            from ..utils.gpu_budget import safe_model_load
+
+            def _load_gpu():
+                with open(os.devnull, "w") as devnull:
+                    with contextlib.redirect_stderr(devnull):
+                        return AutoModelForCausalLM.from_pretrained(
+                            model_path,
+                            torch_dtype=torch_dtype,
+                            device_map=_device_map,
+                            use_safetensors=True,
+                            local_files_only=True,
+                        )
+
+            def _load_cpu():
+                with open(os.devnull, "w") as devnull:
+                    with contextlib.redirect_stderr(devnull):
+                        return AutoModelForCausalLM.from_pretrained(
+                            model_path,
+                            torch_dtype=torch_dtype,
+                            device_map="cpu",
+                            use_safetensors=True,
+                            local_files_only=True,
+                        )
+
+            model, actual_device = safe_model_load(
+                "llama-guard-3-1b", _load_gpu, _load_cpu, fallback="skip",
+            )
+            if model is None:
+                self.log.warning("Llama Guard 跳过（显存+内存均不足），P1 语义检测已禁用")
+                self.enabled = False
+                # 释放已加载的 tokenizer（model 未加载成功，tokenizer 白占了）
+                if self._tokenizer is not None:
+                    del self._tokenizer
+                    self._tokenizer = None
+                return
+
+            self._model = model
             self._device = self._model.device
 
             self._loaded = True
-            self.log.info("Llama Guard 3 1B 加载完成")
+            self.log.info("Llama Guard 3 1B 加载完成 (device={})", actual_device)
 
     def cleanup(self) -> None:
         """释放 GPU 模型和显存（线程安全）"""
