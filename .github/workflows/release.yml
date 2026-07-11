@@ -5,12 +5,23 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Python for backend validation
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Python backend syntax
+        run: python -m compileall -q src
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -71,7 +82,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
           # Portable exe（electron-builder 输出到 frontend\dist）
-          $exe = Get-ChildItem frontend\dist -Filter "*.exe" | Select-Object -First 1
+          $exe = Get-ChildItem frontend\dist -Filter "*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $exe) { throw "Electron portable exe was not produced" }
           Copy-Item $exe.FullName "$releaseDir\风堇AI.exe"
 
           # Python 后端 + 配置
@@ -92,6 +104,18 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$releaseDir\data\memory"      | Out-Null
           New-Item -ItemType Directory -Force -Path "$releaseDir\logs"             | Out-Null
 
+          # 发布目录完整性检查 + 校验清单
+          $required = @(
+            "风堇AI.exe", "src", "config", "数据侧_风堇资料",
+            "requirements.txt", ".env.example", "models", "data\sessions", "logs"
+          )
+          $missing = $required | Where-Object { -not (Test-Path (Join-Path $releaseDir $_)) }
+          if ($missing) { throw "Release folder is incomplete: $($missing -join ', ')" }
+          Get-ChildItem $releaseDir -Recurse -File |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  $($_.Path.Substring($releaseDir.Length + 1))" } |
+            Set-Content (Join-Path $releaseDir "SHA256SUMS.txt") -Encoding utf8
+
           # 打 zip
           $zipName = "风堇AI-v$version-portable.zip"
           Compress-Archive -Path "$releaseDir" -DestinationPath "release\$zipName" -Force
@@ -106,5 +130,11 @@ jobs:
           name: "风堇AI v${{ env.version }}"
           files: release/风堇AI-v*.zip
           generate_release_notes: true
+          body: |
+            ## 首次运行说明
+            - 此发布包已包含 Electron 桌面客户端，不需要安装 Node.js。
+            - 当前版本需要 Windows 已安装并加入 PATH 的 Python 3.10+；首次运行会创建虚拟环境、安装 Python 依赖并下载本地模型。
+            - 首次启动需要联网，并预留充足磁盘空间；后续启动会复用已创建的环境与模型。
+            - 请先在应用内填写 API 配置。发布包内的 `SHA256SUMS.txt` 可用于校验文件完整性。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
