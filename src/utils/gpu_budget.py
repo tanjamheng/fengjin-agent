@@ -45,8 +45,8 @@ class ModelEntry:
 
 
 GPU_MODEL_REGISTRY: list[ModelEntry] = [
-    ModelEntry("bge-m3",               1500, Priority.CRITICAL,  "RAG检索+记忆搜索"),
-    ModelEntry("bge-reranker-v2-m3",   1500, Priority.IMPORTANT, "CrossEncoder重排序"),
+    ModelEntry("bge-m3",               1350, Priority.CRITICAL,  "RAG检索+记忆搜索"),
+    ModelEntry("bge-reranker-v2-m3",   1350, Priority.IMPORTANT, "CrossEncoder重排序"),
     ModelEntry("llama-guard-3-1b",     2600, Priority.OPTIONAL,  "安全护栏P1语义检测"),
 ]
 
@@ -86,7 +86,7 @@ class GPUBudgetManager:
     """
 
     # 安全垫：预留给 forward pass 中间张量 + 分配器碎片
-    SAFETY_MARGIN_MB = 500
+    SAFETY_MARGIN_MB = 400
 
     def __init__(self, mem_status: str = "ok"):
         self._reservations: dict[str, str] = {}  # 第一行——防 AttributeError
@@ -205,13 +205,21 @@ _init_lock = threading.Lock()
 
 
 def init_budget(mem_status: str = "ok") -> GPUBudgetManager:
-    """初始化全局预算管理器（app.py lifespan 中调用一次）"""
+    """初始化全局预算管理器（预处理前调用一次）"""
     global _budget_manager
     with _init_lock:
         if _budget_manager is not None:
             log.warning("预算已初始化，跳过重复调用 (mem_status={})", mem_status)
             return _budget_manager
         _budget_manager = GPUBudgetManager(mem_status=mem_status)
+    return _budget_manager
+
+
+def recalc_budget() -> GPUBudgetManager:
+    """系统加载前重新计算预算（预处理已释放 GPU，以干净显存为基点）"""
+    global _budget_manager
+    with _init_lock:
+        _budget_manager = GPUBudgetManager(mem_status="ok")
     return _budget_manager
 
 

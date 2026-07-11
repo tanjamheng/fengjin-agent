@@ -310,7 +310,7 @@ export class LauncherManager {
   /** 验证 venv 中的 torch 是否匹配 GPU 检测结果，不匹配则重装 CUDA 版 */
   private async _ensureTorchMatchesGPU(venvPython: string, marker: string): Promise<void> {
     const gpuDetected = await new Promise<boolean>((resolve) => {
-      exec("nvidia-smi", (err) => resolve(!err));
+      exec("nvidia-smi", { timeout: 5000 }, (err) => resolve(!err));
     });
     if (!gpuDetected) return;
 

@@ -88,20 +88,13 @@ def _scan_preprocess_plan(project_root: Path) -> list[str]:
             steps.append(f"model_quantize:{dir_name}")
 
     # ── 知识库预构建检查 ──
-    # 与模型检查保持同一规范：检查持久化标记是否存在。
-    # .knowledge_built 标记在构建成功后写入；若缺失但 chroma.sqlite3 存在，
-    # 说明上次构建中途崩溃，删掉残缺库重建。
-    #   - .knowledge_built 存在 → 已完整构建，跳过
-    #   - .knowledge_built 缺失 → 需构建（若有残缺库先清理）
-    chroma_dir = project_root / "data" / "chroma"
-    chroma_db = chroma_dir / "chroma.sqlite3"
+    # .knowledge_built 标记 = 构建完成证明。标记缺失 → 加构建步骤。
+    # 不在此处验证 chroma DB（会与后续 RAG 初始化冲突 chromadb 连接池）。
+    # 实际构建代码（预处理 + 系统加载）内部会检查 count，已构建则跳过并补标记。
     knowledge_src = project_root / _KNOWLEDGE_SRC_DIR
     if knowledge_src.is_dir():
-        _built_marker = chroma_dir / ".knowledge_built"
+        _built_marker = project_root / "data" / "chroma" / ".knowledge_built"
         if not _built_marker.exists():
-            if chroma_db.exists():
-                # 上次构建未完成，删除残缺库
-                _cleanup_partial_knowledge(chroma_dir)
             steps.append("knowledge_build")
 
     return steps
@@ -130,18 +123,32 @@ async def lifespan(app: FastAPI):
     try:
         _project_root = Path(__file__).resolve().parent.parent.parent
 
-        # ── 0-. 无损 GPU 优化（任何 CUDA 操作之前）──
+        # ── 0. Python logging 抑制 + stderr 重定向（绝对第一）──
+        # 不碰 os.dup2——uvicorn 依赖原始 stderr fd，重定向会导致进程立即退出
+        try:
+            import logging as _logging
+            _logging.getLogger().setLevel(_logging.ERROR)
+            _logging.captureWarnings(True)
+            import sys as _sys
+            _log_dir = _project_root / "logs"
+            _log_dir.mkdir(exist_ok=True)
+            _sys.stderr = open(str(_log_dir / "stderr.log"), "a", encoding="utf-8")
+        except Exception:
+            pass
+
+        # ── 1. 扫描 + 发送预处理计划（尽早让前端看到步骤列表）──
+        preprocess_steps = _scan_preprocess_plan(_project_root)
+        emit_preprocess_plan(preprocess_steps)
+
+        # ── 2. GPU 优化 + 预算预计算 ──
         try:
             import torch
-            torch.backends.cudnn.enabled = False  # 禁 cuDNN (Transformer 不用)
             os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-            log.info("GPU 无损优化: cuDNN=off, expandable_segments=on")
         except ImportError:
-            pass  # PyTorch 未安装，无需优化
+            pass
         except Exception as _e:
-            log.debug("GPU 无损优化跳过 (非致命): {}", _e)
+            log.debug("GPU 优化跳过: {}", _e)
 
-        # ── 0. 系统内存 + GPU 预算 ──
         from ..utils.gpu_budget import init_budget, check_system_memory
         mem_status = check_system_memory()
         if mem_status == "refuse":
@@ -150,11 +157,7 @@ async def lifespan(app: FastAPI):
             log.warning("系统可用内存不足 2GB，仅加载核心模型")
         init_budget(mem_status=mem_status)
 
-        # ── 0+. 扫描 + 发送预处理计划 ──
-        preprocess_steps = _scan_preprocess_plan(_project_root)
-        emit_preprocess_plan(preprocess_steps)
-
-        # ── 1. 模型检查：下载 + FP16 量化 ──
+        # ── 3. 模型检查：下载 + FP16 量化 ──
         from ..utils.models import ensure_models as _ensure_models
 
         def _model_progress(step_id: str, status: str, percent: int | None = None):
@@ -172,13 +175,12 @@ async def lifespan(app: FastAPI):
             log.warning("部分模型加载失败，对话功能可能受限")
             emit_warn("model_check", "部分模型加载失败，对话功能可能受限。查看日志了解详情。")
 
-        # ── 1.5 知识库预构建（属于预处理阶段，无看门狗限制）──
+        # ── 4. 知识库预构建（属于预处理阶段，无看门狗限制）──
         if "knowledge_build" in preprocess_steps:
             emit_progress("knowledge_build", "start")
+            _rag_build = None
             try:
                 from ..rag.rag_service import RAGService as _RAGService
-                # 临时初始化 RAG 服务（仅用于构建知识库，构建完即释放，
-                # 避免与后续 system_load 阶段的正式 RAG 初始化耦合）
                 _rag_build = _RAGService(
                     config=RAGSettings.load(str(_project_root / "config" / "rag.yaml")),
                     llm_client=None,
@@ -188,15 +190,17 @@ async def lifespan(app: FastAPI):
                 if _knowledge_src.is_dir() and _rag_build.indexer is not None:
                     if _rag_build.indexer.count() == 0:
                         log.info("预处理阶段：知识库为空，自动导入: {}", _knowledge_src)
-                        # ① 加载 + 切分（快速），统计总 chunk 数
+                        # ① 加载 + 切分，统计总 chunk 数
                         _docs = _rag_build.loader.load_directory_recursive(str(_knowledge_src))
-                        _doc_chunks: list[tuple] = []  # [(doc, chunks), ...]
+                        _doc_chunks: list[tuple] = []
                         _total_chunks = 0
                         for _doc in _docs:
                             _chunks = _rag_build.splitter.split_document(_doc)
                             _doc_chunks.append((_doc, _chunks))
                             _total_chunks += len(_chunks)
-                        # ② 子批次嵌入（每 8 chunk 一批），兼顾批处理加速 + 进度平滑
+                        # _docs 是生成器，已耗尽；用 _doc_chunks 长度代表文档数
+                        _doc_count = len(_doc_chunks)
+                        # ② 子批次嵌入（每 8 chunk 一批）
                         if _total_chunks > 0:
                             _BATCH = 8
                             _chunks_done = 0
@@ -216,20 +220,31 @@ async def lifespan(app: FastAPI):
                                 emit_progress("knowledge_build", "progress",
                                               percent=round(_chunks_done / _total_chunks * 100))
                         log.info("预处理阶段：知识库构建完成: {} 文档, {} chunks",
-                                 len(_docs), _total_chunks)
+                                 _doc_count, _total_chunks)
                         if _total_chunks > 0:
                             (_project_root / "data" / "chroma" / ".knowledge_built").write_text("ok")
                     else:
                         log.info("预处理阶段：知识库非空 ({} 条)，跳过构建",
                                  _rag_build.indexer.count())
-                _rag_build.cleanup()
+                        _marker = _project_root / "data" / "chroma" / ".knowledge_built"
+                        if not _marker.exists():
+                            _marker.write_text("ok")
+                            log.info("已补建知识库标记")
                 emit_progress("knowledge_build", "done")
             except Exception as e:
                 log.warning("预处理阶段：知识库构建失败（将在系统加载阶段重试）: {}", e)
                 emit_warn("knowledge_build", f"知识库构建失败: {e}")
-                # done 不在此发送——warn 的 2s 自动推进是失败路径的唯一推进机制。
-                # 若同时发送 warn + done，前端 done 立即推进 → 进入 system_load，
-                # 但 warn 的 2s 定时器又触发一次 _advanceProgress → 跳过 system_load 首步骤。
+            finally:
+                # 无论成功失败，释放预处理阶段占用的 GPU 资源
+                if _rag_build is not None:
+                    try:
+                        _rag_build.cleanup()
+                    except Exception:
+                        pass
+
+        # ── 系统加载前预算重算（预处理已释放 GPU，以干净显存为基点）──
+        from ..utils.gpu_budget import recalc_budget
+        recalc_budget()
 
         # ── 2. 配置 + 客户端 ──
         config = Config.load(str(_project_root / "config" / "config.yaml"))
@@ -414,6 +429,10 @@ async def lifespan(app: FastAPI):
                                 log.warning("知识库目录不存在: {}", _kb_dir)
                         else:
                             log.info("知识库已就绪: {} 条记录", _kb_count)
+                            # 确保标记存在（可能从旧版升级而来）
+                            _marker = _project_root / "data" / "chroma" / ".knowledge_built"
+                            if not _marker.exists():
+                                _marker.write_text("ok")
                 except Exception as e:
                     log.warning("知识库验证失败（不影响对话）: {}", e)
         except Exception as e:

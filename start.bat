@@ -87,24 +87,30 @@ if not exist "venv\.requirements-installed" (
     if errorlevel 1 set NEED_PIP=1
 )
 if %NEED_PIP%==1 (
-    echo    Using Tsinghua mirror for faster download
+    REM Install torch first (GPU or CPU) so requirements.txt won't overwrite it
+    nvidia-smi >nul 2>&1
+    if errorlevel 1 (
+        echo    Installing CPU PyTorch...
+        call venv\Scripts\python.exe -m pip install torch==2.6.0 -i https://pypi.tuna.tsinghua.edu.cn/simple --progress-bar on
+    ) else (
+        echo    Installing CUDA PyTorch...
+        call venv\Scripts\python.exe -m pip install torch==2.6.0+cu124 --index-url https://mirrors.nju.edu.cn/pytorch/whl/cu124 --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple --progress-bar on
+    )
+    REM Install remaining dependencies (torch already installed → pip skips it)
+    echo    Installing Python dependencies...
     call venv\Scripts\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
     if errorlevel 1 (
         echo    ERROR: Python dependencies failed to install
         pause
         exit /b 1
     )
-    REM Detect NVIDIA GPU → swap CPU torch for CUDA torch
-    where nvidia-smi >nul 2>&1
-    if %errorlevel%==0 (
-        echo    NVIDIA GPU detected, switching to CUDA PyTorch...
-        call venv\Scripts\python.exe -m pip install torch==2.6.0+cu124 --index-url https://mirrors.nju.edu.cn/pytorch/whl/cu124 --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple --force-reinstall --progress-bar on
-    )
     echo %date% %time%> "venv\.requirements-installed"
 ) else (
     REM Even if deps already installed, verify torch matches GPU
-    where nvidia-smi >nul 2>&1
-    if %errorlevel%==0 (
+    nvidia-smi >nul 2>&1
+    if errorlevel 1 (
+        rem No GPU — nothing to check
+    ) else (
         venv\Scripts\python.exe -c "import torch; exit(0 if torch.cuda.is_available() else 1)" >nul 2>&1
         if errorlevel 1 (
             echo    NVIDIA GPU detected but CPU-only PyTorch found, switching to CUDA PyTorch...

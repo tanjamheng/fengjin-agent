@@ -34,7 +34,8 @@ python-docx==1.2.0
 # faiss-gpu>=1.7.0
 
 # Safety: Llama Guard 3 1B
-torch==2.6.0
+# torch >=2.6.0 (具体 variant 由 start.bat/start.sh 根据 GPU 检测决定)
+torch>=2.6.0
 transformers==4.57.6
 accelerate==1.12.0
 
