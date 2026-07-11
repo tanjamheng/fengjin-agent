@@ -81,7 +81,14 @@ async def websocket_endpoint(websocket: WebSocket):
         try:
             from ..persona.drift_guard import PersonaDriftGuard
             from ..rag import embedding_registry as _emb_reg
-            _emb = _emb_reg.acquire(persona_model_path, "cpu")
+            from ..utils.helpers import resolve_device
+
+            # 与 RAG / MemoryStorage 使用同一预算决策；若 RAG 已常驻 bge-m3，
+            # 注册表会复用其实际设备上的同一实例。
+            _emb = _emb_reg.acquire(
+                persona_model_path,
+                resolve_device("auto", "bge-m3"),
+            )
             persona_embedding_acquired = True
             persona_guard = PersonaDriftGuard(_emb, persona_config)
             if persona_guard.anchor_count < 3:

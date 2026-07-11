@@ -225,7 +225,11 @@ class GuardModel:
                         )
 
             model, actual_device = safe_model_load(
-                "llama-guard-3-1b", _load_gpu, _load_cpu, fallback="skip",
+                "llama-guard-3-1b",
+                _load_gpu,
+                _load_cpu,
+                fallback="skip",
+                planned_device=_budget_device,
             )
             if model is None:
                 self.log.warning("Llama Guard 跳过（显存+内存均不足），P1 语义检测已禁用")

@@ -319,46 +319,25 @@ async def lifespan(app: FastAPI):
             app.state.bond_tracker = None
         emit_progress("engine_init:bond", "done")
 
-        # ── 7. 角色漂移检测 ──
+        # ── 7. 角色漂移检测配置 ──
+        # PersonaDriftGuard 是连接级对象，实际编码模型由正式 RAG 服务长期持有并共享。
+        # 此处仅加载配置，不能为启动校验临时加载 bge-m3 后又立即释放。
         emit_progress("engine_init:persona", "start")
-        _persona_emb_acquired = False
         try:
-            from ..persona.drift_guard import PersonaSettings, PersonaDriftGuard
-            from ..rag import embedding_registry as _emb_reg
+            from ..persona.drift_guard import PersonaSettings
             _model_path = str(_project_root / "models" / "bge-m3")
-            _emb = _emb_reg.acquire(_model_path, "cpu")
-            _persona_emb_acquired = True
             persona_config = PersonaSettings.load(
                 str(_project_root / "config" / "persona.yaml")
             )
-            persona_guard = PersonaDriftGuard(_emb, persona_config)
-            if persona_guard.anchor_count >= 3:
-                anchor_count = persona_guard.anchor_count
-                persona_guard.cleanup()
-                _emb_reg.release()
-                _persona_emb_acquired = False
-                app.state.persona_config = persona_config
-                app.state.persona_model_path = _model_path
-                app.state.persona_guard = None
-                log.info("角色漂移检测已加载: {} 条锚点", anchor_count)
-            else:
-                log.warning("角色锚点不足（<3），漂移检测不可用")
-                persona_guard.cleanup()
-                _emb_reg.release()
-                _persona_emb_acquired = False
-                app.state.persona_config = None
-                app.state.persona_model_path = ""
-                app.state.persona_guard = None
+            app.state.persona_config = persona_config
+            app.state.persona_model_path = _model_path
+            app.state.persona_guard = None
+            log.info("角色漂移检测配置已加载（bge-m3 由 RAG 常驻共享）")
         except Exception as e:
             log.warning("角色漂移检测加载失败: {}", e)
             app.state.persona_config = None
             app.state.persona_model_path = ""
             app.state.persona_guard = None
-            try:
-                if _persona_emb_acquired:
-                    _emb_reg.release()
-            except Exception:
-                pass
         emit_progress("engine_init:persona", "done")
 
         # ── 8. RAG 知识库 + 工具注册 ──

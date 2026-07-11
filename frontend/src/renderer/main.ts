@@ -376,6 +376,15 @@ ws.onConfigUpdated = (result) => {
   const actions = document.querySelector(".settings-actions");
   if (!actions) { _settingsPanelVisible = false; return; }
   log.info("Config update result: {}", result.success ? "success" : "failed");
+  // 后端仅在运行时重建成功且 .env 持久化成功后才发送 success，
+  // 所以成功时应立即退出设置页，不再人为停留数秒。
+  if (result.success) {
+    _settingsPanelClose?.();
+    _settingsPanelClose = null;
+    _settingsPanelVisible = false;
+    return;
+  }
+
   // 清除旧提示
   actions.querySelector(".settings-saved-hint")?.remove();
   const hint = document.createElement("span");
@@ -384,26 +393,11 @@ ws.onConfigUpdated = (result) => {
   hint.style.lineHeight = "30px";
   hint.setAttribute("role", "status");
   hint.setAttribute("aria-live", "polite");
-  if (result.success) {
-    hint.style.color = "var(--color-status-online)";
-    hint.textContent = "保存成功";
-  } else if (result.errors) {
+  if (result.errors) {
     hint.style.color = "var(--color-status-offline)";
     hint.textContent = result.errors?.join("; ") ?? "配置更新失败";
   }
   actions.insertBefore(hint, actions.firstChild);
-  if (result.success) {
-    // 快照当前句柄；3s 后仅在未被替换（用户未重开新面板）时才关闭，防止旧回调误关新面板
-    const closeFn = _settingsPanelClose;
-    setTimeout(() => {
-      hint.remove();
-      if (_settingsPanelClose === closeFn) {
-        closeFn?.();
-        _settingsPanelClose = null;
-        _settingsPanelVisible = false;
-      }
-    }, 3000);
-  }
 };
 
 ws.onStatusChange = (status) => {

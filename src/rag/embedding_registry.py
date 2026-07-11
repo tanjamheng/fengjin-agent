@@ -17,22 +17,32 @@ log = get_logger("embedding_registry")
 _lock = threading.Lock()
 _model: Optional["SentenceTransformer"] = None
 _model_path: Optional[str] = None
+_model_device: Optional[str] = None
 _refcount: int = 0
 
 
 def acquire_handle(model_path: str, device: str = "cpu") -> tuple["SentenceTransformer", bool]:
     """获取嵌入模型实例和共享标记（引用计数+1）
 
-    首次调用时加载模型；后续调用若路径和设备相同则返回缓存实例。
-    若路径或设备不同，发出警告并返回独立新实例（不回退到共享模式）。
+    首次调用时加载模型；后续调用按路径复用已加载的实例。
+    同一模型在一个进程内必须只有一个实际设备，避免 CPU/GPU 双份模型绕过预算。
     """
-    global _model, _model_path, _refcount
+    global _model, _model_path, _model_device, _refcount
 
     with _lock:
         if _model is not None:
             if model_path == _model_path:
                 _refcount += 1
-                log.info("复用已加载的嵌入模型: {} (refcount={})", model_path, _refcount)
+                if device != _model_device:
+                    log.info(
+                        "嵌入模型请求设备 {} 与已加载实际设备 {} 不同，复用现有实例: {} (refcount={})",
+                        device, _model_device, model_path, _refcount,
+                    )
+                else:
+                    log.info(
+                        "复用已加载的嵌入模型: {} (device={}, refcount={})",
+                        model_path, _model_device, _refcount,
+                    )
                 return _model, True
             # 路径不同：创建独立实例（不覆写全局状态，调用方自行管理生命周期）
             log.warning(
@@ -45,6 +55,7 @@ def acquire_handle(model_path: str, device: str = "cpu") -> tuple["SentenceTrans
         # 首次加载：确保模型是 FP16（应由 ensure_models 预处理，此处为防御性兜底）
         import torch
         from sentence_transformers import SentenceTransformer
+        from ..utils.gpu_budget import is_memory_oom
 
         _model_dir = Path(model_path)
         _state_file = _model_dir / ".state"
@@ -69,7 +80,9 @@ def acquire_handle(model_path: str, device: str = "cpu") -> tuple["SentenceTrans
             log.warning("嵌入模型 GPU 加载 OOM，降级 CPU: {}", model_path)
             try:
                 _model = _load_st(_fp16_ready, "cpu")
-            except MemoryError:
+            except Exception as cpu_error:
+                if not is_memory_oom(cpu_error):
+                    raise
                 log.error("嵌入模型 CPU 加载 OOM，知识检索和记忆功能不可用")
                 return None, True
         except RuntimeError as e:
@@ -78,13 +91,20 @@ def acquire_handle(model_path: str, device: str = "cpu") -> tuple["SentenceTrans
                 log.warning("嵌入模型 GPU 加载 OOM (RuntimeError)，降级 CPU: {}", model_path)
                 try:
                     _model = _load_st(_fp16_ready, "cpu")
-                except MemoryError:
+                except Exception as cpu_error:
+                    if not is_memory_oom(cpu_error):
+                        raise
                     log.error("嵌入模型 CPU 加载 OOM，知识检索和记忆功能不可用")
                     return None, True
             else:
                 raise
         _model_path = model_path
+        try:
+            _model_device = str(_model.device)
+        except Exception:
+            _model_device = device
         _refcount = 1
+        log.info("嵌入模型加载完成: {} (device={})", model_path, _model_device)
         return _model, True
 
 
@@ -96,7 +116,7 @@ def acquire(model_path: str, device: str = "cpu") -> "SentenceTransformer":
 
 def release() -> None:
     """释放引用（引用计数-1，归零时释放模型和 GPU 显存）"""
-    global _model, _model_path, _refcount
+    global _model, _model_path, _model_device, _refcount
 
     with _lock:
         if _refcount <= 0:
@@ -112,6 +132,7 @@ def release() -> None:
             del _model
             _model = None
         _model_path = None
+        _model_device = None
         import torch
         torch.cuda.empty_cache()
 

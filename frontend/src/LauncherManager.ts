@@ -70,6 +70,7 @@ export class LauncherManager {
   private _healthGen: number = 0; // retry 时递增，防止旧轮询污染新后端
   private _healthPollActive = false; // 防重入
   private _logStream: WriteStream | null = null;
+  private _backendStopRequested = false;
 
   // 阶段二硬编码：6 个 engine_init 步骤
   private readonly ENGINE_STEPS = [
@@ -386,6 +387,7 @@ export class LauncherManager {
     const pythonExe = existsSync(venvPython) ? venvPython : "python";
 
     this._log(`Spawning backend: ${pythonExe} -m src.server.server`);
+    this._backendStopRequested = false;
     this._backend = spawn(pythonExe, ["-m", "src.server.server"], {
       cwd: this._projectRoot,
       env: { ...process.env, FENGJIN_LAUNCHER_MODE: "1", FENGJIN_WS_TOKEN: this._wsToken },
@@ -414,11 +416,15 @@ export class LauncherManager {
       this._setError(`无法启动后端: ${err.message}`, true, false);
     });
 
-    this._backend.on("close", (code) => {
-      if (this._state.phase !== "done" && this._state.phase !== "error") {
-        this._setError(
-          `后端异常退出 (code=${code})`, true, false
-        );
+    const backend = this._backend;
+    backend.on("close", (code, signal) => {
+      const exitDetail = `code=${code ?? "null"}, signal=${signal ?? "none"}`;
+      this._log(`Backend process closed (${exitDetail}, requested=${this._backendStopRequested})`);
+      if (this._backend === backend) this._backend = null;
+
+      // 已显示“就绪”不是允许后端静默死亡的理由。只有 launcher 明确停止时才忽略。
+      if (!this._backendStopRequested) {
+        this._setError(`后端已退出 (${exitDetail})，请查看 logs/uvicorn.log`, true, false);
       }
     });
 
@@ -428,6 +434,8 @@ export class LauncherManager {
   _killBackend(): void {
     this._clearTimers();
     if (this._backend) {
+      this._backendStopRequested = true;
+      this._log(`Requesting backend stop (pid=${this._backend.pid})`);
       // 移除事件监听器，防止 kill 后异步 close 事件污染 retry() 新状态
       this._backend.removeAllListeners();
       try {
@@ -472,7 +480,7 @@ export class LauncherManager {
         this._setError(msg.detail || msg.error || "致命错误", true, false);
         break;
       case "ready":
-        this._handleReady();
+        this._handleBackendInitialized();
         break;
     }
   }
@@ -565,6 +573,22 @@ export class LauncherManager {
 
     // 后端就绪后检查 API Key，占位值则弹首次配置
     this._checkAndNotifyConfig();
+  }
+
+  /**
+   * 后端初始化完成不等于端口已监听。必须等待带 token 校验的 /health 成功，
+   * 才能切到聊天界面，避免端口绑定失败时出现“假就绪”。
+   */
+  private _handleBackendInitialized(): void {
+    if (this._state.phase === "done" || this._state.phase === "error") return;
+    this._log("Backend initialization complete — awaiting health check");
+    this._state.phase = "system_load";
+    this._state.phaseLabel = "正在加载系统...";
+    this._state.stepText = "正在确认本地服务...";
+    this._state.progressPercent = 100;
+    this._state.stepPercent = 0;
+    this._emitState();
+    this.startHealthPoll();
   }
 
   /** 后端就绪后检查主模型三个字段（API Key / Base URL / 模型名）是否为空 */

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+import os
 from typing import Optional
 
 from .logger import get_logger
@@ -49,6 +50,17 @@ GPU_MODEL_REGISTRY: list[ModelEntry] = [
     ModelEntry("bge-reranker-v2-m3",   1350, Priority.IMPORTANT, "CrossEncoder重排序"),
     ModelEntry("llama-guard-3-1b",     2600, Priority.OPTIONAL,  "安全护栏P1语义检测"),
 ]
+
+
+def _is_model_enabled(entry: ModelEntry) -> bool:
+    """返回本次进程应参与预算的模型。
+
+    bge-m3 同时服务 RAG、角色漂移和可随时启用的记忆功能，始终保留预算。
+    Llama Guard 是明确 opt-in 的 P1 语义检测；未启用时既不加载也不占用预算。
+    """
+    if entry.name == "llama-guard-3-1b":
+        return os.environ.get("FENGJIN_GUARD_MODEL_ENABLED", "false").lower() == "true"
+    return True
 
 
 # ── 系统内存兜底 ──────────────────────────────────────────────
@@ -136,10 +148,11 @@ class GPUBudgetManager:
         # ── 系统内存状态 → 调整允许的最高优先级 ──
         # refuse (< 1GB): 所有模型强制 skip
         # degraded (1-2GB): 只加载 P0
+        active_models = [m for m in GPU_MODEL_REGISTRY if _is_model_enabled(m)]
         if mem_status == "refuse":
-            for entry in GPU_MODEL_REGISTRY:
+            for entry in active_models:
                 self._reservations[entry.name] = "skip"
-            log.info("系统内存不足 1GB，所有本地模型跳过")
+            log.info("系统内存不足 1GB，所有已启用本地模型跳过")
             return
         elif mem_status == "degraded":
             max_priority = Priority.CRITICAL  # 只 P0
@@ -149,7 +162,9 @@ class GPUBudgetManager:
         # ── 贪心分配 ──
         remaining = available
         sorted_models = sorted(
-            [m for m in GPU_MODEL_REGISTRY if m.priority <= max_priority],
+            [
+                m for m in active_models if m.priority <= max_priority
+            ],
             key=lambda m: m.priority,
         )
 
@@ -168,6 +183,10 @@ class GPUBudgetManager:
                     entry.name, int(entry.priority), entry.vram_mb,
                     entry.fallback.upper(), entry.vram_mb - remaining,
                 )
+
+        disabled_names = [m.name for m in GPU_MODEL_REGISTRY if not _is_model_enabled(m)]
+        if disabled_names:
+            log.info("未启用模型不参与显存预算: {}", ", ".join(disabled_names))
 
         # 未显式注册的模型自动 P99 → 默认 CPU (由 allocate 的 .get default 处理)
         gpu_count = sum(1 for v in self._reservations.values() if v == "cuda")
@@ -203,6 +222,20 @@ import threading
 _budget_manager: Optional[GPUBudgetManager] = None
 _init_lock = threading.Lock()
 
+_MEMORY_OOM_MARKERS = (
+    "out of memory",
+    "not enough memory",
+    "cannot allocate memory",
+    "defaultcpuallocator",
+)
+
+
+def is_memory_oom(error: BaseException) -> bool:
+    """统一识别 CUDA 与 PyTorch CPU 分配器报告的内存耗尽。"""
+    return isinstance(error, MemoryError) or any(
+        marker in str(error).lower() for marker in _MEMORY_OOM_MARKERS
+    )
+
 
 def init_budget(mem_status: str = "ok") -> GPUBudgetManager:
     """初始化全局预算管理器（预处理前调用一次）"""
@@ -215,17 +248,28 @@ def init_budget(mem_status: str = "ok") -> GPUBudgetManager:
     return _budget_manager
 
 
-def recalc_budget() -> GPUBudgetManager:
-    """系统加载前重新计算预算（预处理已释放 GPU，以干净显存为基点）"""
+def recalc_budget(mem_status: Optional[str] = None) -> GPUBudgetManager:
+    """系统加载前重新计算预算。
+
+    预处理会改变内存占用，因此默认重新检测系统内存；调用方也可传入已测得的
+    状态。绝不能将低内存状态无条件提升为 ``ok``。
+    """
     global _budget_manager
+    effective_mem_status = mem_status or check_system_memory()
     with _init_lock:
-        _budget_manager = GPUBudgetManager(mem_status="ok")
+        _budget_manager = GPUBudgetManager(mem_status=effective_mem_status)
     return _budget_manager
 
 
 # ── OOM 兜底 ─────────────────────────────────────────────────
 
-def safe_model_load(model_name: str, fn_gpu, fn_cpu, fallback: str = "cpu"):
+def safe_model_load(
+    model_name: str,
+    fn_gpu,
+    fn_cpu,
+    fallback: str = "cpu",
+    planned_device: str = "cuda",
+):
     """模型加载时的三级降级链。返回 (model, actual_device)
 
     ① 尝试 GPU 加载 → OOM?
@@ -233,6 +277,22 @@ def safe_model_load(model_name: str, fn_gpu, fn_cpu, fallback: str = "cpu"):
     ③ 跳过此模型，功能不可用
     """
     import torch
+
+    if planned_device == "skip":
+        log.info("{} 按预算跳过加载", model_name)
+        return None, "skip"
+
+    # 预算已决定 CPU 时，不能再以“GPU 尝试”的名义调用加载器。
+    if planned_device != "cuda":
+        try:
+            return fn_cpu(), "cpu"
+        except Exception as e:
+            if not is_memory_oom(e):
+                raise
+            if fallback == "skip":
+                log.error("{} CPU 加载内存不足，跳过此功能", model_name)
+                return None, "skip"
+            raise
 
     # 一级: GPU
     try:
@@ -246,7 +306,7 @@ def safe_model_load(model_name: str, fn_gpu, fn_cpu, fallback: str = "cpu"):
         torch.cuda.empty_cache()
         log.warning("{} GPU 加载 OOM，降级 CPU", model_name)
     except RuntimeError as e:
-        if "out of memory" not in str(e).lower():
+        if not is_memory_oom(e):
             raise
         torch.cuda.empty_cache()
         log.warning("{} GPU 加载 OOM (RuntimeError)，降级 CPU", model_name)
@@ -255,7 +315,9 @@ def safe_model_load(model_name: str, fn_gpu, fn_cpu, fallback: str = "cpu"):
     try:
         model = fn_cpu()
         return model, "cpu"
-    except MemoryError:
+    except Exception as e:
+        if not is_memory_oom(e):
+            raise
         if fallback == "skip":
             log.error("{} 无法加载 (显存+内存均不足)，跳过此功能", model_name)
             return None, "skip"

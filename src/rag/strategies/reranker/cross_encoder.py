@@ -37,6 +37,7 @@ class CrossEncoderReranker(RerankerStrategy):
         try:
             import torch
             from sentence_transformers import CrossEncoder
+            from ....utils.gpu_budget import is_memory_oom
             from ....utils.helpers import resolve_device
 
             # 自动检测 GPU 可用性
@@ -75,7 +76,9 @@ class CrossEncoderReranker(RerankerStrategy):
                 self.log.warning("重排序模型 GPU 加载 OOM，降级 CPU: {}", model_path)
                 try:
                     self._model = _load_ce(_fp16_ok, "cpu")
-                except MemoryError:
+                except Exception as cpu_error:
+                    if not is_memory_oom(cpu_error):
+                        raise
                     self.log.error("重排序模型 CPU 加载 OOM，RAG 重排序不可用")
                     self._model = None
             except RuntimeError as e:
@@ -84,7 +87,9 @@ class CrossEncoderReranker(RerankerStrategy):
                     self.log.warning("重排序模型 GPU 加载 OOM (RuntimeError)，降级 CPU: {}", model_path)
                     try:
                         self._model = _load_ce(_fp16_ok, "cpu")
-                    except MemoryError:
+                    except Exception as cpu_error:
+                        if not is_memory_oom(cpu_error):
+                            raise
                         self.log.error("重排序模型 CPU 加载 OOM，RAG 重排序不可用")
                         self._model = None
                 else:
