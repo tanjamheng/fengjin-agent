@@ -94,7 +94,24 @@ if %NEED_PIP%==1 (
         pause
         exit /b 1
     )
+    REM Detect NVIDIA GPU → swap CPU torch for CUDA torch
+    where nvidia-smi >nul 2>&1
+    if %errorlevel%==0 (
+        echo    NVIDIA GPU detected, switching to CUDA PyTorch...
+        call venv\Scripts\python.exe -m pip install torch==2.6.0+cu124 --index-url https://mirrors.nju.edu.cn/pytorch/whl/cu124 --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple --force-reinstall --progress-bar on
+    )
     echo %date% %time%> "venv\.requirements-installed"
+) else (
+    REM Even if deps already installed, verify torch matches GPU
+    where nvidia-smi >nul 2>&1
+    if %errorlevel%==0 (
+        venv\Scripts\python.exe -c "import torch; exit(0 if torch.cuda.is_available() else 1)" >nul 2>&1
+        if errorlevel 1 (
+            echo    NVIDIA GPU detected but CPU-only PyTorch found, switching to CUDA PyTorch...
+            call venv\Scripts\python.exe -m pip install torch==2.6.0+cu124 --index-url https://mirrors.nju.edu.cn/pytorch/whl/cu124 --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple --force-reinstall --progress-bar on
+            echo %date% %time%> "venv\.requirements-installed"
+        )
+    )
 )
 echo    OK
 

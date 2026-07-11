@@ -16,7 +16,7 @@ class ChromaConfig(BaseModel):
     persist_directory: str = "data/chroma"
     collection_name: str = "memories"
     embedding_model: str = "models/bge-m3"
-    device: str = "cpu"
+    device: str = "auto"
 
 
 class ExtractionConfig(BaseModel):

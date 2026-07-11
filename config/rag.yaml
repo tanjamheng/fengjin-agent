@@ -34,7 +34,7 @@ rag:
       persist_directory: "data/chroma"
       collection_name: "fengjin_knowledge"
       store_type: "chroma"
-      device: "cpu"
+      device: "auto"  # CUDA 可用自动 GPU，否则 CPU
       dense_weight: 0.7
       sparse_weight: 0.3
 

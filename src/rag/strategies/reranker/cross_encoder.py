@@ -109,3 +109,5 @@ class CrossEncoderReranker(RerankerStrategy):
         if self._model is not None:
             del self._model
             self._model = None
+            import torch
+            torch.cuda.empty_cache()

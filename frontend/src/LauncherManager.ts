@@ -7,7 +7,7 @@
 
 import { spawn, exec, ChildProcess } from "child_process";
 import { join } from "path";
-import { readFileSync, existsSync, copyFileSync, mkdirSync, createWriteStream, statSync, writeFileSync } from "fs";
+import { readFileSync, existsSync, copyFileSync, mkdirSync, createWriteStream, statSync, renameSync, writeFileSync } from "fs";
 import type { WriteStream } from "fs";
 import { createHash } from "crypto";
 import { BrowserWindow } from "electron";
@@ -50,7 +50,8 @@ const OP_LABELS: Record<string, string> = {
 
 // ── 常量 ──
 
-const WATCHDOG_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟
+const WATCHDOG_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟 (system_load)
+const PREPROCESS_WATCHDOG_MS = 15 * 60 * 1000; // 15 分钟 (preprocess，每步有进度行持续重置)
 const HEALTH_POLL_MS = 2000;                // 2 秒轮询（localhost 几乎零开销）
 
 function sha256Hex(text: string): string {
@@ -109,11 +110,21 @@ export class LauncherManager {
 
     };
 
-    // 打开 launcher 专用日志
+    // 打开 launcher 专用日志（>5MB 轮转，保留一份旧日志）
     try {
       const logsDir = join(projectRoot, "logs");
       if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true });
-      this._logStream = createWriteStream(join(logsDir, "launcher.log"), { flags: "a" });
+      const logPath = join(logsDir, "launcher.log");
+      if (existsSync(logPath)) {
+        try {
+          if (statSync(logPath).size > 5 * 1024 * 1024) {
+            const bak = logPath.replace(".log", ".old.log");
+            if (existsSync(bak)) renameSync(bak, logPath.replace(".log", ".2.log"));
+            renameSync(logPath, bak);
+          }
+        } catch { /* 轮转失败不影响功能 */ }
+      }
+      this._logStream = createWriteStream(logPath, { flags: "a" });
     } catch { /* 日志打不开不影响功能 */ }
   }
 
@@ -249,6 +260,7 @@ export class LauncherManager {
     if (existsSync(marker)) {
       try {
         if (statSync(marker).mtimeMs >= statSync(requirements).mtimeMs) {
+          await this._ensureTorchMatchesGPU(venvPython, marker);
           return;
         }
       } catch {
@@ -278,9 +290,10 @@ export class LauncherManager {
       proc.stderr?.on("data", (chunk: Buffer) => {
         this._log(`[pip stderr] ${chunk.toString("utf-8").trim()}`);
       });
-      proc.on("close", (code) => {
+      proc.on("close", async (code) => {
         clearTimeout(timer);
         if (code === 0) {
+          await this._ensureTorchMatchesGPU(venvPython, marker);
           writeFileSync(marker, new Date().toISOString(), "utf-8");
           resolve();
         } else {
@@ -290,6 +303,47 @@ export class LauncherManager {
       proc.on("error", (err) => {
         clearTimeout(timer);
         reject(new Error(`Python 依赖安装失败: ${err.message}`));
+      });
+    });
+  }
+
+  /** 验证 venv 中的 torch 是否匹配 GPU 检测结果，不匹配则重装 CUDA 版 */
+  private async _ensureTorchMatchesGPU(venvPython: string, marker: string): Promise<void> {
+    const gpuDetected = await new Promise<boolean>((resolve) => {
+      exec("nvidia-smi", (err) => resolve(!err));
+    });
+    if (!gpuDetected) return;
+
+    const hasCUDA = await new Promise<boolean>((resolve) => {
+      exec(`"${venvPython}" -c "import torch; print(torch.cuda.is_available())"`, (err, stdout) => {
+        if (err) { resolve(false); return; }
+        resolve(stdout.trim() === "True");
+      });
+    });
+    if (hasCUDA) return;
+
+    this._log("NVIDIA GPU detected but CPU-only PyTorch found, switching to CUDA PyTorch...");
+    return new Promise<void>((resolve) => {
+      const torchProc = spawn(venvPython, [
+        "-m", "pip", "install", "torch==2.6.0+cu124",
+        "--index-url", "https://mirrors.nju.edu.cn/pytorch/whl/cu124",
+        "--extra-index-url", "https://pypi.tuna.tsinghua.edu.cn/simple",
+        "--force-reinstall", "--progress-bar", "on",
+      ], { cwd: this._projectRoot, stdio: ["ignore", "pipe", "pipe"] });
+      torchProc.stdout?.on("data", (chunk: Buffer) => {
+        this._log(`[pip cuda stdout] ${chunk.toString("utf-8").trim()}`);
+      });
+      torchProc.stderr?.on("data", (chunk: Buffer) => {
+        this._log(`[pip cuda stderr] ${chunk.toString("utf-8").trim()}`);
+      });
+      torchProc.on("close", () => {
+        writeFileSync(marker, new Date().toISOString(), "utf-8");
+        resolve();
+      });
+      torchProc.on("error", (err) => {
+        this._log(`CUDA torch install failed (GPU will not be used): ${err.message}`);
+        writeFileSync(marker, new Date().toISOString(), "utf-8");
+        resolve(); // 非致命——CPU 版也能用
       });
     });
   }
@@ -607,11 +661,14 @@ export class LauncherManager {
 
   private _resetWatchdog(): void {
     if (this._watchdogTimer) clearTimeout(this._watchdogTimer);
-    // 预处理阶段不设看门狗——模型下载耗时取决于网速，可能超过 5 分钟
-    if (this._state.phase === "preprocess") return;
+    // 预处理阶段使用宽松的 15 分钟看门狗（模型下载/知识库构建可能很慢但有进度输出）；
+    // 系统加载阶段使用 5 分钟看门狗（每个步骤应在数秒内完成）
+    const timeout = this._state.phase === "preprocess"
+      ? PREPROCESS_WATCHDOG_MS
+      : WATCHDOG_TIMEOUT_MS;
     this._watchdogTimer = setTimeout(() => {
       this._setError("似乎卡住了，请检查网络后重试", true, false);
-    }, WATCHDOG_TIMEOUT_MS);
+    }, timeout);
   }
 
   startHealthPoll(): void {

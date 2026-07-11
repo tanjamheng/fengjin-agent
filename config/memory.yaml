@@ -6,7 +6,7 @@ memory:
     persist_directory: "data/chroma"
     collection_name: "memories"
     embedding_model: "models/bge-m3"
-    device: "cpu"
+    device: "auto"  # 与 RAG 共享同一 bge-m3 实例（embedding_registry），统一 GPU 策略
 
   # 内容提取配置（每轮对话后异步调用的小模型）
   extraction:

@@ -89,18 +89,32 @@ def _scan_preprocess_plan(project_root: Path) -> list[str]:
 
     # ── 知识库预构建检查 ──
     # 与模型检查保持同一规范：检查持久化标记是否存在。
-    # ChromaDB PersistentClient 初始化时必须创建 chroma.sqlite3，
-    # 即使 collection 为空。因此 sqlite3 存在 = 已初始化。
-    #   - chroma.sqlite3 不存在 → 需构建知识库
-    #   - chroma.sqlite3 存在 → 已构建（或已初始化空库），跳过
-    chroma_db = project_root / "data" / "chroma" / "chroma.sqlite3"
+    # .knowledge_built 标记在构建成功后写入；若缺失但 chroma.sqlite3 存在，
+    # 说明上次构建中途崩溃，删掉残缺库重建。
+    #   - .knowledge_built 存在 → 已完整构建，跳过
+    #   - .knowledge_built 缺失 → 需构建（若有残缺库先清理）
+    chroma_dir = project_root / "data" / "chroma"
+    chroma_db = chroma_dir / "chroma.sqlite3"
     knowledge_src = project_root / _KNOWLEDGE_SRC_DIR
     if knowledge_src.is_dir():
-        if not chroma_db.exists():
+        _built_marker = chroma_dir / ".knowledge_built"
+        if not _built_marker.exists():
+            if chroma_db.exists():
+                # 上次构建未完成，删除残缺库
+                _cleanup_partial_knowledge(chroma_dir)
             steps.append("knowledge_build")
-        # else: chroma.sqlite3 存在 → 跳过，system_load 阶段快速验证即可
 
     return steps
+
+
+def _cleanup_partial_knowledge(chroma_dir: Path) -> None:
+    """删除残缺的 ChromaDB 知识库目录（上次构建未完成）"""
+    import shutil
+    try:
+        shutil.rmtree(chroma_dir, ignore_errors=True)
+        log.info("已清理残缺知识库: {}", chroma_dir)
+    except Exception as e:
+        log.warning("清理残缺知识库失败（将尝试继续构建）: {}", e)
 
 
 @asynccontextmanager
@@ -162,16 +176,29 @@ async def lifespan(app: FastAPI):
                             _chunks = _rag_build.splitter.split_document(_doc)
                             _doc_chunks.append((_doc, _chunks))
                             _total_chunks += len(_chunks)
-                        # ② 逐文档嵌入，按 chunk 比例发射进度（进度条平缓增长）
+                        # ② 子批次嵌入（每 8 chunk 一批），兼顾批处理加速 + 进度平滑
                         if _total_chunks > 0:
+                            _BATCH = 8
                             _chunks_done = 0
+                            _pending: list = []
                             for _doc, _chunks in _doc_chunks:
-                                _rag_build.indexer.add(_chunks)
-                                _chunks_done += len(_chunks)
+                                for _chunk in _chunks:
+                                    _pending.append(_chunk)
+                                    if len(_pending) >= _BATCH:
+                                        _rag_build.indexer.add(_pending)
+                                        _chunks_done += len(_pending)
+                                        _pending.clear()
+                                        emit_progress("knowledge_build", "progress",
+                                                      percent=round(_chunks_done / _total_chunks * 100))
+                            if _pending:
+                                _rag_build.indexer.add(_pending)
+                                _chunks_done += len(_pending)
                                 emit_progress("knowledge_build", "progress",
                                               percent=round(_chunks_done / _total_chunks * 100))
                         log.info("预处理阶段：知识库构建完成: {} 文档, {} chunks",
                                  len(_docs), _total_chunks)
+                        if _total_chunks > 0:
+                            (_project_root / "data" / "chroma" / ".knowledge_built").write_text("ok")
                     else:
                         log.info("预处理阶段：知识库非空 ({} 条)，跳过构建",
                                  _rag_build.indexer.count())
@@ -343,13 +370,26 @@ async def lifespan(app: FastAPI):
                                     _total_chunks += len(_chunks)
                                 _chunks_done = 0
                                 if _total_chunks > 0:
+                                    _BATCH = 8
+                                    _pending: list = []
                                     for _doc, _chunks in _doc_chunks:
-                                        rag_service.indexer.add(_chunks)
-                                        _chunks_done += len(_chunks)
+                                        for _chunk in _chunks:
+                                            _pending.append(_chunk)
+                                            if len(_pending) >= _BATCH:
+                                                rag_service.indexer.add(_pending)
+                                                _chunks_done += len(_pending)
+                                                _pending.clear()
+                                                emit_progress("engine_init:rag", "progress",
+                                                              percent=round(_chunks_done / _total_chunks * 100))
+                                    if _pending:
+                                        rag_service.indexer.add(_pending)
+                                        _chunks_done += len(_pending)
                                         emit_progress("engine_init:rag", "progress",
                                                       percent=round(_chunks_done / _total_chunks * 100))
                                 log.info("知识库兜底构建完成: {} 文档, {} chunks",
                                          len(_doc_chunks), _total_chunks)
+                                if _total_chunks > 0:
+                                    (_project_root / "data" / "chroma" / ".knowledge_built").write_text("ok")
                             else:
                                 log.warning("知识库目录不存在: {}", _kb_dir)
                         else:

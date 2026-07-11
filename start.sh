@@ -66,7 +66,33 @@ echo "  OK ($PYTHON)"
 
 # ── 2. Python dependencies ──
 echo " [2/4] Python dependencies (first install may take ~3 min)..."
-venv/bin/python -m pip install -r requirements.txt
+NEED_PIP=0
+if [ ! -f "venv/.requirements-installed" ]; then
+    NEED_PIP=1
+elif [ "requirements.txt" -nt "venv/.requirements-installed" ]; then
+    NEED_PIP=1
+fi
+if [ "$NEED_PIP" = "1" ]; then
+    venv/bin/python -m pip install -r requirements.txt || {
+        echo "  ERROR: Python dependencies failed to install"
+        exit 1
+    }
+    # Detect NVIDIA GPU → swap CPU torch for CUDA torch
+    if command -v nvidia-smi &>/dev/null; then
+        echo "  NVIDIA GPU detected, switching to CUDA PyTorch..."
+        venv/bin/python -m pip install torch==2.6.0+cu124 --index-url https://mirrors.nju.edu.cn/pytorch/whl/cu124 --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple --force-reinstall --progress-bar on || true
+    fi
+    date > "venv/.requirements-installed"
+else
+    # Even if deps already installed, verify torch matches GPU
+    if command -v nvidia-smi &>/dev/null; then
+        if ! venv/bin/python -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+            echo "  NVIDIA GPU detected but CPU-only PyTorch found, switching to CUDA PyTorch..."
+            venv/bin/python -m pip install torch==2.6.0+cu124 --index-url https://mirrors.nju.edu.cn/pytorch/whl/cu124 --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple --force-reinstall --progress-bar on || true
+            date > "venv/.requirements-installed"
+        fi
+    fi
+fi
 echo "  OK"
 
 # ── 3. Frontend dependencies ──

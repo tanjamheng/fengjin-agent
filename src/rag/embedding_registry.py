@@ -92,6 +92,8 @@ def release() -> None:
             del _model
             _model = None
         _model_path = None
+        import torch
+        torch.cuda.empty_cache()
 
 
 def _get_model() -> Optional["SentenceTransformer"]:
