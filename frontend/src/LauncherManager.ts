@@ -82,6 +82,7 @@ export class LauncherManager {
     "engine_init:bond",
     "engine_init:persona",
     "engine_init:rag",
+    "connect",
   ];
 
   // 阶段二步骤名映射
@@ -92,6 +93,7 @@ export class LauncherManager {
     "engine_init:bond": "正在初始化羁绊追踪...",
     "engine_init:persona": "正在初始化角色检测...",
     "engine_init:rag": "正在加载知识库引擎...",
+    "connect": "正在建立连接...",
   };
 
   constructor(win: BrowserWindow, projectRoot: string, wsToken: string) {
@@ -608,12 +610,29 @@ export class LauncherManager {
 
   private _handleReady(): void {
     if (this._state.phase === "done" || this._state.phase === "error") return; // 防竞态 + 防覆盖致命错误
-    this._log("Backend ready — transitioning to done");
+    this._log("Backend healthy — entering connect step, waiting for renderer WS");
+    this._clearTimers();
+
+    // 进入 connect 步骤（ENGINE_STEPS 最后一步），与其他步骤平分进度条
+    const connectIdx = this.ENGINE_STEPS.length - 1; // 0-indexed, last step
+    this._state.phase = "system_load";
+    this._state.phaseLabel = "正在加载系统...";
+    this._state.currentStepIndex = connectIdx;
+    this._state.stepText = this.ENGINE_LABELS["connect"];
+    this._state.stepPercent = 0;
+    this._updateProgressBar();
+    this._emitState();
+    // 不发送 "done"——等待渲染进程 WS 连接完成后回调 completeConnect()
+  }
+
+  /** 渲染进程确认 WS 连接完成 → 完成 connect 步骤 → 发送 done */
+  completeConnect(): void {
+    if (this._state.phase === "done" || this._state.phase === "error") return;
+    this._log("Renderer WS connected — completing connect step");
     this._state.phase = "done";
     this._state.phaseLabel = "";
     this._state.stepText = "";
     this._state.progressPercent = 100;
-    this._clearTimers();
     this._emitState();
 
     // 后端就绪后检查 API Key，占位值则弹首次配置
@@ -627,11 +646,10 @@ export class LauncherManager {
   private _handleBackendInitialized(): void {
     if (this._state.phase === "done" || this._state.phase === "error") return;
     this._log("Backend initialization complete — awaiting health check");
+    // 不覆盖当前步骤（可能已由 _advanceProgress 进入 connect 步骤）
+    // 只确保阶段标签正确，然后启动健康检查
     this._state.phase = "system_load";
     this._state.phaseLabel = "正在加载系统...";
-    this._state.stepText = "正在确认本地服务...";
-    this._state.progressPercent = 100;
-    this._state.stepPercent = 0;
     this._emitState();
     this.startHealthPoll();
   }

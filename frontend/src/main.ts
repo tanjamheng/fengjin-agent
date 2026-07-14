@@ -161,6 +161,10 @@ ipcMain.handle("launcher:skip", async () => {
   launcher?.skipStep();
 });
 
+ipcMain.handle("launcher:completeConnect", async () => {
+  launcher?.completeConnect();
+});
+
 ipcMain.handle("launcher:getState", () => {
   return launcher?.state || null;
 });

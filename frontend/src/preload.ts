@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   launcherRetry: () => ipcRenderer.invoke("launcher:retry"),
   launcherSkip: () => ipcRenderer.invoke("launcher:skip"),
+  launcherCompleteConnect: () => ipcRenderer.invoke("launcher:completeConnect"),
   launcherGetState: () => ipcRenderer.invoke("launcher:getState"),
   getWsUrl: () => ipcRenderer.invoke("ws:getUrl"),
   isBackendAlive: () => ipcRenderer.invoke("backend:isAlive"),

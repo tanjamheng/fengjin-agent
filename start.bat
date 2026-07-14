@@ -157,11 +157,11 @@ goto :eof
 powershell -Command ^
   "$pidPath = Join-Path (Get-Location) 'logs\backend.pid';" ^
   "if (-not (Test-Path -LiteralPath $pidPath)) { Write-Host '  No tracked backend'; exit 0 }" ^
-  "$raw = (Get-Content -LiteralPath $pidPath -Raw).Trim(); $pid = 0;" ^
-  "if (-not [int]::TryParse($raw, [ref]$pid)) { Remove-Item -LiteralPath $pidPath -Force; Write-Host '  Removed invalid backend PID file'; exit 0 }" ^
-  "$proc = Get-CimInstance Win32_Process -Filter ('ProcessId = {0}' -f $pid) -ErrorAction SilentlyContinue;" ^
+  "$raw = (Get-Content -LiteralPath $pidPath -Raw).Trim(); $backendPid = 0;" ^
+  "if (-not [int]::TryParse($raw, [ref]$backendPid)) { Remove-Item -LiteralPath $pidPath -Force; Write-Host '  Removed invalid backend PID file'; exit 0 }" ^
+  "$proc = Get-CimInstance Win32_Process -Filter ('ProcessId = {0}' -f $backendPid) -ErrorAction SilentlyContinue;" ^
   "if ($proc -and $proc.Name -match '^pythonw?\.exe$' -and $proc.CommandLine -match '(^|\s)-m\s+src\.server\.server(\s|$)') {" ^
-  "  try { Stop-Process -Id $pid -Force -ErrorAction Stop; Write-Host '  Stopped tracked backend (PID:' $pid ')' } catch { Write-Host '  WARNING: Unable to stop tracked backend (PID:' $pid ')' }" ^
+  "  try { Stop-Process -Id $backendPid -Force -ErrorAction Stop; Write-Host '  Stopped tracked backend (PID:' $backendPid ')' } catch { Write-Host '  WARNING: Unable to stop tracked backend (PID:' $backendPid ')' }" ^
   "} elseif ($proc) { Write-Host '  WARNING: Tracked PID no longer matches this backend; skipping' } else { Write-Host '  Removed stale backend PID file' }" ^
   "Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue"
 exit /b

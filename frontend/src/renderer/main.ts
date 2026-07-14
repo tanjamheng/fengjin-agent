@@ -84,6 +84,10 @@ if (api && launcherContainer && appPanel) {
 
   api.onLauncherState((state: any) => {
     launcherRenderer?.update(state);
+    // 检测 connect 步骤：LauncherManager 进入最后一步 → 启动 WS
+    if (!_connectStepActive && state.phase === "system_load" && state.stepText === "正在建立连接...") {
+      _startWsConnection();
+    }
     if (state.phase === "done" && !_doneHandlerSet) {
       _doneArrivedEarly = true;
     }
@@ -176,9 +180,28 @@ async function _waitForBackend(): Promise<void> {
   log.warn("Backend did not become ready within 60s after config save");
 }
 
+// ===== 加载页过渡控制 =====
+let _connectStepActive = false;
+let _chatModulesInitialized = false;
+
+/** connect 步骤激活 → 启动 WS 连接（只执行一次） */
+function _startWsConnection(): void {
+  if (_chatModulesInitialized) return;
+  _chatModulesInitialized = true;
+  _connectStepActive = true;
+  initChatModules();
+  // 5 秒超时兜底：WS 始终连不上也通知完成，防止卡加载页
+  setTimeout(() => {
+    if (_connectStepActive) {
+      _connectStepActive = false;
+      api?.launcherCompleteConnect();
+    }
+  }, 5000);
+}
+
+/** "done" 到达 → 加载页淡出，显示聊天界面 */
 function _transitionToChat(): void {
   if (!launcherContainer || !appPanel) return;
-  // 加载区淡出
   launcherContainer.style.opacity = "0";
   setTimeout(() => {
     launcherContainer!.style.display = "none";
@@ -187,9 +210,6 @@ function _transitionToChat(): void {
       appPanel!.classList.add("app-panel--visible");
     });
     _isLauncherMode = false;
-    // 初始化聊天模块
-    initChatModules();
-    // 加载完成后，如需首次配置则弹出设置面板
     if (_pendingFirstTimeConfig) {
       _pendingFirstTimeConfig = false;
       _showAndApplyFirstTimeSettings();
@@ -249,6 +269,8 @@ ws.onError = (message) => {
   chat.appendSystemMessage(message, "warning");
   appState.isReplying = false;
   sidebar.setDisabled(false);
+  // connect 步骤中出错也通知 LauncherManager 完成，防止卡加载页
+  if (_connectStepActive) { _connectStepActive = false; api?.launcherCompleteConnect(); }
   if (ws.status === "connected") {
     ws.listSessions();
   }
@@ -258,6 +280,8 @@ ws.onError = (message) => {
 ws.onSessionList = (sessions: SessionMeta[]) => {
   appState.sessions = sessions;
   sidebar.renderList(sessions);
+  // connect 步骤中会话列表到达 → 通知 LauncherManager 完成
+  if (_connectStepActive) { _connectStepActive = false; api?.launcherCompleteConnect(); }
 };
 ws.onSessionLoaded = (sessionId: string, title: string, messages: ChatMessage[]) => {
   if (!_loadingSession || sessionId !== _loadingSessionId) return; // 非加载中或ID不匹配，忽略
