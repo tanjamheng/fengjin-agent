@@ -46,6 +46,9 @@ export class SettingsPanel {
   // 脏跟踪
   private _dirty = false;
 
+  // 原始 API Key（用于判断用户是否修改了密钥字段）
+  private _originalKeys: { main: string; memory: string } = { main: "", memory: "" };
+
   // Tab 按钮引用
   private _tabBtns = new Map<TabId, HTMLElement>();
 
@@ -59,6 +62,10 @@ export class SettingsPanel {
 
   constructor(initialData: SettingsData, triggerEl?: HTMLElement, saveLabel?: string, hintText?: string) {
     this._data = JSON.parse(JSON.stringify(initialData));
+    this._originalKeys = {
+      main: this._data.main.api_key ?? "",
+      memory: this._data.memory.api_key ?? "",
+    };
     this._triggerEl = triggerEl || null;
     this._saveLabel = saveLabel || "保存并应用";
     this._hintText = hintText || null;
@@ -85,6 +92,10 @@ export class SettingsPanel {
   /** 更新内存中的数据（get_config 返回后调用） */
   updateData(data: SettingsData): void {
     this._data = JSON.parse(JSON.stringify(data));
+    this._originalKeys = {
+      main: this._data.main.api_key ?? "",
+      memory: this._data.memory.api_key ?? "",
+    };
     this._dirty = false;
     this._renderModelTab();
   }
@@ -443,7 +454,8 @@ export class SettingsPanel {
       if (!inputs) continue;
       for (let i = 0; i < keys.length && i < inputs.length; i++) {
         const val = inputs[i].value.trim();
-        if (keys[i] === "api_key" && val.startsWith("****")) {
+        // API Key 未修改 → null（保持原值）
+        if (keys[i] === "api_key" && val === this._originalKeys[sectionKey]) {
           this._data[sectionKey][keys[i]] = null;
           continue;
         }

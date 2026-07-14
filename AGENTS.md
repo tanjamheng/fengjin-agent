@@ -52,6 +52,7 @@
 | 9 | **CSS `animation` 的 `transform` 会覆盖元素自身的 `transform`** | 如果元素用 `transform: translateX(-50%)` 居中，又挂了 `animation`（含 `transform`），animation 的 transform 会覆盖元素的定位 transform → 元素偏位。**规则：需要定位 transform 的元素不要用含 transform 的 animation。** 用 `left:0; width:100%; text-align:center` 或外层 wrapper 替代。  |
 | 10 | **IPC 状态必须原子发射——禁止拆开送** | 启动加载页的阶段标签、进度条、步骤文字、安抚语应该同时出现。如果在 `start()` 里先发 `_sendState("", "正在检查环境...")` 再等后端消息才发阶段标签 → 下方字先跳出来、上方标签晚到 → 视觉割裂。**规则：任何会一起显示的 UI 元素，第一条状态消息就必须全部包含。** 要么全发，要么全不发。 |
 | 11 | **多路径触发的状态迁移必须防重入** | 启动器的 "done" 状态被 stdout 消息和健康检查轮询两条路径同时触发 → `_handleReady()` 被调用两次 → `initChatModules()` 两次 → 侧边栏创建两遍 → 两个"新对话"按钮。**规则：任何可能被多个 async 源触发的状态变更函数，第一行就加 `if (this._state.phase === target) return;`。** |
+| 12 | **API Key 等敏感字段禁止在传输层脱敏——脱敏只能发生在显示层** | `config_manager.py` 的 `get_current_config()` 把 API Key 脱敏成 `****后4位` 再发给前端 → 前端密码框里存的是脱敏值 → 眼睛按钮睁开看到的仍然是 `****`、闭眼时黑点位数也是错的。**规则：后端返回敏感字段时必须传完整值，前端 `type="password"` / CSS `-webkit-text-security` 等显示层手段负责视觉遮蔽。前端"是否修改"判断用原值对比（`=== originalValue`），不靠 `startsWith("****")`。** 同类场景：任何需要在 UI 中编辑的敏感字段（密钥、token、密码）都应遵循此规则。 |
 
 # 功能速查
 

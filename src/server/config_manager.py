@@ -212,12 +212,10 @@ class ConfigManager:
 
     @staticmethod
     def get_current_config() -> dict:
-        """从 .env 文件读取当前配置（重新加载），脱敏后返回"""
+        """从 .env 文件读取当前配置（重新加载），返回完整 API Key
+        前端 password 输入框负责视觉遮蔽，后端不再脱敏。
+        """
         _reload_dotenv()  # 确保读取最新 .env，而非可能过时的 os.environ
-        def mask_key(k: str) -> str:
-            if not k or len(k) <= 6:
-                return "****"
-            return "****" + k[-4:]
 
         main_ak = os.environ.get("FENGJIN_API_KEY", "")
         memo_ak = os.environ.get("MEMO_API_KEY", "")
@@ -231,12 +229,12 @@ class ConfigManager:
 
         return {
             "main": {
-                "api_key": mask_key(main_ak) if main_ak else "",
+                "api_key": main_ak,
                 "base_url": os.environ.get("FENGJIN_BASE_URL", ""),
                 "model": os.environ.get("FENGJIN_MODEL", ""),
             },
             "memory": {
-                "api_key": mask_key(memo_ak) if memo_ak else "",
+                "api_key": memo_ak,
                 "base_url": os.environ.get("MEMO_BASE_URL", ""),
                 "model": os.environ.get("MEMO_MODEL", ""),
             },
