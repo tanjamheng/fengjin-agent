@@ -11,12 +11,11 @@ persona:
                                   # 0.3 = 推荐值，3~5 轮反映趋势
                                   # 0.5 = 反应快但波动大
 
-    drift_threshold: 0.65         # 低于此值触发修复（0~1）
+    drift_threshold: 0.48         # 低于此值触发修复（0~1）
                                   # 越高越敏感——0.75 = 轻微偏离就触发
-                                  # 越低越宽容——0.55 = 明显偏离才触发
-                                  # 基于 Echo-Mode + ContextEcho 论文经验值
+                                  # 越低越宽容；0.48 按本项目实际回复分布校准
 
-    consecutive_trigger: 2        # 连续 N 轮低于阈值才注入（防单轮抖动）
+    consecutive_trigger: 3        # 连续 N 轮低于阈值才注入（防单轮抖动）
 
     min_reply_length: 15          # 回复少于此字数跳过检测（太短无意义）
 

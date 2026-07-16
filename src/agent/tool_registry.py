@@ -56,7 +56,9 @@ class ToolRegistry:
             definitions.append(tool_def)
         return definitions
 
-    def execute_tool(self, name: str, arguments: Dict[str, Any]) -> str:
+    def execute_tool(
+        self, name: str, arguments: Dict[str, Any], trace_id: str = ""
+    ) -> str:
         """执行指定工具（自动路由到本地或 MCP）"""
         # 本地 Tool
         if name in self._local_tools:
@@ -66,7 +68,7 @@ class ToolRegistry:
         # MCP Tool
         if name in self._mcp_tools:
             server, _ = self._mcp_tools[name]
-            return server.call_tool(name, arguments)
+            return server.call_tool(name, arguments, trace_id=trace_id)
 
         raise ValueError(f"Tool 不存在: {name}")
 

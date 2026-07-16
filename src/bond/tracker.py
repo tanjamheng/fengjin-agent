@@ -249,11 +249,13 @@ class BondTracker:
     def update(self, warmth: Optional[float] = None,
                trust: Optional[float] = None,
                formality: Optional[float] = None,
-               humor: Optional[float] = None) -> dict:
+               humor: Optional[float] = None,
+               trace_id: str = "") -> dict:
         """change clamp + 接近度衰减 更新羁绊状态，持久化到磁盘。
 
         传入 None 的维度保持不变。
         """
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         if not self._enabled:
             return self.load()
         s = self._settings
@@ -289,7 +291,7 @@ class BondTracker:
             # 4. 单轮跳变告警（在 clamp 之前检查原始 target-old）
             original_delta = target - old
             if abs(original_delta) > s.change_warn_threshold:
-                self.log.warning(
+                log.warning(
                     "羁绊跳变告警: {} LLM目标={:.3f} 当前={:.3f} 隐含变化={:+.3f}",
                     dim, target, old, original_delta,
                 )
@@ -310,7 +312,7 @@ class BondTracker:
             if (abs(self._session_cumulative[dim]) > s.session_cumulative_warn
                     and dim not in self._warned_cumulative):
                 self._warned_cumulative.add(dim)
-                self.log.warning("会话累计漂移告警: {} 累计={:+.3f}", dim, self._session_cumulative[dim])
+                log.warning("会话累计漂移告警: {} 累计={:+.3f}", dim, self._session_cumulative[dim])
 
             # 累计硬刹车：后续同向 delta 强制降为 ±0.01
             if abs(self._session_cumulative[dim]) > s.session_cumulative_brake:
@@ -325,7 +327,7 @@ class BondTracker:
                     self._session_cumulative[dim] -= correction
                     if dim not in self._session_braked:
                         self._session_braked.add(dim)
-                        self.log.warning("会话累计硬刹车: {} 累计={:+.3f}，本轮强制降为{:+.2f}",
+                        log.warning("会话累计硬刹车: {} 累计={:+.3f}，本轮强制降为{:+.2f}",
                                         dim, self._session_cumulative[dim], capped_delta)
                     # 重算 change——累计刹车已修改 cur[dim]，后续连续同向需用实际 delta
                     change = cur[dim] - old_vals[dim]
@@ -344,7 +346,7 @@ class BondTracker:
             if (self._consecutive_same[dim] >= s.consecutive_same_warn
                     and dim not in self._warned_consecutive):
                 self._warned_consecutive.add(dim)
-                self.log.warning("连续同向告警: {} 连续 {} 轮", dim, self._consecutive_same[dim])
+                log.warning("连续同向告警: {} 连续 {} 轮", dim, self._consecutive_same[dim])
 
             # 连续同向硬刹车
             if self._consecutive_same[dim] >= s.consecutive_same_brake:
@@ -354,7 +356,7 @@ class BondTracker:
                 self._session_cumulative[dim] -= correction
                 if dim not in self._session_braked:
                     self._session_braked.add(dim)
-                    self.log.warning("连续同向硬刹车: {} 连续 {} 轮，本轮强制降为{:+.2f}",
+                    log.warning("连续同向硬刹车: {} 连续 {} 轮，本轮强制降为{:+.2f}",
                                     dim, self._consecutive_same[dim], capped_delta)
 
         self._total_rounds += 1
@@ -363,7 +365,7 @@ class BondTracker:
         self._write_file(cur)
         self._state = cur
 
-        self.log.debug(
+        log.debug(
             "羁绊更新: W={:.2f} T={:.2f} F={:.2f} H={:.2f} (总轮数={})",
             cur["warmth"], cur["trust"], cur["formality"], cur["humor"],
             self._total_rounds,

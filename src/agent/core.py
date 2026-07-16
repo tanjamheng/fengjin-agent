@@ -13,7 +13,7 @@ from typing import Optional, Callable
 from openai import AsyncOpenAI
 
 from ..config import Config
-from ..session import SessionManager
+from ..session import SessionManager, MessageMeta
 from ..safety import SafetyManager, Action as SafetyAction
 from ..capabilities.skill import SkillBase, SkillContext
 from ..capabilities.tool import ToolBase
@@ -36,6 +36,17 @@ from ..utils.logger import get_logger, generate_trace_id
 # ── 常量 ──────────────────────────────────────────────────
 
 MAX_INPUT_LENGTH = 10000  # 超长输入拒绝（对齐 CLAUDE.md 技术约束）
+
+
+def _extract_rag_sources(result_text: str) -> list[str]:
+    """从 RAG 工具结果的来源标签中提取命中文档。"""
+    sources = []
+    for line in result_text.splitlines():
+        if line.startswith("[来源: ") and line.endswith("]"):
+            source = line[len("[来源: "):-1].strip()
+            if source and source not in sources:
+                sources.append(source)
+    return sources
 
 # ── 异常 ──────────────────────────────────────────────────
 
@@ -235,6 +246,7 @@ class Agent:
             # 4. 角色校准 → 心智状态/记忆注入 → 上下文组装
             t_memory_start = time.monotonic()
             api_input = message_content
+            memory_used: list[str] = []
             # 角色漂移锚点（上一轮检测到偏离 → 本轮注入）
             if self._pending_anchor:
                 api_input = self._pending_anchor + "\n\n" + api_input
@@ -247,7 +259,7 @@ class Agent:
                 if self.mood_engine:
                     api_input = self.mood_engine.inject(api_input)
             if self.context_manager:
-                api_input = self.context_manager.build_input(
+                api_input, memory_used = self.context_manager.build_input_with_metadata(
                     api_input, trace_id=self.trace_id
                 )
             t_memory = (time.monotonic() - t_memory_start) * 1000
@@ -263,6 +275,7 @@ class Agent:
         all_text = ""  # 跨 Tool Calling 轮次累积（StreamInterrupted 时保存完整内容）
         tool_loop_messages: list[dict] = []
         tool_rounds = 0
+        rag_hits: list[str] = []
         total_tokens = 0
         tool_definitions = self.tool_registry.get_all_definitions()
         max_tool_rounds = (
@@ -271,7 +284,7 @@ class Agent:
 
         async def _execute_tool(name: str, args: dict) -> str:
             return await asyncio.to_thread(
-                self.tool_registry.execute_tool, name, args
+                self.tool_registry.execute_tool, name, args, self.trace_id
             )
 
         try:
@@ -431,6 +444,8 @@ class Agent:
                         result_text = await _execute_tool(
                             tool_name, tool_input
                         )
+                        if tool_name == "rag_retrieve":
+                            rag_hits.extend(_extract_rag_sources(result_text))
                         if controller.cancel_requested:
                             break
                         t_tool = (
@@ -462,7 +477,14 @@ class Agent:
             combined = all_text + full_text
             if combined:
                 logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
-                self.session_mgr.append_message("assistant", combined)
+                self.session_mgr.append_message(
+                    "assistant", combined,
+                    MessageMeta(
+                        emotion=self._current_emotion_metadata(),
+                        rag_hits=rag_hits or None,
+                        memory_used=memory_used or None,
+                    ),
+                )
                 self.session_mgr.flush()
                 if self.mind_manager:
                     self.mind_manager.submit(
@@ -491,7 +513,9 @@ class Agent:
         # 6. 角色漂移检测（本轮回复 → 下一轮注入）
         if self.persona_guard and full_text:
             try:
-                self._pending_anchor = self.persona_guard.check(full_text)
+                self._pending_anchor = self.persona_guard.check(
+                    full_text, trace_id=self.trace_id
+                )
             except Exception:
                 logger.error("角色漂移检测失败，跳过本轮")
                 self._pending_anchor = None
@@ -501,14 +525,28 @@ class Agent:
             # full_text 已在上方合并 all_text，直接保留即可，避免 Tool Calling 前文重复。
             combined = full_text
             if combined:
-                self.session_mgr.append_message("assistant", combined)
+                self.session_mgr.append_message(
+                    "assistant", combined,
+                    MessageMeta(
+                        emotion=self._current_emotion_metadata(),
+                        rag_hits=rag_hits or None,
+                        memory_used=memory_used or None,
+                    ),
+                )
                 self.session_mgr.flush()
                 logger.info("用户取消: 保留已生成内容 ({} chars)", len(combined))
             else:
                 rollback_last_user(self.session_mgr, user_input)
                 logger.info("用户取消: 无内容，用户消息已回滚")
         elif full_text:
-            self.session_mgr.append_message("assistant", full_text)
+            self.session_mgr.append_message(
+                "assistant", full_text,
+                MessageMeta(
+                    emotion=self._current_emotion_metadata(),
+                    rag_hits=rag_hits or None,
+                    memory_used=memory_used or None,
+                ),
+            )
             self.session_mgr.flush()
             logger.info("会话已落盘 (回复 {} chars)", len(full_text))
         else:
@@ -538,6 +576,18 @@ class Agent:
                     len(full_text), total_tokens, t_total,
                     t_safety, t_memory, t_llm)
         return full_text
+
+    def _current_emotion_metadata(self) -> Optional[str]:
+        """记录生成本轮回复时实际注入的情绪状态。"""
+        if self.mind_manager and not self.mind_manager.active:
+            return None
+        if not self.mood_engine:
+            return None
+        try:
+            return self.mood_engine.describe()
+        except Exception as exc:
+            self.log.warning("读取情绪元数据失败，已跳过: {}", exc)
+            return None
 
     # ── 管理方法 ────────────────────────────────────────────
 

@@ -132,26 +132,30 @@ class RAGService:
 
         try:
             # 查询增强
-            enhanced_query = self.query_enhancer.enhance(query)
+            enhanced_query = self.query_enhancer.enhance(query, trace_id=trace_id)
 
             # 召回
             if isinstance(enhanced_query, list):
                 all_results = []
                 for q in enhanced_query:
-                    results = self.retriever.retrieve(q)
+                    results = self.retriever.retrieve(q, trace_id=trace_id)
                     all_results.extend(results)
                 recall_results = self._deduplicate_results(all_results)
             else:
-                recall_results = self.retriever.retrieve(enhanced_query)
+                recall_results = self.retriever.retrieve(
+                    enhanced_query, trace_id=trace_id
+                )
 
             # 精排
-            reranked_results = self.reranker.rerank(query, recall_results)
+            reranked_results = self.reranker.rerank(
+                query, recall_results, trace_id=trace_id
+            )
 
             # 构建上下文
             context_text = self._build_context(reranked_results, max_length=1500)
             log.info("RAG 检索完成: 召回 {} 条, 精排 {} 条", len(recall_results), len(reranked_results))
         except Exception as e:
-            log.error("RAG 检索管道异常（降级为空结果，LLM凭自身知识回复）: {}", e)
+            log.error("RAG 检索管道异常（降级为空结果，要求 LLM 坦诚不确定）: {}", e)
             context_text = ""
 
         return context_text

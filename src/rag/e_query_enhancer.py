@@ -44,16 +44,17 @@ class QueryEnhancer:
         """初始化"""
         self._get_strategy().initialize()
 
-    def enhance(self, query: str) -> Union[str, List[str]]:
+    def enhance(self, query: str, trace_id: str = "") -> Union[str, List[str]]:
         """增强查询"""
-        self.log.info("增强查询，策略: {}", self.strategy_type)
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
+        log.info("增强查询，策略: {}", self.strategy_type)
         strategy = self._get_strategy()
         enhanced = strategy.enhance(query)
 
         if isinstance(enhanced, list):
-            self.log.info("生成 {} 个查询变体", len(enhanced))
+            log.info("生成 {} 个查询变体", len(enhanced))
         else:
-            self.log.info("查询已增强")
+            log.info("查询已增强")
 
         return enhanced
 

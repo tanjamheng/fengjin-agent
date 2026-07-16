@@ -360,7 +360,7 @@ class MemoryExtractorTests(unittest.TestCase):
         )
         client = _FakeClient([
             unsupported,
-            '{"facts":[{"content":"用户喜欢晴天","type":"semantic","importance":"low"}]}',
+            '{"facts":[{"content":"用户喜欢晴天","evidence":"我喜欢晴天","type":"semantic","importance":"low"}]}',
         ])
 
         class _Storage:
@@ -382,8 +382,8 @@ class MemoryExtractorTests(unittest.TestCase):
 
     def test_non_string_content_enters_json_correction_retry(self):
         client = _FakeClient([
-            '{"facts":[{"content":123,"type":"semantic","importance":"low"}]}',
-            '{"facts":[{"content":"用户喜欢晴天","type":"semantic","importance":"low"}]}',
+            '{"facts":[{"content":123,"evidence":"我喜欢晴天","type":"semantic","importance":"low"}]}',
+            '{"facts":[{"content":"用户喜欢晴天","evidence":"我喜欢晴天","type":"semantic","importance":"low"}]}',
         ])
 
         class _Storage:
@@ -402,6 +402,33 @@ class MemoryExtractorTests(unittest.TestCase):
         self.assertEqual(facts[0]["content"], "用户喜欢晴天")
         retry_messages = client.chat.completions.calls[1]["messages"]
         self.assertIn("fact.content必须是字符串", retry_messages[-1]["content"])
+
+    def test_assistant_only_memory_is_rejected_by_user_evidence_check(self):
+        client = _FakeClient([
+            '{"facts":[{"content":"灰宝追过银色光尘","evidence":"追着银色光尘跑过","type":"episodic","importance":"low"}]}',
+            '{"facts":[]}',
+        ])
+
+        class _Storage:
+            def query(self, **_kwargs):
+                return {"distances": [[]]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = Path(tmp) / "memory.md"
+            prompt.write_text("只输出JSON", encoding="utf-8")
+            config = MemoryConfig(extraction={"prompt_file": str(prompt)})
+            extractor = MemoryExtractor(
+                config, client, "fake", _Storage(), max_retries=1
+            )
+            facts = extractor.extract_conversation(
+                "第1轮（最新一轮，分析主体）\n"
+                "用户：你的小伊卡有什么能力？\n"
+                "风堇：你以前追着银色光尘跑过。"
+            )
+
+        self.assertEqual(facts, [])
+        retry_messages = client.chat.completions.calls[1]["messages"]
+        self.assertIn("必须逐字来自最新一轮用户原话", retry_messages[-1]["content"])
 
 
 class ColdImportTests(unittest.TestCase):

@@ -46,12 +46,15 @@ class MCPManager:
                 definitions.extend(server.get_tool_definitions())
         return definitions
 
-    def call_tool(self, server_name: str, tool_name: str, arguments: dict) -> str:
+    def call_tool(
+        self, server_name: str, tool_name: str, arguments: dict,
+        trace_id: str = "",
+    ) -> str:
         """通过 MCP 服务器调用工具"""
         server = self._servers.get(server_name)
         if not server:
             raise ValueError(f"MCP 服务器不存在: {server_name}")
-        return server.call_tool(tool_name, arguments)
+        return server.call_tool(tool_name, arguments, trace_id=trace_id)
 
     def list_servers(self) -> List[dict]:
         """列出所有 MCP 服务器"""

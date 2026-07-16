@@ -208,11 +208,13 @@ class MoodEngine:
 
     def update(self, pleasure: Optional[float] = None,
                arousal: Optional[float] = None,
-               dominance: Optional[float] = None) -> dict:
+               dominance: Optional[float] = None,
+               trace_id: str = "") -> dict:
         """EMA 平滑更新情绪状态，持久化到磁盘。
 
         传入 None 的维度保持不变。
         """
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         if not self._enabled:
             return self.load()
         s = self._settings
@@ -248,7 +250,7 @@ class MoodEngine:
             if (abs(self._session_cumulative[dim]) > s.session_cumulative_warn
                     and dim not in self._warned_cumulative):
                 self._warned_cumulative.add(dim)
-                self.log.warning("会话累计漂移告警: {} 累计={:+.3f}", dim, self._session_cumulative[dim])
+                log.warning("会话累计漂移告警: {} 累计={:+.3f}", dim, self._session_cumulative[dim])
 
             self._consecutive_same.setdefault(dim, 0)
             if change != 0:
@@ -262,14 +264,14 @@ class MoodEngine:
             if (self._consecutive_same[dim] >= s.consecutive_same_warn
                     and dim not in self._warned_consecutive):
                 self._warned_consecutive.add(dim)
-                self.log.warning("连续同向告警: {} 连续 {} 轮", dim, self._consecutive_same[dim])
+                log.warning("连续同向告警: {} 连续 {} 轮", dim, self._consecutive_same[dim])
 
         cur["updated_at_ts"] = time.time()
         cur["consecutive_low"] = self._consecutive_low
         self._write_file(cur)
         self._state = cur
 
-        self.log.debug(
+        log.debug(
             "情绪更新: P={:+.2f} A={:.2f} D={:+.2f} (连续低落={})",
             cur["pleasure"], cur["arousal"], cur["dominance"], self._consecutive_low,
         )

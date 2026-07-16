@@ -47,17 +47,20 @@ class Retriever:
         strategy.initialize()
         self.log.info("检索器初始化完成")
 
-    def retrieve(self, query: str) -> List[SearchResult]:
+    def retrieve(self, query: str, trace_id: str = "") -> List[SearchResult]:
         """检索"""
-        self.log.info("检索查询开始 (query={} chars)", len(query))
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
+        log.info("检索查询开始 (query={} chars)", len(query))
         strategy = self._get_strategy()
         results = strategy.retrieve(query)
-        self.log.info("检索到 {} 个相关文档", len(results))
+        log.info("检索到 {} 个相关文档", len(results))
         return results
 
-    def get_context(self, query: str, max_length: int = 2000) -> str:
+    def get_context(
+        self, query: str, max_length: int = 2000, trace_id: str = ""
+    ) -> str:
         """获取检索上下文"""
-        results = self.retrieve(query)
+        results = self.retrieve(query, trace_id=trace_id)
 
         context_parts = []
         current_length = 0

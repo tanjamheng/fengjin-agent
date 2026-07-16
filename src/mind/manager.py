@@ -111,6 +111,7 @@ class MindManager:
     def submit(self, messages: list[dict], trace_id: str,
                on_model_failure: Optional[WarningCallback] = None,
                *, include_state: bool = True) -> None:
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         if not self.active:
             return
         try:
@@ -124,7 +125,7 @@ class MindManager:
                 ),
             )
         except Exception as exc:
-            self.log.opt(exception=True).error("心智上下文整理失败，已放弃本轮后台任务: {}", exc)
+            log.opt(exception=True).error("心智上下文整理失败，已放弃本轮后台任务: {}", exc)
             return
         if not turns:
             return
@@ -143,23 +144,23 @@ class MindManager:
                     should_apply=generation_gate,
                 )
             except Exception as exc:
-                self.log.opt(exception=True).error("记忆后台任务提交失败，已跳过本轮: {}", exc)
+                log.opt(exception=True).error("记忆后台任务提交失败，已跳过本轮: {}", exc)
         if include_state and self.state_analyzer:
             try:
                 task = _StateTask(uuid.uuid4().hex[:8], trace_id, generation, turns, callback)
                 self._queue.put(task)
                 queue_size = self._queue.qsize()
-                self.log.debug("心智状态任务已提交: {} (queue={})", task.task_id, queue_size)
+                log.debug("心智状态任务已提交: {} (queue={})", task.task_id, queue_size)
                 warning_threshold = getattr(self.config, "queue_warning_threshold", 10)
                 next_warning = getattr(self, "_next_queue_warning", warning_threshold)
                 if queue_size >= next_warning:
-                    self.log.warning(
+                    log.warning(
                         "心智状态任务积压: queue={} threshold={}（保持 FIFO，不丢任务）",
                         queue_size, next_warning,
                     )
                     self._next_queue_warning = max(next_warning * 2, queue_size + 1)
             except Exception as exc:
-                self.log.opt(exception=True).error("状态后台任务提交失败，已跳过本轮: {}", exc)
+                log.opt(exception=True).error("状态后台任务提交失败，已跳过本轮: {}", exc)
 
     def reset_session_state(self) -> None:
         self.mood_engine.reset_state()
@@ -400,6 +401,7 @@ class MindManager:
                 worker_queue.task_done()
                 return
             try:
+                log = self.log.bind(trace_id=task.trace_id) if task.trace_id else self.log
                 if not self._task_valid(task.generation):
                     continue
                 analyzer = self.state_analyzer
@@ -412,11 +414,15 @@ class MindManager:
                 result = analyzer.analyze(task.turns, mood_before, bond_before, task.trace_id)
                 with self._lock:
                     if not self.active or task.generation != self._generation:
-                        self.log.info("丢弃过期心智任务: {}", task.task_id)
+                        log.info("丢弃过期心智任务: {}", task.task_id)
                         continue
-                    mood_after = self.mood_engine.update(**result.mood.model_dump())
-                    bond_after = self.bond_tracker.update(**result.bond.model_dump())
-                self.log.info(
+                    mood_after = self.mood_engine.update(
+                        **result.mood.model_dump(), trace_id=task.trace_id
+                    )
+                    bond_after = self.bond_tracker.update(
+                        **result.bond.model_dump(), trace_id=task.trace_id
+                    )
+                log.info(
                     "心智状态更新完成: task={} P={:+.2f} A={:.2f} D={:+.2f} W={:.2f} T={:.2f} F={:.2f} H={:.2f} ({:.0f}ms)",
                     task.task_id,
                     mood_after["pleasure"], mood_after["arousal"], mood_after["dominance"],
@@ -424,7 +430,7 @@ class MindManager:
                     (time.monotonic() - started) * 1000,
                 )
             except MindModelError as exc:
-                self.log.error("心智状态模型失败: task={} error={}", task.task_id, exc)
+                log.error("心智状态模型失败: task={} error={}", task.task_id, exc)
                 current_runtime = (
                     exc.runtime_version is not None
                     and analyzer.runtime.is_current(exc.runtime_version)
@@ -433,7 +439,7 @@ class MindManager:
                     task.generation, task.warn, exc.permanent, current_runtime
                 )
             except Exception as exc:
-                self.log.opt(exception=True).error("心智状态后台任务异常，已放弃本轮: {}", exc)
+                log.opt(exception=True).error("心智状态后台任务异常，已放弃本轮: {}", exc)
             finally:
                 worker_queue.task_done()
                 if worker_queue.qsize() < self.config.queue_warning_threshold:

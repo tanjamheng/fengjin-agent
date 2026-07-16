@@ -57,9 +57,12 @@ class MemoryExtractor:
                 "2. 跳过寒暄、闲聊、无实质内容的对话\n"
                 "3. 跳过显而易见的常识\n"
                 "4. 跳过过于具体且不重要的细节\n"
+                "5. 事实只能来自最新一轮用户明确说出的内容，风堇回复不是事实来源\n"
+                "6. 问题、请求、假设及风堇自行补充的故事不能当作用户事实\n"
+                "7. evidence 必须逐字复制最新一轮用户原话中的连续片段\n"
                 "重要性判断：high=过敏/禁忌/核心偏好/身份/重要事件（必须记住）；low=日常习惯/近期状态/一般偏好（按需检索）\n"
                 "type说明：semantic=一般性知识/偏好，episodic=具体事件/经历。\n"
-                "返回 JSON：{\"facts\": [{\"content\": \"...\", \"type\": \"semantic|episodic\", \"importance\": \"high|low\"}]}"
+                "返回 JSON：{\"facts\": [{\"content\": \"...\", \"evidence\": \"用户原话\", \"type\": \"semantic|episodic\", \"importance\": \"high|low\"}]}"
             )
         self._blacklist = [
             re.compile(p) for p in config.filter.blacklist_patterns
@@ -95,6 +98,7 @@ class MemoryExtractor:
                 return self._llm_extract_text(conversation_text, lease)
 
         lease = runtime_lease
+        latest_user_text = _extract_latest_user_text(conversation_text)
         messages = [
             {"role": "system", "content": self._extraction_prompt},
             {"role": "user", "content": (
@@ -117,7 +121,7 @@ class MemoryExtractor:
                     kwargs["response_format"] = {"type": "json_object"}
                 response = lease.client.chat.completions.create(**kwargs)
                 raw_text = (response.choices[0].message.content or "").strip()
-                facts, error = self._parse_and_validate(raw_text)
+                facts, error = self._parse_and_validate(raw_text, latest_user_text)
                 if facts is not None:
                     return facts
 
@@ -170,7 +174,9 @@ class MemoryExtractor:
         with self._mode_lock:
             self._response_modes[version] = mode
 
-    def _parse_and_validate(self, text: str) -> tuple[list[dict] | None, str]:
+    def _parse_and_validate(
+        self, text: str, latest_user_text: str
+    ) -> tuple[list[dict] | None, str]:
         """解析 JSON 并校验字段完整性
 
         Returns:
@@ -205,6 +211,12 @@ class MemoryExtractor:
             content = raw_content.strip()
             if not content:
                 continue
+
+            evidence = fact.get("evidence", "")
+            if not isinstance(evidence, str) or not evidence.strip():
+                return None, "fact.evidence必须是非空字符串"
+            if _normalize_evidence(evidence) not in _normalize_evidence(latest_user_text):
+                return None, "fact.evidence必须逐字来自最新一轮用户原话"
 
             fact_type = fact.get("type", "")
             if fact_type not in ("semantic", "episodic"):
@@ -246,3 +258,17 @@ class MemoryExtractor:
             filtered.append(fact)
 
         return filtered
+
+
+def _extract_latest_user_text(conversation_text: str) -> str:
+    """从格式化对话中取最后一段用户原话，供证据硬校验。"""
+    matches = re.findall(
+        r"(?:^|\n)用户：(.*?)(?=\n风堇：|\Z)",
+        conversation_text,
+        flags=re.DOTALL,
+    )
+    return matches[-1].strip() if matches else ""
+
+
+def _normalize_evidence(text: str) -> str:
+    return re.sub(r"\s+", "", text.strip())

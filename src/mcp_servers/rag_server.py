@@ -56,15 +56,20 @@ class RAGMCPServer(MCPServerBase):
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
         return [RAG_RETRIEVE_TOOL]
 
-    def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+    def call_tool(
+        self, tool_name: str, arguments: Dict[str, Any], trace_id: str = ""
+    ) -> str:
         if tool_name == "rag_retrieve":
             query = arguments.get("query", "")
             if not query:
                 return "错误：query 参数不能为空"
 
-            context = self.rag_service.retrieve(query)
+            context = self.rag_service.retrieve(query, trace_id=trace_id)
             if not context:
-                return "未找到相关文档。请直接根据你的知识回答用户问题。"
+                return (
+                    "知识库中未找到足够相关的官方资料。请坦诚说明不确定，"
+                    "不要凭模型记忆补充具体设定、剧情或能力细节。"
+                )
             return context
 
         return f"未知工具: {tool_name}"

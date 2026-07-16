@@ -47,15 +47,18 @@ class Reranker:
         strategy.initialize()
         self.log.info("重排序器初始化完成")
 
-    def rerank(self, query: str, results: List[SearchResult]) -> List[SearchResult]:
+    def rerank(
+        self, query: str, results: List[SearchResult], trace_id: str = ""
+    ) -> List[SearchResult]:
         """重排序"""
         if self.strategy_type == "none":
             return results
 
-        self.log.info("重排序 {} 个结果", len(results))
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
+        log.info("重排序 {} 个结果", len(results))
         strategy = self._get_strategy()
         reranked = strategy.rerank(query, results)
-        self.log.info("重排序完成，返回 {} 个结果", len(reranked))
+        log.info("重排序完成，返回 {} 个结果", len(reranked))
         return reranked
 
     def cleanup(self) -> None:

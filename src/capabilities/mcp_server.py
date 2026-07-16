@@ -23,7 +23,9 @@ class MCPServerBase(ABC):
         pass
 
     @abstractmethod
-    def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+    def call_tool(
+        self, tool_name: str, arguments: Dict[str, Any], trace_id: str = ""
+    ) -> str:
         """调用 MCP 工具，返回结果文本"""
         pass
 

@@ -31,21 +31,28 @@ class ContextManager:
         流程：检索记忆 → 合并模板 → 返回增强后的输入。
         记忆系统未启用或检索结果为空时，返回原始输入。
         """
+        result, _ = self.build_input_with_metadata(user_input, trace_id=trace_id)
+        return result
+
+    def build_input_with_metadata(
+        self, user_input: str, trace_id: str = ""
+    ) -> tuple[str, list[str]]:
+        """组装输入，并返回本轮实际注入的记忆层级（不重复落盘内容）。"""
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         t_start = time.monotonic()
         if not self.config.memory.enabled:
-            return user_input
+            return user_input, []
 
         if not self.memory_retriever:
-            return user_input
+            return user_input, []
 
         try:
             memory_text = self.memory_retriever.retrieve(user_input, trace_id=trace_id)
         except Exception as e:
             log.error("记忆检索失败（不阻塞对话）: {}", e)
-            return user_input
+            return user_input, []
         if not memory_text:
-            return user_input
+            return user_input, []
 
         result = self.config.memory.template.format(
             memory=memory_text,
@@ -54,7 +61,12 @@ class ContextManager:
         t_total = (time.monotonic() - t_start) * 1000
         log.info("上下文组装完成 ({:.0f}ms): 记忆注入成功, 增强后输入 {} chars → {} chars",
                  t_total, len(user_input), len(result))
-        return result
+        memory_sources = [
+            line[1:-1].strip()
+            for line in memory_text.splitlines()
+            if line.startswith("[") and line.endswith("]")
+        ]
+        return result, memory_sources or ["记忆"]
 
     def trim_messages(self, messages: List[Dict], trace_id: str = "") -> List[Dict]:
         """滑动窗口：从头部淘汰旧消息

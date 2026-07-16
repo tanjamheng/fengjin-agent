@@ -24,8 +24,8 @@ from ..utils.logger import get_logger
 # ── 默认参数 ──────────────────────────────────────────────────
 
 _DEFAULT_EMA_ALPHA = 0.3
-_DEFAULT_DRIFT_THRESHOLD = 0.65
-_DEFAULT_CONSECUTIVE_TRIGGER = 2
+_DEFAULT_DRIFT_THRESHOLD = 0.48
+_DEFAULT_CONSECUTIVE_TRIGGER = 3
 _DEFAULT_COOLDOWN_ROUNDS = 5
 _DEFAULT_MIN_REPLY_LENGTH = 15
 
@@ -137,12 +137,13 @@ class PersonaDriftGuard:
         self._repair_rounds = 0
         self._cooldown_remaining = 0
 
-    def check(self, reply_text: str) -> Optional[str]:
+    def check(self, reply_text: str, trace_id: str = "") -> Optional[str]:
         """检测一轮回复的角色漂移程度。
 
         Returns:
             锚点注入文本（需要修复时），或 None（无需修复 / 不可用）
         """
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
         if self._cleaned:
             return None
         if self._emb is None or self._anchor_vecs is None:
@@ -159,7 +160,7 @@ class PersonaDriftGuard:
         try:
             reply_vec = self._emb.encode(reply_text)
         except Exception as e:
-            self.log.warning("回复编码失败: {}", e)
+            log.warning("回复编码失败: {}", e)
             return None
 
         raw_score = self._top_k_cosine(reply_vec, k=3)
@@ -171,7 +172,7 @@ class PersonaDriftGuard:
             alpha = self._settings.ema_alpha
             self._ewma = alpha * raw_score + (1 - alpha) * self._ewma
 
-        self.log.debug(
+        log.debug(
             "driftScore raw={:.3f} ewma={:.3f} threshold={:.2f}",
             raw_score, self._ewma, self._settings.drift_threshold,
         )
@@ -184,7 +185,7 @@ class PersonaDriftGuard:
             self._consecutive_below = 0
             # 恢复正常 → 如果之前在修复中，记录恢复 + 进入冷却
             if self._repair_active:
-                self.log.info(
+                log.info(
                     "角色漂移已恢复 (driftScore: {:.3f}，注入 {} 轮后恢复)",
                     self._ewma, self._repair_rounds,
                 )
@@ -199,7 +200,7 @@ class PersonaDriftGuard:
             self._repair_rounds += 1
             # 修复中降低注入间隔：set to trigger-1，下一轮漂移立即再次注入
             self._consecutive_below = cfg.consecutive_trigger - 1
-            self.log.info(
+            log.info(
                 "角色漂移修复锚点已注入 (driftScore: {:.3f}, round: {})",
                 self._ewma, self._repair_rounds,
             )
