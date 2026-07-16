@@ -13,7 +13,7 @@ from typing import Optional, Callable
 from openai import AsyncOpenAI
 
 from ..config import Config
-from ..session import MessageMeta, SessionManager
+from ..session import SessionManager
 from ..safety import SafetyManager, Action as SafetyAction
 from ..capabilities.skill import SkillBase, SkillContext
 from ..capabilities.tool import ToolBase
@@ -196,10 +196,8 @@ class Agent:
             logger.info("Skill 注入完成 ({:.0f}ms)", t_skill)
 
         # 2. 用户消息入历史（无论安全判定如何，核心1 2.5）
-        self.session_mgr.append_message(
-            "user", message_content, MessageMeta(raw_content=user_input)
-        )
-        logger.debug("用户消息已入历史 ({} chars)", len(message_content))
+        self.session_mgr.append_message("user", user_input)
+        logger.debug("用户原始消息已入历史 ({} chars)", len(user_input))
 
         # 提前创建 controller + 赋值，消除 cancel 信号丢失窗口
         controller = StreamController()
@@ -257,7 +255,7 @@ class Agent:
         except BlockedError:
             raise
         except Exception:
-            rollback_last_user(self.session_mgr, message_content)
+            rollback_last_user(self.session_mgr, user_input)
             raise
 
         # 5. Tool Calling 流水线
@@ -478,11 +476,11 @@ class Agent:
             raise
         except asyncio.CancelledError:
             logger.info("对话任务被取消, 回滚用户消息")
-            rollback_last_user(self.session_mgr, message_content)
+            rollback_last_user(self.session_mgr, user_input)
             raise
         except Exception:
             logger.exception("对话管线异常, 回滚用户消息")
-            rollback_last_user(self.session_mgr, message_content)
+            rollback_last_user(self.session_mgr, user_input)
             raise
         finally:
             self._current_controller = None
@@ -507,7 +505,7 @@ class Agent:
                 self.session_mgr.flush()
                 logger.info("用户取消: 保留已生成内容 ({} chars)", len(combined))
             else:
-                rollback_last_user(self.session_mgr, message_content)
+                rollback_last_user(self.session_mgr, user_input)
                 logger.info("用户取消: 无内容，用户消息已回滚")
         elif full_text:
             self.session_mgr.append_message("assistant", full_text)

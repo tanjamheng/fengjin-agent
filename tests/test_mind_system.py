@@ -15,6 +15,7 @@ import httpx
 from openai import BadRequestError
 
 from src.agent.context_manager import estimate_messages_tokens
+from src.agent.core import _build_api_messages
 from src.mind.config import MindConfig
 from src.mind.context_builder import normalize_turns
 from src.mind.manager import MindManager
@@ -55,26 +56,34 @@ class _FakeClient:
 
 
 class MindContextTests(unittest.TestCase):
-    def test_mind_history_uses_raw_user_text_instead_of_skill_prompt(self):
+    def test_skill_prompt_is_current_turn_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             manager = SessionManager(data_dir=tmp)
-            manager.append_message(
-                "user",
-                "[内部Skill指令] 请按特殊格式处理\n我今天很开心",
-                MessageMeta(raw_content="我今天很开心"),
+            raw_input = "我今天很开心"
+            enhanced_input = "[内部Skill指令] 请按特殊格式处理\n我今天很开心"
+            manager.append_message("user", raw_input)
+
+            api_messages = _build_api_messages(
+                manager,
+                enhanced_input,
+                "system prompt",
             )
+
+            self.assertEqual(api_messages[-1]["content"], enhanced_input)
+            self.assertEqual(manager.get_current_messages()[0]["content"], raw_input)
+            self.assertEqual(manager.get_current_messages(raw_user_content=True)[0]["content"], raw_input)
+
             manager.append_message("assistant", "听见你开心，我也很高兴。")
-
-            dialogue_history = manager.get_current_messages()
-            mind_history = manager.get_current_messages(raw_user_content=True)
-
-            self.assertIn("内部Skill指令", dialogue_history[0]["content"])
-            self.assertEqual(mind_history[0]["content"], "我今天很开心")
-            self.assertEqual(
-                manager.current_session.messages[0].display_content,
-                "我今天很开心",
+            manager.append_message("user", "下一轮")
+            next_turn_messages = _build_api_messages(
+                manager,
+                "下一轮",
+                "system prompt",
             )
-            self.assertEqual(manager.current_session.title, "我今天很开心")
+
+            self.assertEqual(next_turn_messages[1]["content"], raw_input)
+            self.assertNotIn("内部Skill指令", str(next_turn_messages))
+            self.assertEqual(manager.current_session.title, raw_input)
 
     def test_tool_messages_are_removed_and_count_as_one_turn(self):
         messages = [

@@ -434,7 +434,7 @@ AI风堇_治愈晨昏/
 - **ChromaDB 非线程安全**，所有写入通过单线程 Queue 串行化
 - **知识库内容限定翁法罗斯世界观**，不包含现实世界专属知识
 - **记忆注入到用户消息中（非 system_prompt）**，增强版仅当轮使用不入历史
-- **Skill 执行优先于记忆注入**——`chat()` 先 Skill 后记忆
+- **Skill 执行优先于记忆注入**——`chat()` 先 Skill 后记忆；Skill 增强文本仅作用当前轮主模型推理，不写入 Session，历史/前端/心智链路均使用用户原话
 - **安全检测在 Agent.chat() 内部**——`SafetyManager.check()` 是管线第一步（BLOCK→BlockedError / COMFORT→安抚注入 / PASS→继续）
 
 ## 清理链
