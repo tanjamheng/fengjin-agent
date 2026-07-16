@@ -1,5 +1,6 @@
 """运行时配置热更新 — 写 .env → os.environ → 重建客户端"""
 
+import asyncio
 import os
 import re
 from pathlib import Path
@@ -172,7 +173,7 @@ class ConfigManager:
             old_enabled = (previous_environ.get("MIND_ENABLED") or "false").lower() == "true"
             mind_changed = mind_changed or old_enabled != mind_enabled
         if manager and mind_changed:
-            manager.reconfigure(mind_enabled)
+            await asyncio.to_thread(manager.reconfigure, mind_enabled)
             app.state.memory_manager = manager.memory_manager
 
     @staticmethod

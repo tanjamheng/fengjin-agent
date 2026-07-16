@@ -5,6 +5,7 @@ import os
 import queue
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,7 +20,9 @@ from src.mind.context_builder import normalize_turns
 from src.mind.manager import MindManager
 from src.mind.state_analyzer import StateAnalysisResult, StateAnalyzer
 from src.memory.writer import MemoryWriter
+from src.memory.manager import MemoryManager
 from src.server.config_manager import ConfigManager
+from src.session import MessageMeta, SessionManager
 from src.utils.logger import get_logger
 from src.mood.engine import MoodEngine, MoodSettings
 from src.bond.tracker import BondSettings, BondTracker
@@ -49,6 +52,23 @@ class _FakeClient:
 
 
 class MindContextTests(unittest.TestCase):
+    def test_mind_history_uses_raw_user_text_instead_of_skill_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = SessionManager(data_dir=tmp)
+            manager.append_message(
+                "user",
+                "[内部Skill指令] 请按特殊格式处理\n我今天很开心",
+                MessageMeta(raw_content="我今天很开心"),
+            )
+            manager.append_message("assistant", "听见你开心，我也很高兴。")
+
+            dialogue_history = manager.get_current_messages()
+            mind_history = manager.get_current_messages(raw_user_content=True)
+
+            self.assertIn("内部Skill指令", dialogue_history[0]["content"])
+            self.assertEqual(mind_history[0]["content"], "我今天很开心")
+            self.assertEqual(manager.current_session.title, "我今天很开心")
+
     def test_tool_messages_are_removed_and_count_as_one_turn(self):
         messages = [
             {"role": "user", "content": "风堇，小伊卡有什么能力？"},
@@ -157,6 +177,72 @@ class StateAnalyzerTests(unittest.TestCase):
 
 
 class MindManagerBoundaryTests(unittest.TestCase):
+    def test_state_worker_reads_latest_state_when_each_task_is_consumed(self):
+        class _State:
+            def __init__(self, value):
+                self.value = dict(value)
+
+            def load(self):
+                return dict(self.value)
+
+            def update(self, **targets):
+                self.value.update(targets)
+                return dict(self.value)
+
+        class _Analyzer:
+            def __init__(self):
+                self.inputs = []
+
+            def analyze(self, _turns, mood, bond, _trace_id):
+                self.inputs.append((dict(mood), dict(bond)))
+                next_pleasure = 0.1 if len(self.inputs) == 1 else 0.2
+                return StateAnalysisResult.model_validate({
+                    "mood": {
+                        "pleasure": next_pleasure,
+                        "arousal": 0.3,
+                        "dominance": 0.4,
+                    },
+                    "bond": {
+                        "warmth": 0.6,
+                        "trust": 0.3,
+                        "formality": 0.4,
+                        "humor": 0.2,
+                    },
+                })
+
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._enabled = True
+        manager._ready = True
+        manager._cleaned = False
+        manager._generation = 1
+        manager.config = MindConfig()
+        manager.max_context_tokens = 1_000
+        manager.log = get_logger("mind_state_fifo_test")
+        manager.memory_manager = None
+        manager.state_analyzer = _Analyzer()
+        manager.mood_engine = _State({
+            "pleasure": 0.0, "arousal": 0.2, "dominance": 0.3,
+        })
+        manager.bond_tracker = _State({
+            "warmth": 0.5, "trust": 0.2, "formality": 0.5, "humor": 0.1,
+        })
+        manager._queue = queue.Queue()
+        worker = threading.Thread(target=manager._worker_loop, args=(manager._queue,))
+        worker.start()
+
+        messages = [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好，灰宝。"},
+        ]
+        manager.submit(messages, "first")
+        manager.submit(messages, "second")
+        manager._queue.put(None)
+        worker.join(timeout=1)
+
+        self.assertEqual(manager.state_analyzer.inputs[0][0]["pleasure"], 0.0)
+        self.assertEqual(manager.state_analyzer.inputs[1][0]["pleasure"], 0.1)
+
     def test_submit_internal_failure_never_escapes_to_dialogue(self):
         manager = object.__new__(MindManager)
         manager._lock = threading.RLock()
@@ -181,8 +267,78 @@ class MindManagerBoundaryTests(unittest.TestCase):
             should_apply=lambda: False,
         )
 
+    def test_memory_conversation_tasks_are_processed_fifo(self):
+        processed = []
+
+        class _Extractor:
+            def extract_conversation(self, text, trace_id=""):
+                if text == "first":
+                    time.sleep(0.02)
+                return [{"content": text, "type": "semantic", "importance": "low"}]
+
+        class _Writer:
+            _running = True
+
+            def write(self, facts, should_apply=None):
+                processed.extend(fact["content"] for fact in facts)
+
+        manager = object.__new__(MemoryManager)
+        manager.log = get_logger("memory_fifo_test")
+        manager.extractor = _Extractor()
+        manager.writer = _Writer()
+        manager._conversation_queue = queue.Queue()
+        manager._conversation_stop = threading.Event()
+        manager._conversation_worker = threading.Thread(
+            target=manager._conversation_loop, daemon=True
+        )
+        manager._conversation_worker.start()
+        manager.extract_conversation_async("first")
+        manager.extract_conversation_async("second")
+        manager._conversation_queue.join()
+        manager._conversation_stop.set()
+        manager._conversation_queue.put(None)
+        manager._conversation_worker.join(timeout=1)
+
+        self.assertEqual(processed, ["first", "second"])
+
 
 class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_changed_mind_config_rebuilds_off_event_loop_thread(self):
+        event_loop_thread = threading.get_ident()
+
+        class _Mind:
+            memory_manager = object()
+
+            def __init__(self):
+                self.thread_id = None
+
+            def reconfigure(self, _enabled):
+                self.thread_id = threading.get_ident()
+
+        mind = _Mind()
+        app = SimpleNamespace(state=SimpleNamespace(mind_manager=mind))
+        previous = {
+            "FENGJIN_API_KEY": "main-key",
+            "FENGJIN_BASE_URL": "https://main.test",
+            "FENGJIN_MODEL": "main-model",
+            "MIND_API_KEY": "old-mind-key",
+            "MIND_BASE_URL": "https://mind.test",
+            "MIND_MODEL": "mind-model",
+            "MIND_ENABLED": "true",
+        }
+        current = dict(previous, MIND_API_KEY="new-mind-key")
+        with patch.dict(os.environ, current, clear=False):
+            await ConfigManager.rebuild_clients(
+                app,
+                {"api_key": None, "base_url": None, "model": None},
+                {"api_key": "new-mind-key", "base_url": None, "model": None},
+                True,
+                previous_environ=previous,
+            )
+
+        self.assertIsNotNone(mind.thread_id)
+        self.assertNotEqual(mind.thread_id, event_loop_thread)
+
     async def test_unchanged_mind_config_does_not_restart_worker(self):
         class _Mind:
             memory_manager = object()

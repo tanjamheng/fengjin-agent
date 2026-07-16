@@ -91,7 +91,8 @@ class SessionManager:
         if (self.current_session.title.startswith("新会话")
                 and role == "user"
                 and not any(m.role == "user" for m in self.current_session.messages)):
-            auto_title = content[:20].replace("\n", " ").strip()
+            title_source = metadata.raw_content if metadata and metadata.raw_content else content
+            auto_title = title_source[:20].replace("\n", " ").strip()
             if auto_title:
                 self.current_session.title = auto_title
 
@@ -109,12 +110,19 @@ class SessionManager:
             return self.current_session.session_id
         return None
 
-    def get_current_messages(self) -> list[dict]:
-        """获取当前会话的全部消息（dict 格式，兼容 Agent.messages）"""
+    def get_current_messages(self, *, raw_user_content: bool = False) -> list[dict]:
+        """获取当前会话消息；心智链路可选择用户原话而非 Skill 增强文本。"""
         if not self.current_session:
             return []
         return [
-            {"role": msg.role, "content": msg.content}
+            {
+                "role": msg.role,
+                "content": (
+                    msg.metadata.raw_content
+                    if raw_user_content and msg.role == "user" and msg.metadata.raw_content is not None
+                    else msg.content
+                ),
+            }
             for msg in self.current_session.messages
         ]
 

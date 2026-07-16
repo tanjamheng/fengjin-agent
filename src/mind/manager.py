@@ -134,11 +134,16 @@ class MindManager:
         analyzer = None
         try:
             MindSettings.validate_environment()
-            memory = MemoryManager(self.memory_config)
+            model_name = MindSettings.model_name()
+            memory = MemoryManager(
+                self.memory_config,
+                client=MindSettings.create_client(self.config),
+                model_name=model_name,
+            )
             analyzer = StateAnalyzer(
                 self.config,
                 MindSettings.create_client(self.config),
-                MindSettings.model_name(),
+                model_name,
             )
             with self._lock:
                 self.memory_manager = memory
@@ -156,11 +161,25 @@ class MindManager:
         except Exception as exc:
             self.log.warning("心智系统配置或初始化失败，已降级关闭: {}", exc)
             if memory:
-                memory.cleanup()
+                try:
+                    memory.cleanup()
+                except Exception as cleanup_exc:
+                    self.log.warning("心智记忆组件初始化回滚异常: {}", cleanup_exc)
             if analyzer:
-                analyzer.close()
+                try:
+                    analyzer.close()
+                except Exception as cleanup_exc:
+                    self.log.warning("心智状态组件初始化回滚异常: {}", cleanup_exc)
             with self._lock:
+                # 构造后半段（含 Worker 启动）失败时也必须撤销已发布引用和状态开关。
+                if self.memory_manager is memory:
+                    self.memory_manager = None
+                if self.state_analyzer is analyzer:
+                    self.state_analyzer = None
+                self._worker = None
                 self._ready = False
+                self.mood_engine.set_enabled(False)
+                self.bond_tracker.set_enabled(False)
 
     def cleanup(self) -> None:
         with self._lock:
@@ -240,6 +259,8 @@ class MindManager:
                 self._queue.put(None)
         if worker and worker.is_alive() and worker is not threading.current_thread():
             worker.join(timeout=self.config.cleanup_timeout_seconds)
+            if worker.is_alive():
+                self.log.warning("心智状态 Worker 清理超时，将丢弃未完成结果")
         if memory:
             memory.cleanup()
         if analyzer:

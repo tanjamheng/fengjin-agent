@@ -1,7 +1,11 @@
 """记忆管理器（门面类）"""
 
+import queue
 import threading
 import time
+import uuid
+from dataclasses import dataclass
+from typing import Callable, Optional
 
 from .config import MemoryConfig, MemorySettings
 from .storage import MemoryStorage
@@ -9,6 +13,15 @@ from .extractor import MemoryExtractor
 from .writer import MemoryWriter
 from .retriever import MemoryRetriever
 from ..utils.logger import get_logger
+
+
+@dataclass(frozen=True)
+class _ConversationTask:
+    task_id: str
+    conversation_text: str
+    trace_id: str
+    on_model_failure: Optional[Callable[[bool], None]]
+    should_apply: Optional[Callable[[], bool]]
 
 
 class MemoryManager:
@@ -19,10 +32,10 @@ class MemoryManager:
     - extract_async(user_input, assistant_message)：异步提取+写入
     """
 
-    def __init__(self, config: MemoryConfig):
-        small_client = MemorySettings.create_mind_model_client()
+    def __init__(self, config: MemoryConfig, *, client=None, model_name: str | None = None):
+        small_client = client or MemorySettings.create_mind_model_client()
         self.client = small_client
-        model_name = MemorySettings.get_mind_model_name()
+        model_name = model_name or MemorySettings.get_mind_model_name()
 
         self.storage = None
         self.extractor = None
@@ -44,6 +57,19 @@ class MemoryManager:
         self.log = get_logger("memory_manager")
         self._extract_threads: list[threading.Thread] = []
         self._lock = threading.Lock()
+        self._conversation_queue: queue.Queue[_ConversationTask | None] = queue.Queue()
+        self._conversation_stop = threading.Event()
+        self._conversation_worker = threading.Thread(
+            target=self._conversation_loop,
+            name="mind-memory-worker",
+            daemon=True,
+        )
+        try:
+            self._conversation_worker.start()
+        except Exception:
+            # Worker 创建也属于初始化链：失败时不得遗留 writer、Chroma 或客户端资源。
+            self.cleanup()
+            raise
 
     def retrieve(self, user_input: str, trace_id: str = "") -> str:
         """检索记忆，返回格式化的记忆文本（用于注入 system prompt）"""
@@ -83,34 +109,68 @@ class MemoryManager:
     def extract_conversation_async(self, conversation_text: str,
                                    trace_id: str = "", on_model_failure=None,
                                    should_apply=None) -> None:
-        """从已经整理好的多轮自然对话异步提取记忆。"""
-        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
+        """提交到独立 FIFO Worker；与状态分析并行，但记忆轮次不乱序。"""
+        if self._conversation_stop.is_set():
+            self.log.warning("记忆提取任务提交跳过: Worker 已停止")
+            return
+        task = _ConversationTask(
+            task_id=uuid.uuid4().hex[:8],
+            conversation_text=conversation_text,
+            trace_id=trace_id,
+            on_model_failure=on_model_failure,
+            should_apply=should_apply,
+        )
+        self._conversation_queue.put(task)
+        self.log.debug(
+            "记忆提取任务已提交: {} (queue={})",
+            task.task_id, self._conversation_queue.qsize(),
+        )
 
-        def _worker():
-            t_start = time.time()
+    def _conversation_loop(self) -> None:
+        while True:
+            task = self._conversation_queue.get()
+            if task is None:
+                self._conversation_queue.task_done()
+                return
             try:
-                facts = self.extractor.extract_conversation(conversation_text, trace_id=trace_id)
+                if self._conversation_stop.is_set() or not _can_apply(task.should_apply):
+                    continue
+                log = self.log.bind(trace_id=task.trace_id) if task.trace_id else self.log
+                t_start = time.time()
+                facts = self.extractor.extract_conversation(
+                    task.conversation_text, trace_id=task.trace_id
+                )
                 elapsed = (time.time() - t_start) * 1000
-                if facts and should_apply is not None and not should_apply():
-                    log.info("丢弃已失效的记忆提取结果")
+                if facts and not _can_apply(task.should_apply):
+                    log.info("丢弃已失效的记忆提取结果: {}", task.task_id)
                 elif facts and self.writer._running:
-                    self.writer.write(facts, should_apply=should_apply)
-                    log.info("异步记忆提取完成: {} 条事实 ({:.0f}ms)", len(facts), elapsed)
+                    self.writer.write(facts, should_apply=task.should_apply)
+                    log.info(
+                        "异步记忆提取完成: task={} {} 条事实 ({:.0f}ms)",
+                        task.task_id, len(facts), elapsed,
+                    )
                 elif not facts:
                     log.debug("异步记忆提取: 无新事实 ({:.0f}ms)", elapsed)
             except Exception as e:
-                log.opt(exception=True).error("记忆提取失败: {}", e)
-                if on_model_failure and _is_model_error(e):
-                    on_model_failure(getattr(e, "status_code", None) in (401, 403, 404))
-
-        with self._lock:
-            self._extract_threads = [t for t in self._extract_threads if t.is_alive()]
-            thread = threading.Thread(target=_worker, daemon=True)
-            self._extract_threads.append(thread)
-        thread.start()
+                self.log.opt(exception=True).error(
+                    "记忆提取失败 [task={} trace={}]: {}", task.task_id, task.trace_id, e
+                )
+                if task.on_model_failure and _is_model_error(e):
+                    task.on_model_failure(getattr(e, "status_code", None) in (401, 403, 404))
+            finally:
+                self._conversation_queue.task_done()
 
     def cleanup(self) -> None:
         """停止写入线程并关闭存储（防御部分初始化：任意属性缺失时跳过对应步骤）"""
+        if hasattr(self, "_conversation_stop"):
+            self._conversation_stop.set()
+        worker = getattr(self, "_conversation_worker", None)
+        if worker is not None and worker.is_alive():
+            self._conversation_queue.put(None)
+            worker.join(timeout=10.0)
+            if worker.is_alive():
+                self.log.warning("记忆 FIFO Worker 清理超时，将丢弃未完成结果")
+        self._conversation_worker = None
         if hasattr(self, "_lock") and hasattr(self, "_extract_threads"):
             with self._lock:
                 active = [t for t in self._extract_threads if t.is_alive()]
@@ -146,3 +206,12 @@ def _is_model_error(exc: Exception) -> bool:
         or exc.__class__.__name__ == "MemoryModelOutputError"
         or hasattr(exc, "status_code")
     )
+
+
+def _can_apply(should_apply) -> bool:
+    if should_apply is None:
+        return True
+    try:
+        return bool(should_apply())
+    except Exception:
+        return False

@@ -13,7 +13,7 @@ from typing import Optional, Callable
 from openai import AsyncOpenAI
 
 from ..config import Config
-from ..session import SessionManager
+from ..session import MessageMeta, SessionManager
 from ..safety import SafetyManager, Action as SafetyAction
 from ..capabilities.skill import SkillBase, SkillContext
 from ..capabilities.tool import ToolBase
@@ -191,7 +191,9 @@ class Agent:
             logger.info("Skill 注入完成 ({:.0f}ms)", t_skill)
 
         # 2. 用户消息入历史（无论安全判定如何，核心1 2.5）
-        self.session_mgr.append_message("user", message_content)
+        self.session_mgr.append_message(
+            "user", message_content, MessageMeta(raw_content=user_input)
+        )
         logger.debug("用户消息已入历史 ({} chars)", len(message_content))
 
         # 提前创建 controller + 赋值，消除 cancel 信号丢失窗口
@@ -453,7 +455,7 @@ class Agent:
                 self.session_mgr.flush()
                 if self.mind_manager:
                     self.mind_manager.submit(
-                        self.session_mgr.get_current_messages(), self.trace_id,
+                        self.session_mgr.get_current_messages(raw_user_content=True), self.trace_id,
                         self.on_mind_warning, include_state=False,
                     )
                 elif self.memory_manager:
@@ -485,8 +487,8 @@ class Agent:
 
         # 7. 落盘
         if controller.cancel_requested:
-            # 保留已完成轮次的 all_text + 当前轮 partial full_text（"停止保留已收文字"）
-            combined = all_text + full_text
+            # full_text 已在上方合并 all_text，直接保留即可，避免 Tool Calling 前文重复。
+            combined = full_text
             if combined:
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
@@ -507,7 +509,7 @@ class Agent:
         if self.mind_manager and full_text:
             logger.debug("触发异步心智处理")
             self.mind_manager.submit(
-                self.session_mgr.get_current_messages(), self.trace_id,
+                self.session_mgr.get_current_messages(raw_user_content=True), self.trace_id,
                 self.on_mind_warning,
                 include_state=not controller.cancel_requested,
             )

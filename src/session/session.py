@@ -10,6 +10,7 @@ class MessageMeta(BaseModel):
     emotion: Optional[str] = None
     rag_hits: Optional[list[str]] = None
     memory_used: Optional[list[str]] = None
+    raw_content: Optional[str] = None
 
 
 class Message(BaseModel):
