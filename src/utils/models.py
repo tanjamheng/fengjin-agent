@@ -387,7 +387,11 @@ def _quantize_sentence_transformer(src_path: str, dst_path: str) -> None:
     """SentenceTransformer: FP32 → FP16 → 保存到临时目录"""
     from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer(src_path, device="cpu")
+    model = SentenceTransformer(
+        src_path,
+        device="cpu",
+        tokenizer_kwargs={"fix_mistral_regex": False},
+    )
     model.half()
     model.save(dst_path, safe_serialization=True)
 
@@ -396,7 +400,11 @@ def _quantize_cross_encoder(src_path: str, dst_path: str) -> None:
     """CrossEncoder: FP32 → FP16 → 保存到临时目录"""
     from sentence_transformers import CrossEncoder
 
-    model = CrossEncoder(src_path, device="cpu")
+    model = CrossEncoder(
+        src_path,
+        device="cpu",
+        tokenizer_kwargs={"fix_mistral_regex": False},
+    )
     model.model.half()
     model.model.save_pretrained(dst_path, safe_serialization=True)
     if hasattr(model, "tokenizer") and model.tokenizer is not None:
@@ -408,10 +416,12 @@ def _quantize_causal_lm(src_path: str, dst_path: str) -> None:
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM
 
-    tokenizer = AutoTokenizer.from_pretrained(src_path)
+    tokenizer = AutoTokenizer.from_pretrained(
+        src_path, fix_mistral_regex=False
+    )
     model = AutoModelForCausalLM.from_pretrained(
         src_path,
-        torch_dtype=torch.float16,
+        dtype=torch.float16,
         device_map="cpu",
     )
     model.save_pretrained(dst_path, safe_serialization=True)

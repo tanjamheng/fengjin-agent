@@ -183,6 +183,7 @@ class GuardModel:
                 model_path,
                 use_fast=True,
                 local_files_only=True,
+                fix_mistral_regex=False,
             )
 
             dtype_map = {
@@ -190,7 +191,7 @@ class GuardModel:
                 "float16": torch.float16,
                 "float32": torch.float32,
             }
-            torch_dtype = dtype_map.get(self.config.dtype, torch.float16)
+            model_dtype = dtype_map.get(self.config.dtype, torch.float16)
 
             # 通过 GPU 预算管理器决定设备：
             #   budget=cuda → HF device_map="auto" (保留跨设备分载能力)
@@ -207,7 +208,7 @@ class GuardModel:
                     with contextlib.redirect_stderr(devnull):
                         return AutoModelForCausalLM.from_pretrained(
                             model_path,
-                            torch_dtype=torch_dtype,
+                            dtype=model_dtype,
                             device_map=_device_map,
                             use_safetensors=True,
                             local_files_only=True,
@@ -218,7 +219,7 @@ class GuardModel:
                     with contextlib.redirect_stderr(devnull):
                         return AutoModelForCausalLM.from_pretrained(
                             model_path,
-                            torch_dtype=torch_dtype,
+                            dtype=model_dtype,
                             device_map="cpu",
                             use_safetensors=True,
                             local_files_only=True,

@@ -39,8 +39,12 @@ MAX_INPUT_LENGTH = 10000  # 超长输入拒绝（对齐 CLAUDE.md 技术约束�
 
 # 兜底剥离正则（引擎 extract_and_update 之后的第二道防线）
 import re
-_MOOD_TAG_RE_STRIP = re.compile(r"<!--mood:.*?-->")
-_BOND_TAG_RE_STRIP = re.compile(r"<!--bond:.*?-->")
+_MOOD_TAG_RE_STRIP = re.compile(
+    r"<!--\s*mood\b.*?-->", re.IGNORECASE | re.DOTALL
+)
+_BOND_TAG_RE_STRIP = re.compile(
+    r"<!--\s*bond\b.*?-->", re.IGNORECASE | re.DOTALL
+)
 
 
 def _strip_all_tags(text: str) -> str:
@@ -381,7 +385,19 @@ class Agent:
                     break
 
                 # 5c. Tool Calling
-                if not tool_calls_data or tool_rounds >= max_tool_rounds:
+                if not tool_calls_data:
+                    if tool_rounds == 0 and tool_definitions:
+                        available_tools = [
+                            item.get("function", {}).get("name", "")
+                            for item in tool_definitions
+                        ]
+                        logger.info(
+                            "LLM 本轮未调用工具（可用工具: {}）",
+                            ", ".join(name for name in available_tools if name),
+                        )
+                    break
+                if tool_rounds >= max_tool_rounds:
+                    logger.warning("Tool Calling 达到最大轮数 {}，停止调用", max_tool_rounds)
                     break
 
                 tool_rounds += 1

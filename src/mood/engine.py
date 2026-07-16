@@ -24,7 +24,14 @@ from ..utils.logger import get_logger
 
 # ── 标记提取正则 ────────────────────────────────────────────
 
-_MOOD_TAG_RE = re.compile(r"<!--mood:\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*-->")
+_NUMBER_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
+_MOOD_TAG_RE = re.compile(
+    rf"<!--\s*mood\s*:\s*({_NUMBER_RE})\s*,\s*({_NUMBER_RE})\s*,\s*({_NUMBER_RE})\s*-->",
+    re.IGNORECASE,
+)
+_MOOD_TAG_CANDIDATE_RE = re.compile(
+    r"<!--\s*mood\b.*?-->", re.IGNORECASE | re.DOTALL
+)
 
 # ── 默认值 ──────────────────────────────────────────────────
 
@@ -320,8 +327,17 @@ class MoodEngine:
         """
         match = _MOOD_TAG_RE.search(full_text)
         if not match:
-            self.log.debug("未提取到情绪标记，本轮跳过更新")
+            candidate = _MOOD_TAG_CANDIDATE_RE.search(full_text)
+            if candidate:
+                self.log.warning(
+                    "情绪隐藏标记格式无效，本轮跳过更新: {}",
+                    candidate.group(0),
+                )
+            else:
+                self.log.info("LLM 未输出情绪隐藏标记，本轮跳过更新")
             return full_text
+
+        self.log.info("情绪隐藏标记: {}", match.group(0))
 
         try:
             p = float(match.group(1))
@@ -334,7 +350,7 @@ class MoodEngine:
         self.update(pleasure=p, arousal=a, dominance=d)
 
         # 剥离标记——用户永远看不到，不进入会话历史
-        clean = _MOOD_TAG_RE.sub("", full_text).rstrip()
+        clean = _MOOD_TAG_CANDIDATE_RE.sub("", full_text).rstrip()
         if not clean:
             self.log.warning("剥离情绪标记后文本为空，保留原文")
             return full_text

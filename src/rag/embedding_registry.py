@@ -50,7 +50,11 @@ def acquire_handle(model_path: str, device: str = "cpu") -> tuple["SentenceTrans
                 _model_path, model_path,
             )
             from sentence_transformers import SentenceTransformer
-            return SentenceTransformer(model_path, device=device), False
+            return SentenceTransformer(
+                model_path,
+                device=device,
+                tokenizer_kwargs={"fix_mistral_regex": False},
+            ), False
 
         # 首次加载：确保模型是 FP16（应由 ensure_models 预处理，此处为防御性兜底）
         import torch
@@ -64,9 +68,14 @@ def acquire_handle(model_path: str, device: str = "cpu") -> tuple["SentenceTrans
             if fp16:
                 return SentenceTransformer(
                     model_path, device=dev,
-                    model_kwargs={"torch_dtype": torch.float16},
+                    model_kwargs={"dtype": torch.float16},
+                    tokenizer_kwargs={"fix_mistral_regex": False},
                 )
-            m = SentenceTransformer(model_path, device=dev)
+            m = SentenceTransformer(
+                model_path,
+                device=dev,
+                tokenizer_kwargs={"fix_mistral_regex": False},
+            )
             m.half()
             m.save(model_path, safe_serialization=True)
             _state_file.write_text("fp16")

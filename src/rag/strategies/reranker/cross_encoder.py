@@ -56,11 +56,16 @@ class CrossEncoderReranker(RerankerStrategy):
                 if fp16_ready:
                     return CrossEncoder(
                         model_path, device=dev,
-                        automodel_args={"torch_dtype": torch.float16},
+                        model_kwargs={"dtype": torch.float16},
+                        tokenizer_kwargs={"fix_mistral_regex": False},
                     )
                 # 防御路径：ensure_models 未运行或中途崩溃，现场量化
                 self.log.warning("重排序模型 {} 未预量化为 FP16，现场处理...", model_path)
-                m = CrossEncoder(model_path, device=dev)
+                m = CrossEncoder(
+                    model_path,
+                    device=dev,
+                    tokenizer_kwargs={"fix_mistral_regex": False},
+                )
                 m.model.half()
                 m.model.save_pretrained(model_path, safe_serialization=True)
                 if hasattr(m, "tokenizer") and m.tokenizer is not None:

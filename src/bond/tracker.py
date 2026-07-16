@@ -25,8 +25,13 @@ from ..utils.logger import get_logger
 
 # ── 标记提取正则 ────────────────────────────────────────────
 
+_NUMBER_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 _BOND_TAG_RE = re.compile(
-    r"<!--bond:\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*-->"
+    rf"<!--\s*bond\s*:\s*({_NUMBER_RE})\s*,\s*({_NUMBER_RE})\s*,\s*({_NUMBER_RE})\s*,\s*({_NUMBER_RE})\s*-->",
+    re.IGNORECASE,
+)
+_BOND_TAG_CANDIDATE_RE = re.compile(
+    r"<!--\s*bond\b.*?-->", re.IGNORECASE | re.DOTALL
 )
 
 # ── 默认值 ──────────────────────────────────────────────────
@@ -363,8 +368,17 @@ class BondTracker:
         """
         match = _BOND_TAG_RE.search(full_text)
         if not match:
-            self.log.debug("未提取到羁绊标记，本轮跳过更新")
+            candidate = _BOND_TAG_CANDIDATE_RE.search(full_text)
+            if candidate:
+                self.log.warning(
+                    "羁绊隐藏标记格式无效，本轮跳过更新: {}",
+                    candidate.group(0),
+                )
+            else:
+                self.log.info("LLM 未输出羁绊隐藏标记，本轮跳过更新")
             return full_text
+
+        self.log.info("羁绊隐藏标记: {}", match.group(0))
 
         try:
             w = float(match.group(1))
@@ -378,7 +392,7 @@ class BondTracker:
         self.update(warmth=w, trust=t, formality=f, humor=h)
 
         # 剥离标记——用户永远看不到，不进入会话历史
-        clean = _BOND_TAG_RE.sub("", full_text).rstrip()
+        clean = _BOND_TAG_CANDIDATE_RE.sub("", full_text).rstrip()
         if not clean:
             self.log.warning("剥离羁绊标记后文本为空，保留原文")
             return full_text
