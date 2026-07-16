@@ -48,32 +48,16 @@ async def websocket_endpoint(websocket: WebSocket):
     _project_root = _PROJECT_ROOT
     _sessions_dir = str(_project_root / "data" / "sessions")
     session_mgr = SessionManager(data_dir=_sessions_dir)
-    memory_mgr = getattr(websocket.app.state, "memory_manager", None)
+    mind_manager = getattr(websocket.app.state, "mind_manager", None)
     context_mgr = ContextManager(
         websocket.app.state.context_config,
-        memory_retriever=memory_mgr.retriever if memory_mgr else None,
+        memory_retriever=mind_manager if mind_manager else None,
     )
     tool_registry = getattr(websocket.app.state, "tool_registry", None)
-    mood_engine = None
-    bond_tracker = None
+    mood_engine = mind_manager.mood_engine if mind_manager else None
+    bond_tracker = mind_manager.bond_tracker if mind_manager else None
     persona_guard = None
     persona_embedding_acquired = False
-
-    mood_config = getattr(websocket.app.state, "mood_config", None)
-    if mood_config is not None:
-        try:
-            from ..mood.engine import MoodEngine
-            mood_engine = MoodEngine(mood_config, data_dir=_project_root / "data")
-        except Exception as e:
-            log.warning("连接级情绪引擎创建失败: {}", e)
-
-    bond_config = getattr(websocket.app.state, "bond_config", None)
-    if bond_config is not None:
-        try:
-            from ..bond.tracker import BondTracker
-            bond_tracker = BondTracker(bond_config, data_dir=_project_root / "data")
-        except Exception as e:
-            log.warning("连接级羁绊引擎创建失败: {}", e)
 
     persona_config = getattr(websocket.app.state, "persona_config", None)
     persona_model_path = getattr(websocket.app.state, "persona_model_path", "")
@@ -108,14 +92,31 @@ async def websocket_endpoint(websocket: WebSocket):
                     pass
                 persona_embedding_acquired = False
 
-    # Agent — CLI/WS 共用的对话入口（chat() 内部处理安全/记忆/上下文/LLM/Tool/落盘）
+    event_loop = asyncio.get_running_loop()
+
+    def _notify_mind_failure() -> None:
+        async def _send():
+            try:
+                await websocket.send_json({
+                    "type": "mind_warning",
+                    "message": "心智模型好像出了点问题呢。",
+                })
+            except Exception as exc:
+                log.debug("心智提示发送失败（连接可能已关闭）: {}", exc)
+        try:
+            event_loop.call_soon_threadsafe(asyncio.create_task, _send())
+        except RuntimeError:
+            log.debug("心智提示跳过：事件循环已关闭")
+
+    # Agent — CLI/WS 共用的对话入口
     agent = Agent(
         config=config,
         session_mgr=session_mgr,
         safety=safety,
         client=client,
         context_manager=context_mgr,
-        memory_manager=memory_mgr,
+        mind_manager=mind_manager,
+        on_mind_warning=_notify_mind_failure,
         tool_registry=tool_registry,
         mood_engine=mood_engine,
         bond_tracker=bond_tracker,
@@ -331,10 +332,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 from ..server.config_manager import ConfigManager
 
                 main_cfg = data.get("main", {})
-                memory_cfg = data.get("memory", {})
-                memory_enabled = bool(data.get("memory_enabled", False))
+                mind_cfg = data.get("mind", {})
+                mind_enabled = bool(data.get("mind_enabled", False))
 
-                # 记忆模型缺少配置时允许保存，由后端记录警告并跳过记忆初始化。
+                # 心智模型缺少配置时允许保存，由后端记录警告并关闭心智旁路。
                 errors = _validate_config(main_cfg, "主模型")
 
                 if errors:
@@ -348,16 +349,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 # 保存旧 os.environ 快照（用于 rebuild 失败时回滚）
                 _old_environ = {k: os.environ.get(k) for k in [
                     "FENGJIN_API_KEY", "FENGJIN_BASE_URL", "FENGJIN_MODEL",
-                    "MEMO_API_KEY", "MEMO_BASE_URL", "MEMO_MODEL", "MEMORY_ENABLED",
+                    "MIND_API_KEY", "MIND_BASE_URL", "MIND_MODEL", "MIND_ENABLED",
                 ]}
 
                 # 先更新 os.environ（rebuild 内部 _reload_dotenv 需读取新值）
-                ConfigManager.apply_to_os_environ(main_cfg, memory_cfg, memory_enabled)
+                ConfigManager.apply_to_os_environ(main_cfg, mind_cfg, mind_enabled)
 
                 # 重建客户端
                 try:
                     await ConfigManager.rebuild_clients(
-                        websocket.app, main_cfg, memory_cfg, memory_enabled,
+                        websocket.app, main_cfg, mind_cfg, mind_enabled,
                     )
                 except Exception as e:
                     log.opt(exception=True).error("配置热更新失败: {}", e)
@@ -375,17 +376,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 # 成功后：写 .env（持久化）+ 更新局部引用 + 更新已有 Agent
-                env_persisted = ConfigManager.update_env_file(main_cfg, memory_cfg, memory_enabled)
+                env_persisted = ConfigManager.update_env_file(main_cfg, mind_cfg, mind_enabled)
                 client = websocket.app.state.client
-                memory_mgr = getattr(websocket.app.state, "memory_manager", None)
                 context_mgr = ContextManager(
                     websocket.app.state.context_config,
-                    memory_retriever=memory_mgr.retriever if memory_mgr else None,
+                    memory_retriever=mind_manager if mind_manager else None,
                 )
                 # 更新当前连接已有 Agent 的引用（后续消息使用新配置）
                 agent.client = client
                 agent.context_manager = context_mgr
-                agent.memory_manager = memory_mgr
 
                 # 持久化失败：运行时已生效，但重启后回滚——必须告知用户（红线8：静默失败零容忍）
                 if not env_persisted:
@@ -430,11 +429,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 log.warning("流任务异常结束: {}", e)
 
         session_mgr.flush()
-        for name, obj in (
-            ("mood_engine", mood_engine),
-            ("bond_tracker", bond_tracker),
-            ("persona_guard", persona_guard),
-        ):
+        for name, obj in (("persona_guard", persona_guard),):
             if obj and hasattr(obj, "cleanup"):
                 try:
                     obj.cleanup()

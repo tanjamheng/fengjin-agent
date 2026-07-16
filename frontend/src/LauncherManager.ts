@@ -88,7 +88,7 @@ export class LauncherManager {
   // 阶段二步骤名映射
   private readonly ENGINE_LABELS: Record<string, string> = {
     "engine_init:safety": "正在初始化安全护栏...",
-    "engine_init:memory": "正在初始化记忆系统...",
+    "engine_init:memory": "正在初始化心智系统...",
     "engine_init:mood": "正在初始化情绪引擎...",
     "engine_init:bond": "正在初始化羁绊追踪...",
     "engine_init:persona": "正在初始化角色检测...",

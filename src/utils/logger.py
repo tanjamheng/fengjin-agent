@@ -29,7 +29,7 @@ AGENT_SOURCES = {
     # Agent 核心
     "core", "streaming", "context", "message_builder",
     "skill_registry", "tool_registry", "mcp_manager",
-    "mood",
+    "mood", "bond", "mind", "mind_state", "memory_manager", "memory_extractor",
     "persona",
     # RAG
     "rag_service", "rag_server", "embedding_registry",

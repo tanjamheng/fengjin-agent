@@ -138,9 +138,9 @@ def _safe_cleanup(agent, memory_manager, rag_service, safety_engine, mood_engine
     """逐组件安全清理：每个组件独立 try/except，单点失败不阻塞其余清理"""
     for name, cleanup_fn in [
         ("Agent", lambda: agent.cleanup()),
-        ("Memory", lambda: memory_manager.cleanup() if memory_manager else None),
-        ("Mood", lambda: mood_engine.cleanup() if mood_engine else None),
-        ("Bond", lambda: bond_tracker.cleanup() if bond_tracker else None),
+        ("Memory", lambda: memory_manager.cleanup() if memory_manager and not getattr(agent, "mind_manager", None) else None),
+        ("Mood", lambda: mood_engine.cleanup() if mood_engine and not getattr(agent, "mind_manager", None) else None),
+        ("Bond", lambda: bond_tracker.cleanup() if bond_tracker and not getattr(agent, "mind_manager", None) else None),
         ("Persona", lambda: _cleanup_persona_guard(persona_guard)),
         ("RAG", lambda: rag_service.cleanup() if rag_service else None),
         ("Safety", lambda: safety_engine.cleanup() if safety_engine else None),
@@ -346,26 +346,11 @@ def main():
     context_config_path = PROJECT_ROOT / "config" / "context.yaml"
     context_settings = ContextSettings.load(str(context_config_path))
 
-    # 初始化记忆系统（可选：环境变量缺失时优雅降级，不阻塞启动）
+    # 加载心智系统所需的记忆配置
     memory_config_path = PROJECT_ROOT / "config" / "memory.yaml"
     memory_settings = MemorySettings.load(str(memory_config_path))
-    memory_enabled = os.environ.get("MEMORY_ENABLED", "false").lower() == "true"
-    if memory_enabled:
-        try:
-            memory_manager = MemoryManager(memory_settings.memory)
-        except Exception as e:
-            get_logger("main").warning("记忆系统加载失败（环境变量未设？），记忆功能将不可用: {}", e)
-            console.print("[yellow]⚠ 记忆系统暂不可用（环境变量缺失或配置错误），对话将无长期记忆[/yellow]")
-            memory_manager = None
-    else:
-        get_logger("main").info("记忆系统已禁用 (MEMORY_ENABLED=false)")
-        memory_manager = None
-
-    # 创建上下文管理器（依赖记忆检索器）
-    context_manager = ContextManager(
-        config=context_settings.context,
-        memory_retriever=memory_manager
-    )
+    mind_enabled = os.environ.get("MIND_ENABLED", "false").lower() == "true"
+    memory_manager = None
 
     # 初始化情绪状态机（无上游依赖，最早上线）
     mood_engine = None
@@ -388,6 +373,26 @@ def main():
     except Exception as e:
         get_logger("main").warning("羁绊引擎加载失败，羁绊功能将不可用: {}", e)
         console.print("[yellow]⚠ 羁绊引擎暂不可用，对话将无羁绊追踪[/yellow]")
+
+    # 应用级心智协调器（记忆、情绪、羁绊共享开关与模型配置）
+    mind_manager = None
+    if mood_engine and bond_tracker:
+        from src.mind import MindManager, MindSettings
+        mind_config = MindSettings.load(str(PROJECT_ROOT / "config" / "mind.yaml")).mind
+        mind_manager = MindManager(
+            mind_config,
+            memory_settings.memory,
+            mood_engine,
+            bond_tracker,
+            max_context_tokens=context_settings.context.sliding_window.max_tokens,
+            enabled=mind_enabled,
+        )
+        memory_manager = mind_manager.memory_manager
+
+    context_manager = ContextManager(
+        config=context_settings.context,
+        memory_retriever=mind_manager,
+    )
 
     # 初始化角色漂移检测（复用 bge-m3，优雅降级）
     persona_guard = None
@@ -439,7 +444,7 @@ def main():
             session_mgr=session_mgr,
             safety=safety_engine,
             context_manager=context_manager,
-            memory_manager=memory_manager,
+            mind_manager=mind_manager,
             mood_engine=mood_engine,
             bond_tracker=bond_tracker,
             persona_guard=persona_guard,
@@ -447,22 +452,23 @@ def main():
     except Exception as e:
         console.print(f"[red]Agent 初始化失败（环境变量缺失或配置错误）: {e}[/red]")
         get_logger("main").opt(exception=True).error("Agent 初始化失败")
-        # 清理已初始化的上游组件（memory_manager + mood_engine + bond_tracker + persona_guard + safety_engine）
-        if memory_manager:
+        # MindManager 统一拥有记忆、情绪、羁绊及后台工作线程；存在时只清理它。
+        if mind_manager:
             try:
-                memory_manager.cleanup()
+                mind_manager.cleanup()
             except Exception as cleanup_ex:
-                get_logger("main").warning("MemoryManager 清理异常: {}", cleanup_ex)
-        if mood_engine:
-            try:
-                mood_engine.cleanup()
-            except Exception as cleanup_ex:
-                get_logger("main").warning("MoodEngine 清理异常: {}", cleanup_ex)
-        if bond_tracker:
-            try:
-                bond_tracker.cleanup()
-            except Exception as cleanup_ex:
-                get_logger("main").warning("BondTracker 清理异常: {}", cleanup_ex)
+                get_logger("main").warning("MindManager 清理异常: {}", cleanup_ex)
+        else:
+            for name, resource in (
+                ("MemoryManager", memory_manager),
+                ("MoodEngine", mood_engine),
+                ("BondTracker", bond_tracker),
+            ):
+                if resource:
+                    try:
+                        resource.cleanup()
+                    except Exception as cleanup_ex:
+                        get_logger("main").warning("{} 清理异常: {}", name, cleanup_ex)
         if persona_guard:
             try:
                 _cleanup_persona_guard(persona_guard)

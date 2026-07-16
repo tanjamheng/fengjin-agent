@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from pathlib import Path
 
 from openai import OpenAI
@@ -10,7 +11,11 @@ from .config import MemoryConfig, MemorySettings
 from .storage import MemoryStorage
 from ..utils.logger import get_logger
 
-MAX_PARSE_RETRIES = 2
+MAX_PARSE_RETRIES = 3
+
+
+class MemoryModelOutputError(RuntimeError):
+    """记忆模型持续返回无法校验的 JSON。"""
 
 
 class MemoryExtractor:
@@ -62,37 +67,60 @@ class MemoryExtractor:
             return []
         return self._rule_filter(facts)
 
+    def extract_conversation(self, conversation_text: str, trace_id: str = "") -> list[dict]:
+        """从归一化后的最近多轮对话提取最新一轮产生的新事实。"""
+        facts = self._llm_extract_text(conversation_text)
+        return self._rule_filter(facts) if facts else []
+
     def _llm_extract(self, user_input: str, assistant_message: str) -> list[dict]:
         """调用小模型提取事实，json_object 强制 JSON 输出"""
         conversation_text = f"用户：{user_input}\n风堇：{assistant_message}"
+        return self._llm_extract_text(conversation_text)
+
+    def _llm_extract_text(self, conversation_text: str) -> list[dict]:
+        """调用心智模型提取事实，历史只用于理解最新一轮。"""
         messages = [
             {"role": "system", "content": self._extraction_prompt},
-            {"role": "user", "content": conversation_text}
+            {"role": "user", "content": (
+                conversation_text
+                + "\n\n只提取标记为‘最新一轮’中新出现或更新的用户事实；历史语境仅用于理解指代。"
+            )}
         ]
 
+        last_error: Exception | None = None
         for attempt in range(MAX_PARSE_RETRIES + 1):
-            response = self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=self.config.extraction.max_tokens,
-                messages=messages,
-                response_format={"type": "json_object"}
-            )
-            raw_text = response.choices[0].message.content.strip()
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    max_tokens=self.config.extraction.max_tokens,
+                    messages=messages,
+                    response_format={"type": "json_object"}
+                )
+                raw_text = (response.choices[0].message.content or "").strip()
+                facts, error = self._parse_and_validate(raw_text)
+                if facts is not None:
+                    return facts
 
-            facts, error = self._parse_and_validate(raw_text)
-            if facts is not None:
-                return facts
+                last_error = MemoryModelOutputError(error)
+                if attempt < MAX_PARSE_RETRIES:
+                    # 纠错历史只存在于本次任务，不污染下一轮心智分析。
+                    messages.append({"role": "assistant", "content": raw_text})
+                    messages.append({
+                        "role": "user",
+                        "content": f"返回的JSON格式有误：{error}\n请修正后重新返回，只返回合法JSON。"
+                    })
+            except Exception as exc:
+                last_error = exc
 
             if attempt < MAX_PARSE_RETRIES:
-                messages.append({"role": "assistant", "content": raw_text})
-                messages.append({
-                    "role": "user",
-                    "content": f"返回的JSON格式有误：{error}\n请修正后重新返回，只返回合法JSON。"
-                })
+                time.sleep(min(2 ** attempt, 4))
 
-        if attempt >= MAX_PARSE_RETRIES:
-            self.log.warning("记忆提取 LLM 持续返回非法 JSON，已重试 {} 次后放弃", MAX_PARSE_RETRIES)
-        return []
+        self.log.warning("记忆提取调用或JSON校验失败，已重试 {} 次后放弃: {}", MAX_PARSE_RETRIES, last_error)
+        if isinstance(last_error, MemoryModelOutputError):
+            raise MemoryModelOutputError("记忆模型持续返回非法 JSON") from last_error
+        if last_error is not None:
+            raise last_error
+        raise MemoryModelOutputError("记忆模型未返回可用结果")
 
     def _parse_and_validate(self, text: str) -> tuple[list[dict] | None, str]:
         """解析 JSON 并校验字段完整性

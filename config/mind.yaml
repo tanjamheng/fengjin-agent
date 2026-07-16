@@ -1,0 +1,7 @@
+mind:
+  context_turns: 3
+  state_max_tokens: 512
+  timeout_seconds: 45
+  max_retries: 3
+  cleanup_timeout_seconds: 10
+  prompt_file: config/prompts/state_analysis.md

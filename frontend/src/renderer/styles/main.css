@@ -1467,6 +1467,35 @@ html, body {
 .app-panel .chat-area {
   flex: 45;
 }
+
+.mind-warning {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 30;
+  max-width: calc(100% - 32px);
+  padding: 8px 16px;
+  border: 1px solid rgba(186, 204, 254, 0.75);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 4px 16px rgba(90, 100, 140, 0.12);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -8px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.mind-warning--visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mind-warning { transition: none; }
+}
 .app-panel .sidebar-area {
   flex: 17;
 }

@@ -32,8 +32,8 @@ export interface ModelConfig {
 
 export interface SettingsData {
   main: ModelConfig;
-  memory: ModelConfig;
-  memory_enabled: boolean;
+  mind: ModelConfig;
+  mind_enabled: boolean;
 }
 
 export class SettingsPanel {
@@ -47,7 +47,7 @@ export class SettingsPanel {
   private _dirty = false;
 
   // 原始 API Key（用于判断用户是否修改了密钥字段）
-  private _originalKeys: { main: string; memory: string } = { main: "", memory: "" };
+  private _originalKeys: { main: string; mind: string } = { main: "", mind: "" };
 
   // Tab 按钮引用
   private _tabBtns = new Map<TabId, HTMLElement>();
@@ -64,7 +64,7 @@ export class SettingsPanel {
     this._data = JSON.parse(JSON.stringify(initialData));
     this._originalKeys = {
       main: this._data.main.api_key ?? "",
-      memory: this._data.memory.api_key ?? "",
+      mind: this._data.mind.api_key ?? "",
     };
     this._triggerEl = triggerEl || null;
     this._saveLabel = saveLabel || "保存并应用";
@@ -94,7 +94,7 @@ export class SettingsPanel {
     this._data = JSON.parse(JSON.stringify(data));
     this._originalKeys = {
       main: this._data.main.api_key ?? "",
-      memory: this._data.memory.api_key ?? "",
+      mind: this._data.mind.api_key ?? "",
     };
     this._dirty = false;
     this._renderModelTab();
@@ -296,41 +296,41 @@ export class SettingsPanel {
     // 主模型
     parent.appendChild(this._buildSection("主模型", "main"));
 
-    // 记忆模型
-    const memSection = this._buildSection("记忆模型", "memory");
+    // 心智模型
+    const memSection = this._buildSection("心智模型", "mind");
 
-    // 记忆开关
+    // 心智总开关
     const toggleRow = document.createElement("div");
     toggleRow.className = "settings-toggle-row";
 
     const toggleLabel = document.createElement("span");
-    toggleLabel.textContent = "启用记忆";
+    toggleLabel.textContent = "启用心智";
     toggleLabel.className = "settings-toggle-label";
     toggleLabel.id = "settings-toggle-label";
 
     const helpBubble = document.createElement("span");
     helpBubble.className = "help-bubble";
     helpBubble.textContent = "?";
-    helpBubble.title = "开启后，风堇会记住和你的点滴，会越来越懂你。需配置记忆模型 API；可与主模型使用相同配置。未配置全时将跳过记忆功能。";
+    helpBubble.title = "开启后，风堇将拥有记忆、情绪和羁绊。";
 
     const toggle = document.createElement("button");
-    toggle.className = `toggle-switch ${this._data.memory_enabled ? "toggle-switch--on" : ""}`;
+    toggle.className = `toggle-switch ${this._data.mind_enabled ? "toggle-switch--on" : ""}`;
     toggle.setAttribute("role", "switch");
-    toggle.setAttribute("aria-checked", String(this._data.memory_enabled));
+    toggle.setAttribute("aria-checked", String(this._data.mind_enabled));
     toggle.setAttribute("aria-labelledby", "settings-toggle-label");
     const knob = document.createElement("span");
     knob.className = "toggle-switch__knob";
     toggle.appendChild(knob);
     toggle.addEventListener("click", () => {
-      this._data.memory_enabled = !this._data.memory_enabled;
-      toggle.classList.toggle("toggle-switch--on", this._data.memory_enabled);
-      toggle.setAttribute("aria-checked", String(this._data.memory_enabled));
-      // 记忆 section 整体灰/亮切换（保留 toggle row 可点击）
-      memSection.classList.toggle("settings-section--disabled", !this._data.memory_enabled);
+      this._data.mind_enabled = !this._data.mind_enabled;
+      toggle.classList.toggle("toggle-switch--on", this._data.mind_enabled);
+      toggle.setAttribute("aria-checked", String(this._data.mind_enabled));
+      // 心智 section 整体灰/亮切换（保留 toggle row 可点击）
+      memSection.classList.toggle("settings-section--disabled", !this._data.mind_enabled);
       const inputs = memSection.querySelectorAll<HTMLInputElement>("input");
       inputs.forEach((inp) => {
-        inp.disabled = !this._data.memory_enabled;
-        (inp.parentElement as HTMLElement)?.classList.toggle("settings-field--disabled", !this._data.memory_enabled);
+        inp.disabled = !this._data.mind_enabled;
+        (inp.parentElement as HTMLElement)?.classList.toggle("settings-field--disabled", !this._data.mind_enabled);
       });
       this._markDirty();
     });
@@ -340,7 +340,7 @@ export class SettingsPanel {
     toggleRow.appendChild(toggle);
     memSection.insertBefore(toggleRow, memSection.firstChild);
 
-    if (!this._data.memory_enabled) {
+    if (!this._data.mind_enabled) {
       memSection.classList.add("settings-section--disabled");
       memSection.querySelectorAll<HTMLInputElement>("input").forEach((inp) => {
         inp.disabled = true;
@@ -357,7 +357,7 @@ export class SettingsPanel {
     parent.appendChild(note);
   }
 
-  private _buildSection(title: string, sectionKey: "main" | "memory"): HTMLElement {
+  private _buildSection(title: string, sectionKey: "main" | "mind"): HTMLElement {
     const section = document.createElement("div");
     section.className = "settings-section";
 
@@ -449,7 +449,7 @@ export class SettingsPanel {
     const sections = content.querySelectorAll<HTMLElement>(".settings-section");
     const keys: (keyof ModelConfig)[] = ["api_key", "base_url", "model"];
     // 第一个 section 是主模型，第二个是记忆模型
-    for (const [idx, sectionKey] of (["main", "memory"] as const).entries()) {
+    for (const [idx, sectionKey] of (["main", "mind"] as const).entries()) {
       const inputs = sections[idx]?.querySelectorAll<HTMLInputElement>("input");
       if (!inputs) continue;
       for (let i = 0; i < keys.length && i < inputs.length; i++) {

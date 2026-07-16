@@ -63,8 +63,8 @@ export interface ClientGetConfig {
 export interface ClientUpdateConfig {
   type: "update_config";
   main: { api_key: string | null; base_url: string | null; model: string | null };
-  memory: { api_key: string | null; base_url: string | null; model: string | null };
-  memory_enabled: boolean;
+  mind: { api_key: string | null; base_url: string | null; model: string | null };
+  mind_enabled: boolean;
 }
 
 export type ClientMessage =
@@ -147,11 +147,16 @@ export interface ServerError {
   session_id?: string;
 }
 
+export interface ServerMindWarning {
+  type: "mind_warning";
+  message: string;
+}
+
 export interface ServerCurrentConfig {
   type: "current_config";
   main: { api_key: string; base_url: string; model: string };
-  memory: { api_key: string; base_url: string; model: string };
-  memory_enabled: boolean;
+  mind: { api_key: string; base_url: string; model: string };
+  mind_enabled: boolean;
 }
 
 export interface ServerConfigUpdated {
@@ -173,5 +178,6 @@ export type ServerMessage =
   | ServerSessionRenamed
   | ServerQuickReplies
   | ServerError
+  | ServerMindWarning
   | ServerCurrentConfig
   | ServerConfigUpdated;

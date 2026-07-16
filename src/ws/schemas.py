@@ -120,6 +120,11 @@ class ErrorMessage(BaseModel):
     message: str
 
 
+class MindWarningMessage(BaseModel):
+    type: str = "mind_warning"
+    message: str
+
+
 # ── 联合类型 ─────────────────────────────────────────────────
 
 ServerMessage = Union[
@@ -135,6 +140,7 @@ ServerMessage = Union[
     SessionRenamedMessage,
     QuickRepliesMessage,
     ErrorMessage,
+    MindWarningMessage,
 ]
 
 ClientMessage = Union[

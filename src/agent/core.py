@@ -37,24 +37,6 @@ from ..utils.logger import get_logger, generate_trace_id
 
 MAX_INPUT_LENGTH = 10000  # 超长输入拒绝（对齐 CLAUDE.md 技术约束）
 
-# 兜底剥离正则（引擎 extract_and_update 之后的第二道防线）
-import re
-_MOOD_TAG_RE_STRIP = re.compile(
-    r"<!--\s*mood\b.*?-->", re.IGNORECASE | re.DOTALL
-)
-_BOND_TAG_RE_STRIP = re.compile(
-    r"<!--\s*bond\b.*?-->", re.IGNORECASE | re.DOTALL
-)
-
-
-def _strip_all_tags(text: str) -> str:
-    """移除 mood + bond 标记；剥离后为空时保留原文（防 LLM 只输出标记）"""
-    stripped = _MOOD_TAG_RE_STRIP.sub("", text)
-    stripped = _BOND_TAG_RE_STRIP.sub("", stripped)
-    stripped = stripped.rstrip()
-    return stripped if stripped else text
-
-
 # ── 异常 ──────────────────────────────────────────────────
 
 class BlockedError(Exception):
@@ -89,6 +71,8 @@ class Agent:
         client: Optional[AsyncOpenAI] = None,
         context_manager: Optional[ContextManager] = None,
         memory_manager=None,
+        mind_manager=None,
+        on_mind_warning: Optional[Callable] = None,
         tool_registry: Optional[ToolRegistry] = None,
         mood_engine=None,
         bond_tracker=None,
@@ -99,8 +83,10 @@ class Agent:
         self.safety = safety
         self.context_manager = context_manager
         self.memory_manager = memory_manager
-        self.mood_engine = mood_engine
-        self.bond_tracker = bond_tracker
+        self.mind_manager = mind_manager
+        self.on_mind_warning = on_mind_warning
+        self.mood_engine = mind_manager.mood_engine if mind_manager else mood_engine
+        self.bond_tracker = mind_manager.bond_tracker if mind_manager else bond_tracker
         self.persona_guard = persona_guard
 
         # 角色漂移：本轮检测 → 下轮注入
@@ -166,7 +152,7 @@ class Agent:
     ) -> str:
         """完整对话管线
 
-        安全检测 → 记忆检索 → 上下文组装 → LLM 流式 → Tool Calling → 落盘
+        安全检测 → 心智注入 → 上下文组装 → LLM 流式 → Tool Calling → 落盘 → 异步心智处理
 
         Args:
             user_input: 用户输入
@@ -240,23 +226,26 @@ class Agent:
             if comfort_prompt:
                 logger.info("COMFORT 模式已激活: 自伤安抚指令将注入 system_prompt")
 
-            # 4. 角色校准 → 羁绊注入 → 情绪注入 → 记忆检索 → 上下文组装
+            # 4. 角色校准 → 心智状态/记忆注入 → 上下文组装
             t_memory_start = time.monotonic()
             api_input = message_content
             # 角色漂移锚点（上一轮检测到偏离 → 本轮注入）
             if self._pending_anchor:
                 api_input = self._pending_anchor + "\n\n" + api_input
                 self._pending_anchor = None
-            if self.bond_tracker:
-                api_input = self.bond_tracker.inject(api_input)
-            if self.mood_engine:
-                api_input = self.mood_engine.inject(api_input)
+            if self.mind_manager:
+                api_input = self.mind_manager.inject_state(api_input)
+            else:
+                if self.bond_tracker:
+                    api_input = self.bond_tracker.inject(api_input)
+                if self.mood_engine:
+                    api_input = self.mood_engine.inject(api_input)
             if self.context_manager:
                 api_input = self.context_manager.build_input(
                     api_input, trace_id=self.trace_id
                 )
             t_memory = (time.monotonic() - t_memory_start) * 1000
-            logger.info("情绪注入+记忆检索+上下文组装完成 ({:.0f}ms)", t_memory)
+            logger.info("心智注入+上下文组装完成 ({:.0f}ms)", t_memory)
         except BlockedError:
             raise
         except Exception:
@@ -459,23 +448,15 @@ class Agent:
             logger.info("流式输出中断 (客户端断开), 已生成 {} chars", len(all_text + full_text))
             combined = all_text + full_text
             if combined:
-                # 剥离情绪标记再落盘（与正常路径一致）
-                if self.mood_engine:
-                    try:
-                        combined = self.mood_engine.extract_and_update(combined)
-                    except Exception as e:
-                        logger.warning("情绪标记提取失败（中断路径）: {}", e)
-                if self.bond_tracker:
-                    try:
-                        combined = self.bond_tracker.extract_and_update(combined)
-                    except Exception as e:
-                        logger.warning("羁绊标记提取失败（中断路径）: {}", e)
-                # 兜底剥离：防非标标记泄漏
-                combined = _strip_all_tags(combined)
                 logger.info("保存部分回复 ({} chars) + 触发异步记忆提取", len(combined))
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
-                if self.memory_manager:
+                if self.mind_manager:
+                    self.mind_manager.submit(
+                        self.session_mgr.get_current_messages(), self.trace_id,
+                        self.on_mind_warning, include_state=False,
+                    )
+                elif self.memory_manager:
                     self.memory_manager.extract_async(
                         user_input, combined, trace_id=self.trace_id
                     )
@@ -494,23 +475,7 @@ class Agent:
         if all_text:
             full_text = all_text + full_text
 
-        # 6. 情绪标记提取与更新
-        if self.mood_engine and full_text:
-            try:
-                full_text = self.mood_engine.extract_and_update(full_text)
-            except Exception:
-                logger.error("情绪标记提取失败，保留原始文本")
-        # 羁绊标记提取与更新（在情绪之后，各自独立提取）
-        if self.bond_tracker and full_text:
-            try:
-                full_text = self.bond_tracker.extract_and_update(full_text)
-            except Exception:
-                logger.error("羁绊标记提取失败，保留原始文本")
-        # 兜底剥离：无论引擎是否可用，确保标记不泄漏到 session
-        if full_text:
-            full_text = _strip_all_tags(full_text)
-
-        # 6b. 角色漂移检测（本轮回复 → 下一轮注入）
+        # 6. 角色漂移检测（本轮回复 → 下一轮注入）
         if self.persona_guard and full_text:
             try:
                 self._pending_anchor = self.persona_guard.check(full_text)
@@ -523,7 +488,6 @@ class Agent:
             # 保留已完成轮次的 all_text + 当前轮 partial full_text（"停止保留已收文字"）
             combined = all_text + full_text
             if combined:
-                combined = _strip_all_tags(combined)
                 self.session_mgr.append_message("assistant", combined)
                 self.session_mgr.flush()
                 logger.info("用户取消: 保留已生成内容 ({} chars)", len(combined))
@@ -539,9 +503,15 @@ class Agent:
             self.session_mgr.flush()
             logger.warning("回复为空, 空消息已落盘")
 
-        # 8. 异步记忆提取（不阻塞回复）
-        if self.memory_manager and full_text:
-            logger.debug("触发异步记忆提取")
+        # 8. 异步心智处理（记忆 + 情绪羁绊，不阻塞回复）
+        if self.mind_manager and full_text:
+            logger.debug("触发异步心智处理")
+            self.mind_manager.submit(
+                self.session_mgr.get_current_messages(), self.trace_id,
+                self.on_mind_warning,
+                include_state=not controller.cancel_requested,
+            )
+        elif self.memory_manager and full_text:
             self.memory_manager.extract_async(
                 user_input, full_text, trace_id=self.trace_id
             )
@@ -551,7 +521,7 @@ class Agent:
             logger.debug("跳过记忆提取: 记忆系统未启用")
 
         t_total = (time.monotonic() - t_total_start) * 1000
-        logger.info("对话完成: {} chars, {} tokens, {:.0f}ms 总耗时 (安全 {:.0f}ms + 记忆 {:.0f}ms + LLM {:.0f}ms)",
+        logger.info("对话完成: {} chars, {} tokens, {:.0f}ms 总耗时 (安全 {:.0f}ms + 上下文 {:.0f}ms + LLM {:.0f}ms)",
                     len(full_text), total_tokens, t_total,
                     t_safety, t_memory, t_llm)
         return full_text
@@ -594,6 +564,8 @@ class Agent:
         self.registry.cleanup_all()
         self.mcp_manager.cleanup_all()
         self.tool_registry.clear()
+        if self.mind_manager:
+            self.mind_manager.cleanup()
         try:
             asyncio.run(self.client.close())
         except RuntimeError:

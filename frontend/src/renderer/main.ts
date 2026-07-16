@@ -127,8 +127,8 @@ if (api && launcherContainer && appPanel) {
 async function _showAndApplyFirstTimeSettings(): Promise<void> {
   const panel = new SettingsPanel({
     main: { api_key: "", base_url: "", model: "" },
-    memory: { api_key: "", base_url: "", model: "" },
-    memory_enabled: false,
+    mind: { api_key: "", base_url: "", model: "" },
+    mind_enabled: false,
   }, undefined, "保存并启动", "配置 API 才能让风堇说话哦");
 
   const result = await panel.show();
@@ -359,8 +359,8 @@ let _settingsPanelClose: (() => void) | null = null; // 面板关闭句柄，用
 ws.onCurrentConfig = (data) => {
   _settingsData = {
     main: data.main,
-    memory: data.memory,
-    memory_enabled: data.memory_enabled,
+    mind: data.mind,
+    mind_enabled: data.mind_enabled,
   };
 };
 
@@ -415,6 +415,25 @@ ws.onStatusChange = (status) => {
 const chatArea = document.getElementById("chat-area");
 if (!chatArea) throw new Error("Missing #chat-area");
 const chat = new ChatUI(chatArea);
+let mindWarningTimer: ReturnType<typeof setTimeout> | null = null;
+ws.onMindWarning = (message) => {
+  let banner = chatArea.querySelector<HTMLElement>(".mind-warning");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.className = "mind-warning";
+    banner.setAttribute("role", "status");
+    banner.setAttribute("aria-live", "polite");
+    chatArea.appendChild(banner);
+  }
+  banner.textContent = message;
+  banner.classList.remove("mind-warning--visible");
+  requestAnimationFrame(() => banner?.classList.add("mind-warning--visible"));
+  if (mindWarningTimer !== null) clearTimeout(mindWarningTimer);
+  mindWarningTimer = setTimeout(() => {
+    banner?.classList.remove("mind-warning--visible");
+    mindWarningTimer = null;
+  }, 3000);
+};
 chat.onSend = (text) => {
   if (appState.isReplying || appState.wsStatus !== "connected") return;
   chat.appendUserMessage(text);
@@ -505,8 +524,8 @@ sidebar.onOpenSettings = async () => {
       ws.onCurrentConfig = orig;
       _settingsData = {
         main: data.main,
-        memory: data.memory,
-        memory_enabled: data.memory_enabled,
+        mind: data.mind,
+        mind_enabled: data.mind_enabled,
       };
       resolve(_settingsData);
     };
@@ -515,8 +534,8 @@ sidebar.onOpenSettings = async () => {
 
   const initial: SettingsData = freshConfig || {
     main: { api_key: "", base_url: "", model: "" },
-    memory: { api_key: "", base_url: "", model: "" },
-    memory_enabled: false,
+    mind: { api_key: "", base_url: "", model: "" },
+    mind_enabled: false,
   };
   const triggerBtn = document.querySelector<HTMLElement>(".sidebar__settings-btn") ?? undefined;
   const panel = new SettingsPanel(initial, triggerBtn);
@@ -531,12 +550,12 @@ sidebar.onOpenSettings = async () => {
       base_url: result.main.base_url,
       model: result.main.model,
     };
-    const memory = {
-      api_key: result.memory.api_key,
-      base_url: result.memory.base_url,
-      model: result.memory.model,
+    const mind = {
+      api_key: result.mind.api_key,
+      base_url: result.mind.base_url,
+      model: result.mind.model,
     };
-    ws.updateConfig(main, memory, result.memory_enabled);
+    ws.updateConfig(main, mind, result.mind_enabled);
   };
 
   const result = await panel.show();

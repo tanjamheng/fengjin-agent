@@ -78,23 +78,25 @@ class MemorySettings(BaseModel):
         return cls(memory=MemoryConfig(**data.get("memory", {})))
 
     @staticmethod
-    def create_memo_model_client() -> OpenAI:
-        """从环境变量创建记忆辅助模型 OpenAI 客户端"""
-        api_key = os.getenv("MEMO_API_KEY")
+    def create_mind_model_client() -> OpenAI:
+        """从环境变量创建心智模型 OpenAI 客户端。"""
+        api_key = os.getenv("MIND_API_KEY")
         if not api_key:
-            raise ValueError("请在 .env 文件中设置 MEMO_API_KEY")
-        base_url = os.getenv("MEMO_BASE_URL")
+            raise ValueError("请在 .env 文件中设置 MIND_API_KEY")
+        base_url = os.getenv("MIND_BASE_URL")
         if not base_url:
-            raise ValueError("请在 .env 文件中设置 MEMO_BASE_URL")
+            raise ValueError("请在 .env 文件中设置 MIND_BASE_URL")
         return OpenAI(
             api_key=api_key,
             base_url=base_url,
             timeout=45.0,
+            # 由上层心智任务统一控制调用与结构校验重试次数，避免重试相乘。
+            max_retries=0,
         )
 
     @staticmethod
-    def get_memo_model_name() -> str:
-        model = os.getenv("MEMO_MODEL")
+    def get_mind_model_name() -> str:
+        model = os.getenv("MIND_MODEL")
         if not model:
-            raise ValueError("请在 .env 文件中设置 MEMO_MODEL")
+            raise ValueError("请在 .env 文件中设置 MIND_MODEL")
         return model

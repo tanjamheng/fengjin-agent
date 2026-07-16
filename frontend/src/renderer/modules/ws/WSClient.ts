@@ -41,6 +41,7 @@ export class WSClient {
   onBlocked?: (message: string, category?: string) => void;
   onThinking?: () => void;
   onError?: (message: string) => void;
+  onMindWarning?: (message: string) => void;
 
   // 会话回调
   onSessionList?: (sessions: SessionMeta[]) => void;
@@ -180,14 +181,14 @@ export class WSClient {
 
   updateConfig(
     main: { api_key: string | null; base_url: string | null; model: string | null },
-    memory: { api_key: string | null; base_url: string | null; model: string | null },
-    memory_enabled: boolean,
+    mind: { api_key: string | null; base_url: string | null; model: string | null },
+    mind_enabled: boolean,
   ): void {
     this._send({
       type: "update_config",
       main,
-      memory,
-      memory_enabled: memory_enabled,
+      mind,
+      mind_enabled: mind_enabled,
     });
   }
 
@@ -408,6 +409,10 @@ export class WSClient {
         this._clearReplyTimer();
         log.error("Server error: {}", msg.message ?? "unknown");
         this.onError?.(msg.message ?? "AI 服务异常，请稍后重试");
+        break;
+
+      case "mind_warning":
+        this.onMindWarning?.(msg.message ?? "心智模型好像出了点问题呢。");
         break;
 
       case "current_config":

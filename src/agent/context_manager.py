@@ -72,7 +72,7 @@ class ContextManager:
 
         # 按 token 淘汰（兜底）
         max_tokens = self.config.sliding_window.max_tokens
-        while self._estimate_tokens(messages) > max_tokens and len(messages) >= 2:
+        while estimate_messages_tokens(messages) > max_tokens and len(messages) >= 2:
             self._pop_turn(messages)
 
         return messages
@@ -128,23 +128,26 @@ class ContextManager:
     @staticmethod
     def _estimate_tokens(messages: List[Dict]) -> int:
         """估算消息列表的 token 数（CJK≈1.0/字, ASCII≈0.3/字）"""
-        def _count(s: str) -> int:
-            ascii_chars = sum(1 for c in s if ord(c) < 128)
-            return int(ascii_chars * 0.3 + (len(s) - ascii_chars) * 1.0)
+        return estimate_messages_tokens(messages)
 
-        total = 0
-        for msg in messages:
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                total += _count(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        total += _count(str(block.get("content", "")))
-                        total += _count(str(block.get("text", "")))
-            tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
-                for tc in tool_calls:
-                    if isinstance(tc, dict):
-                        total += _count(str(tc.get("function", {}).get("arguments", "")))
-        return total
+
+def estimate_messages_tokens(messages: List[Dict]) -> int:
+    """主对话与心智模型共用的轻量 token 估算。"""
+    def _count(s: str) -> int:
+        ascii_chars = sum(1 for c in s if ord(c) < 128)
+        return int(ascii_chars * 0.3 + (len(s) - ascii_chars) * 1.0)
+
+    total = 0
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += _count(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    total += _count(str(block.get("content", "")))
+                    total += _count(str(block.get("text", "")))
+        for tc in msg.get("tool_calls", []) or []:
+            if isinstance(tc, dict):
+                total += _count(str(tc.get("function", {}).get("arguments", "")))
+    return total

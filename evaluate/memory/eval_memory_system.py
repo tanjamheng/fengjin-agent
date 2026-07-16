@@ -66,16 +66,16 @@ def get_judge_client():
     """获取 LLM judge 客户端（使用记忆辅助模型的 OpenAI 接口）"""
     from openai import OpenAI
 
-    api_key = os.getenv("MEMO_API_KEY")
-    base_url = os.getenv("MEMO_BASE_URL")
+    api_key = os.getenv("MIND_API_KEY")
+    base_url = os.getenv("MIND_BASE_URL")
     if not api_key:
-        raise ValueError("请在 .env 中设置 MEMO_API_KEY")
+        raise ValueError("请在 .env 中设置 MIND_API_KEY")
 
     return OpenAI(api_key=api_key, base_url=base_url)
 
 
 def call_judge(client, system_prompt: str, user_prompt: str, max_retries: int = 2) -> str:
-    model = os.getenv("MEMO_MODEL")
+    model = os.getenv("MIND_MODEL")
     for attempt in range(max_retries + 1):
         try:
             response = client.chat.completions.create(
@@ -798,7 +798,7 @@ def generate_report(results: dict) -> str:
         "",
         f"**评估时间**：{ts}",
         f"**主模型**：{os.getenv('FENGJIN_MODEL', 'N/A')}",
-        f"**记忆模型**：{os.getenv('MEMO_MODEL', 'N/A')}",
+        f"**心智模型**：{os.getenv('MIND_MODEL', 'N/A')}",
         "",
         "---",
         "",
@@ -971,7 +971,7 @@ def main():
     print("=" * 50)
     print("\n环境检查...")
     for key in ["FENGJIN_API_KEY", "FENGJIN_BASE_URL", "FENGJIN_MODEL",
-                "MEMO_API_KEY", "MEMO_BASE_URL", "MEMO_MODEL"]:
+                "MIND_API_KEY", "MIND_BASE_URL", "MIND_MODEL"]:
         val = os.getenv(key)
         if not val:
             print(f"  错误: 缺少环境变量 {key}")

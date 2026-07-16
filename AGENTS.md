@@ -58,7 +58,7 @@
 
 ## 核心链路
 
-用户输入 → Agent.chat() 统一管线（CLI/WS 共用）→ 小伊卡安全检测（P0规则 + P1 Llama Guard）→ 多轮上下文组装（角色漂移锚点 + 羁绊注入 + 情绪注入 + 记忆注入 + 滑动窗口裁剪）→ LLM 流式生成（stream_llm，支持 Tool Calling 自主检索知识库，最多 5 轮）→ 流式输出 → LLM 回复末尾提取情绪标记 + 羁绊标记 → EMA 更新情绪 + change clamp 更新羁绊 → 角色漂移检测（bge-m3 余弦相似度 → EWMA）→ 异步记忆提取（Writer WAL 崩溃恢复）→ 会话持久化
+用户输入 → Agent.chat() 统一管线（CLI/WS 共用）→ 小伊卡安全检测 → 心智状态/记忆注入（仅启用时）→ 角色漂移锚点 + 滑动窗口 → LLM 流式生成（含 Tool Calling，最多 5 轮）→ 角色漂移检测 → 会话持久化 → MindManager 异步提交记忆提取与状态分析。主模型只生成角色回复；后台状态模型以严格 JSON 输出情绪/羁绊目标值，FIFO 更新持久化状态。
 
 ## 后端已有能力
 
@@ -66,8 +66,9 @@
 |------|---------|
 | 对话引擎 | 流式对话 + Tool Calling 循环 + 停止/超时处理 |
 | 风堇角色系统 | 外部 system_prompt.md 定义人设，调角色不改代码 |
-| 情绪状态机 | PAD 三维情绪 + EMA 平滑 + 非对称指数衰减，LLM 输出隐藏标记，数字注入 user message |
-| 羁绊状态机 | 四维羁绊（Warmth/Trust/Formality/Humor）+ change clamp + 接近度衰减 + 非对称指数衰减，LLM 输出隐藏标记，数字注入 user message |
+| 心智协调层 | 统一开关记忆/情绪/羁绊；最近 3 轮自然对话、双异步调用、状态 FIFO、JSON 校验重试、失败降级与热更新 |
+| 情绪状态机 | PAD 三维情绪 + EMA 平滑 + 非对称指数衰减；接收心智模型 JSON 目标值并注入后续 user message |
+| 羁绊状态机 | 四维羁绊 + change clamp + 接近度/时间衰减；接收心智模型 JSON 目标值并注入后续 user message |
 | 角色漂移检测 | bge-m3 余弦相似度+EWMA平滑，低于阈值自动注入锚点到user message；会话切换时reset_state()清空漂移状态 |
 | RAG 知识库 | 6 步管道检索风堇相关知识，LLM 自主决定调用时机 |
 | 记忆系统 | 跨会话记住用户信息，双存储（core_memory.md + ChromaDB），异步提取 |
@@ -159,7 +160,8 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | `load_session` (session_id) | `end` (full_text, action) |
 | `delete_session` (session_id) | `blocked` (message, category) |
 | `rename_session` (session_id, title) | `session_list` / `session_loaded` / `session_deleted` / `session_renamed` |
-| | `quick_replies` (可选，最多3条) / `error` |
+| `get_config` / `update_config` (main, mind, mind_enabled) | `current_config` / `config_updated` |
+| | `quick_replies` (可选，最多3条) / `mind_warning` / `error` |
 
 > 完整字段定义 + 时序图 → `核心文档/核心4_WS通信协议.md`
 > TypeScript 类型定义 → `frontend/src/types/protocol.ts`
@@ -196,13 +198,14 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | StreamController | 流式取消机制——协作式 cancel flag + task.cancel() 兜底 |
 | StreamInterrupted | 流式中断异常——客户端断连时 on_token 回调抛出，Agent.chat() 保留部分回复不回滚 |
 | Core Memory | 核心记忆——从对话中提取的用户长期信息，存储在 core_memory.md + ChromaDB |
+| MindManager | 应用级心智协调器——统一控制记忆、情绪、羁绊，管理记忆提取与状态分析两个后台调用、状态 FIFO Worker、热更新和失败降级 |
 | BlockedError | 安全拦截异常——安全检测 BLOCK 时由 Agent.chat() 抛出，CLI/WS 各自捕获展示 |
 | FENGJIN_LAUNCHER_MODE | 启动器模式标记——Electron spawn 后端时设为 1，后端看到后 stdout 专用于 JSON 进度行、日志只写文件 |
 | FENGJIN_ACTIVE_WS_PORT | 本次后端进程实际监听的端口——`server.py` 从配置的主/备用端口中选择后写入，仅进程内传递，不写回 `.env` |
 | preprocess_plan | 预处理步骤清单——后端启动后扫描模型/知识库状态，发给前端动态渲染步骤列表。空数组 = 跳过预处理 |
 | LauncherManager | Electron 主进程启动管理器——环境检查→spawn后端→解析 stdout JSON 进度和实际端口→IPC 推渲染进程→按实际端口健康检查 |
 | 阶段一（预处理） | 启动第一阶段——仅当 preprocess_plan 非空时出现，逐项下载/量化缺失模型 |
-| 阶段二（系统加载） | 启动第二阶段——每次启动都走，初始化安全/记忆/情绪/羁绊/漂移/RAG/知识库 7 个组件 |
+| 阶段二（系统加载） | 启动第二阶段——每次启动都走，初始化安全、心智（记忆/情绪/羁绊）、漂移与 RAG，RAG 步骤内含知识库验证 |
 
 ---
 
@@ -220,13 +223,14 @@ AI风堇_治愈晨昏/
 │   ├── rag.yaml                     # RAG 策略参数
 │   ├── context.yaml                 # 上下文窗口 + 记忆模板
 │   ├── memory.yaml                  # 记忆存储/提取/合并
+│   ├── mind.yaml                    # 心智上下文、状态分析、重试与清理
 │   ├── safety.yaml                  # 安全检测配置
 │   ├── safety_words/                # 安全词库（8 TXT + ~89 regex）
 │   ├── mood.yaml                     # 情绪状态机配置（PAD/EMA/衰减/漂移保护/阈值/注入）
 │   ├── bond.yaml                     # 羁绊状态机配置（4维/change clamp/接近度衰减/衰减/标签）
 │   ├── persona.yaml                  # 角色漂移检测配置（检测参数/修复参数）
 │   ├── system_prompt.md             # 风堇主人设
-│   └── prompts/                     # Prompt 模板（core_memory / memory_extraction / memory_merge）
+│   └── prompts/                     # Prompt 模板（记忆提取/合并 + state_analysis）
 │
 ├── data/
 │   ├── chroma/                      # RAG + Memory 共享向量库（Memory 已合并到此）
@@ -268,6 +272,12 @@ AI风堇_治愈晨昏/
 │   │   ├── storage.py               # ChromaDB 持久化
 │   │   ├── writer.py                # 后台写入 + 三级路由 + 冲突消解
 │   │   └── config.py                # MemorySettings
+│   │
+│   ├── mind/                        # 心智协调层
+│   │   ├── manager.py               # 总开关、双任务、FIFO Worker、降级与热更新
+│   │   ├── state_analyzer.py        # JSON Schema 状态分析与任务内纠错重试
+│   │   ├── context_builder.py       # 最近 3 轮自然对话与 Token 裁剪
+│   │   └── config.py                # MindSettings / MIND_* 客户端
 │   │
 │   ├── mood/                        # 情绪状态机
 │   │   └── engine.py                # MoodEngine — PAD+EMA+衰减+注入+持久化 (~290行)
@@ -368,7 +378,7 @@ AI风堇_治愈晨昏/
 
 ## 数据安全与护栏红线
 
-5. **API 密钥禁止写入文件**——只能通过环境变量（`FENGJIN_*`、`MEMO_*`）读取。
+5. **API 密钥禁止写入代码或配置文档**——运行时通过环境变量（`FENGJIN_*`、`MIND_*`）读取；本地 `.env` 不入 Git，日志禁止打印实际值。
 6. **日志中禁止打印 API Key、Token 的实际值**。
 7. **会话文件必须原子写入**——先写 `.json.tmp` 再 `os.replace()`。任何持久化写入都需考虑中途崩溃。
 8. **静默失败零容忍**——空 `except` 或 `except Exception` 吞异常时必须记录 `logger.error()`。关键操作失败（会话保存、记忆写入、RAG 索引）必须产生用户可见提示或至少 ERROR 级别日志。
@@ -401,11 +411,11 @@ AI风堇_治愈晨昏/
 
 引入新依赖前按此顺序判断：① 标准库能否解决？→ ② 已有依赖能否解决？→ ③ 是否只用到原子工具函数？→ ④ 是否引入框架包装？→ ④即禁止。
 
-## 双模型架构
+## 主对话/心智双层模型架构
 
 - 主对话模型：`FENGJIN_API_KEY` / `FENGJIN_BASE_URL` / `FENGJIN_MODEL`
-- 记忆小模型：`MEMO_API_KEY` / `MEMO_BASE_URL` / `MEMO_MODEL`
-- 记忆提取用小模型降成本，主对话用大模型保质量
+- 后台心智模型：`MIND_API_KEY` / `MIND_BASE_URL` / `MIND_MODEL`，总开关 `MIND_ENABLED`
+- 记忆与状态分析共享心智 API 配置，但使用两个独立调用过程、独立 Prompt 和独立失败边界；主对话永不等待心智任务
 
 ## 三种能力模型
 
@@ -429,9 +439,9 @@ AI风堇_治愈晨昏/
 
 ## 清理链
 
-启动：Mood → Bond → Persona → Memory → Context → Agent → RAG → MCP → Safety → Session
+启动：Config/主模型客户端 → Safety → Mood + Bond → MindManager（Memory + StateAnalyzer + FIFO Worker）→ Persona → RAG/MCP → Context/Agent → Session
 
-退出：Session.flush() → Agent.cleanup()（含 Skill+MCP+Tool）→ Memory.cleanup()（含 writer.stop()+storage）→ Mood.cleanup() → Bond.cleanup() → Persona.cleanup() → RAG.cleanup()（reranker→query_enhancer→retriever→indexer→splitter→loader）→ Safety.cleanup() → logger.complete()
+退出：连接先 Session.flush() + 连接级 Persona.cleanup()；应用 lifespan 再关闭主模型客户端 → RAG/MCP → MindManager.cleanup()（停止状态 Worker、等待记忆任务、停止 Writer、关闭心智客户端与存储、清理 Mood/Bond）→ 应用级 Persona/Safety → logger.complete()。CLI 由 Agent.cleanup() 持有 MindManager；WS 由应用 lifespan 持有，连接断开不得清理应用级心智资源。
 
 ---
 

@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from ..utils.logger import get_logger
-from ..memory.config import MemorySettings
 from ..config import Config
 
 log = get_logger("config_manager")
@@ -29,17 +28,16 @@ class ConfigManager:
         "FENGJIN_API_KEY": ("main", "api_key"),
         "FENGJIN_BASE_URL": ("main", "base_url"),
         "FENGJIN_MODEL": ("main", "model"),
-        "MEMO_API_KEY": ("memory", "api_key"),
-        "MEMO_BASE_URL": ("memory", "base_url"),
-        "MEMO_MODEL": ("memory", "model"),
+        "MIND_API_KEY": ("mind", "api_key"),
+        "MIND_BASE_URL": ("mind", "base_url"),
+        "MIND_MODEL": ("mind", "model"),
     }
 
     @staticmethod
-    def update_env_file(main: dict, memory: dict, memory_enabled: bool | None = None) -> bool:
+    def update_env_file(main: dict, mind: dict, mind_enabled: bool | None = None) -> bool:
         """原子写入 .env：先写 .tmp 再 os.replace
 
-        main/memory 中的 null 值表示该字段不更新，保持原值。
-        memory_enabled 为 None 表示不更新，否则写入 MEMORY_ENABLED=true/false。
+        main/mind 中的 null 值表示该字段不更新，保持原值。
         """
         env_path = _PROJECT_ROOT / ".env"
         if not env_path.exists():
@@ -48,7 +46,7 @@ class ConfigManager:
 
         # 构建 env_key → new_value 的更新映射
         updates: dict[str, str] = {}
-        for section_name, section in [("main", main), ("memory", memory)]:
+        for section_name, section in [("main", main), ("mind", mind)]:
             for env_key, (sec, field) in ConfigManager._KEY_MAP.items():
                 if sec != section_name:
                     continue
@@ -57,9 +55,8 @@ class ConfigManager:
                     continue  # null = 不改
                 updates[env_key] = str(val).strip()
 
-        # 记忆开关（独立键，不在 _KEY_MAP 中）
-        if memory_enabled is not None:
-            updates["MEMORY_ENABLED"] = "true" if memory_enabled else "false"
+        if mind_enabled is not None:
+            updates["MIND_ENABLED"] = "true" if mind_enabled else "false"
 
         if not updates:
             log.info("配置无变更，跳过写入")
@@ -109,9 +106,9 @@ class ConfigManager:
             return False
 
     @staticmethod
-    def apply_to_os_environ(main: dict, memory: dict, memory_enabled: bool | None = None) -> None:
+    def apply_to_os_environ(main: dict, mind: dict, mind_enabled: bool | None = None) -> None:
         """立即更新 os.environ（不写 .env，仅运行时生效）"""
-        for section_name, section in [("main", main), ("memory", memory)]:
+        for section_name, section in [("main", main), ("mind", mind)]:
             for env_key, (sec, field) in ConfigManager._KEY_MAP.items():
                 if sec != section_name:
                     continue
@@ -120,21 +117,18 @@ class ConfigManager:
                     continue
                 os.environ[env_key] = str(val).strip()
                 log.debug("os.environ[{}] = {}", env_key, "***" if "KEY" in env_key else os.environ[env_key])
-        # 同步记忆开关（独立键）
-        if memory_enabled is not None:
-            os.environ["MEMORY_ENABLED"] = "true" if memory_enabled else "false"
+        if mind_enabled is not None:
+            os.environ["MIND_ENABLED"] = "true" if mind_enabled else "false"
 
     @staticmethod
-    async def rebuild_clients(app, main: dict, memory: dict, memory_enabled: bool) -> None:
-        """重建 app.state 上的客户端和记忆管理器
+    async def rebuild_clients(app, main: dict, mind: dict, mind_enabled: bool) -> None:
+        """重建主模型客户端，并在稳定的 MindManager 内重配心智服务。
 
         规则：
         - 主模型配置有变更 → 重建 AsyncOpenAI 客户端
-        - 记忆配置/开关有变更 → 重建 MemoryManager
-        - 旧客户端先 close 再替换，防止连接泄漏
+        - 心智配置/开关有变更 → 在稳定的 MindManager 内重建两个后台服务
+        - 旧资源先停止并关闭，再启动新代次，防止任务串代与连接泄漏
         """
-        from ..agent.context_manager import ContextManager
-
         # ── 主模型客户端 ──
         need_rebuild_main = any(
             main.get(k) is not None for k in ("api_key", "base_url", "model")
@@ -160,44 +154,10 @@ class ConfigManager:
                 if old_client and app.state.client is not old_client:
                     ConfigManager._retire_resource(app, old_client)
 
-        # ── 记忆管理器 ──
-        need_rebuild_memory = memory_enabled != (getattr(app.state, "memory_manager", None) is not None)
-        need_rebuild_memory = need_rebuild_memory or any(
-            memory.get(k) is not None for k in ("api_key", "base_url", "model")
-        )
-
-        if need_rebuild_memory:
-            old_mgr = getattr(app.state, "memory_manager", None)
-            try:
-                if memory_enabled:
-                    # 不调 _reload_dotenv()——connection.py 已在 rebuild 前 apply_to_os_environ
-                    missing = [key for key in ("MEMO_API_KEY", "MEMO_BASE_URL", "MEMO_MODEL")
-                               if not os.environ.get(key, "").strip()]
-                    if missing:
-                        app.state.memory_manager = None
-                        log.warning("记忆已启用但配置不完整，跳过记忆初始化: {}", ", ".join(missing))
-                    else:
-                        mem_settings = MemorySettings.load(
-                            str(_PROJECT_ROOT / "config" / "memory.yaml")
-                        ).memory
-                        from ..memory.manager import MemoryManager
-                        app.state.memory_manager = MemoryManager(mem_settings)
-                        log.info("记忆管理器已重建（启用）")
-                else:
-                    app.state.memory_manager = None
-                    log.info("记忆管理器已关闭")
-            except Exception as e:
-                log.opt(exception=True).error("重建记忆管理器失败: {}", e)
-                app.state.memory_manager = old_mgr  # 回滚
-                raise
-            finally:
-                if old_mgr and old_mgr is not app.state.memory_manager:
-                    ConfigManager._retire_resource(app, old_mgr)
-
-        # ── 如果记忆管理器变了，也需要重建 context_manager 的引用 ──
-        if need_rebuild_memory:
-            # context_manager 的 memory_retriever 引用需更新（仅当记忆管理器变化时）
-            pass  # WS 连接中 context_mgr 是 per-connection，暂不需要全局更新
+        manager = getattr(app.state, "mind_manager", None)
+        if manager:
+            manager.reconfigure(mind_enabled)
+            app.state.memory_manager = manager.memory_manager
 
     @staticmethod
     def _build_config_from_env() -> Config:
@@ -218,14 +178,14 @@ class ConfigManager:
         _reload_dotenv()  # 确保读取最新 .env，而非可能过时的 os.environ
 
         main_ak = os.environ.get("FENGJIN_API_KEY", "")
-        memo_ak = os.environ.get("MEMO_API_KEY", "")
+        mind_ak = os.environ.get("MIND_API_KEY", "")
 
-        # 记忆开关默认关闭，只有显式开启时才初始化记忆系统。
-        mem_enabled_str = os.environ.get("MEMORY_ENABLED", "")
-        if mem_enabled_str:
-            memory_enabled = mem_enabled_str.lower() == "true"
+        # 心智总开关默认关闭，只有显式开启时才运行记忆、情绪和羁绊。
+        mind_enabled_str = os.environ.get("MIND_ENABLED", "")
+        if mind_enabled_str:
+            mind_enabled = mind_enabled_str.lower() == "true"
         else:
-            memory_enabled = False
+            mind_enabled = False
 
         return {
             "main": {
@@ -233,12 +193,12 @@ class ConfigManager:
                 "base_url": os.environ.get("FENGJIN_BASE_URL", ""),
                 "model": os.environ.get("FENGJIN_MODEL", ""),
             },
-            "memory": {
-                "api_key": memo_ak,
-                "base_url": os.environ.get("MEMO_BASE_URL", ""),
-                "model": os.environ.get("MEMO_MODEL", ""),
+            "mind": {
+                "api_key": mind_ak,
+                "base_url": os.environ.get("MIND_BASE_URL", ""),
+                "model": os.environ.get("MIND_MODEL", ""),
             },
-            "memory_enabled": memory_enabled,
+            "mind_enabled": mind_enabled,
         }
 
     @staticmethod

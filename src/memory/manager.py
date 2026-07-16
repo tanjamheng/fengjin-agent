@@ -20,8 +20,9 @@ class MemoryManager:
     """
 
     def __init__(self, config: MemoryConfig):
-        small_client = MemorySettings.create_memo_model_client()
-        model_name = MemorySettings.get_memo_model_name()
+        small_client = MemorySettings.create_mind_model_client()
+        self.client = small_client
+        model_name = MemorySettings.get_mind_model_name()
 
         self.storage = None
         self.extractor = None
@@ -38,6 +39,7 @@ class MemoryManager:
                 self.writer.stop()
             if self.storage:
                 self.storage.cleanup()
+            small_client.close()
             raise
         self.log = get_logger("memory_manager")
         self._extract_threads: list[threading.Thread] = []
@@ -78,6 +80,35 @@ class MemoryManager:
             self._extract_threads.append(thread)
         thread.start()
 
+    def extract_conversation_async(self, conversation_text: str,
+                                   trace_id: str = "", on_model_failure=None,
+                                   should_apply=None) -> None:
+        """从已经整理好的多轮自然对话异步提取记忆。"""
+        log = self.log.bind(trace_id=trace_id) if trace_id else self.log
+
+        def _worker():
+            t_start = time.time()
+            try:
+                facts = self.extractor.extract_conversation(conversation_text, trace_id=trace_id)
+                elapsed = (time.time() - t_start) * 1000
+                if facts and should_apply is not None and not should_apply():
+                    log.info("丢弃已失效的记忆提取结果")
+                elif facts and self.writer._running:
+                    self.writer.write(facts)
+                    log.info("异步记忆提取完成: {} 条事实 ({:.0f}ms)", len(facts), elapsed)
+                elif not facts:
+                    log.debug("异步记忆提取: 无新事实 ({:.0f}ms)", elapsed)
+            except Exception as e:
+                log.opt(exception=True).error("记忆提取失败: {}", e)
+                if on_model_failure and _is_model_error(e):
+                    on_model_failure(getattr(e, "status_code", None) in (401, 403, 404))
+
+        with self._lock:
+            self._extract_threads = [t for t in self._extract_threads if t.is_alive()]
+            thread = threading.Thread(target=_worker, daemon=True)
+            self._extract_threads.append(thread)
+        thread.start()
+
     def cleanup(self) -> None:
         """停止写入线程并关闭存储（防御部分初始化：任意属性缺失时跳过对应步骤）"""
         if hasattr(self, "_lock") and hasattr(self, "_extract_threads"):
@@ -88,5 +119,23 @@ class MemoryManager:
             self._extract_threads.clear()
         if hasattr(self, "writer") and self.writer is not None:
             self.writer.stop()
+            self.writer = None
         if hasattr(self, "storage") and self.storage is not None:
             self.storage.cleanup()
+            self.storage = None
+        if hasattr(self, "client") and self.client is not None:
+            try:
+                self.client.close()
+            except Exception as e:
+                self.log.warning("记忆模型客户端关闭异常: {}", e)
+            self.client = None
+        self.extractor = None
+        self.retriever = None
+
+
+def _is_model_error(exc: Exception) -> bool:
+    return (
+        exc.__class__.__module__.startswith("openai")
+        or exc.__class__.__name__ == "MemoryModelOutputError"
+        or hasattr(exc, "status_code")
+    )

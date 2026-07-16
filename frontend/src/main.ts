@@ -237,8 +237,8 @@ function validateModelConfig(
 // 设置面板首次模式：IPC 直写 .env
 ipcMain.handle("settings:writeEnv", async (_event, data: {
   main: { api_key: string | null; base_url: string | null; model: string | null };
-  memory: { api_key: string | null; base_url: string | null; model: string | null };
-  memory_enabled: boolean;
+  mind: { api_key: string | null; base_url: string | null; model: string | null };
+  mind_enabled: boolean;
 }) => {
   const errors = [
     ...validateModelConfig(data.main, "主模型", true),
@@ -266,22 +266,22 @@ ipcMain.handle("settings:writeEnv", async (_event, data: {
     base_url: ["main", "FENGJIN_BASE_URL"],
     model: ["main", "FENGJIN_MODEL"],
   };
-  const memoKeyMap: Record<string, [string, string]> = {
-    api_key: ["memory", "MEMO_API_KEY"],
-    base_url: ["memory", "MEMO_BASE_URL"],
-    model: ["memory", "MEMO_MODEL"],
+  const mindKeyMap: Record<string, [string, string]> = {
+    api_key: ["mind", "MIND_API_KEY"],
+    base_url: ["mind", "MIND_BASE_URL"],
+    model: ["mind", "MIND_MODEL"],
   };
 
   for (const [field, [_, envKey]] of Object.entries(keyMap)) {
     const val = data.main[field as keyof typeof data.main];
     if (val) updates[envKey] = val;
   }
-  for (const [field, [_, envKey]] of Object.entries(memoKeyMap)) {
-    const val = data.memory[field as keyof typeof data.memory];
+  for (const [field, [_, envKey]] of Object.entries(mindKeyMap)) {
+    const val = data.mind[field as keyof typeof data.mind];
     if (val) updates[envKey] = val;
   }
-  if (data.memory_enabled !== undefined) {
-    updates["MEMORY_ENABLED"] = data.memory_enabled ? "true" : "false";
+  if (data.mind_enabled !== undefined) {
+    updates["MIND_ENABLED"] = data.mind_enabled ? "true" : "false";
   }
 
   // 逐行替换写入

@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
     向 stdout 逐行发送 JSON 进度消息，供 Electron 主进程解析。
     """
     log.info("正在加载应用级单例（模型检查 / 配置 / 安全 / 记忆 / RAG / 工具）...")
-    memory_manager = None
+    mind_manager = None
     rag_service = None
     try:
         _project_root = Path(__file__).resolve().parent.parent.parent
@@ -266,23 +266,17 @@ async def lifespan(app: FastAPI):
         )
         emit_progress("engine_init:safety", "done")
 
-        # ── 4. 记忆系统 ──
+        # ── 4. 心智配置 ──
         emit_progress("engine_init:memory", "start")
+        memory_config = None
+        mind_enabled = os.environ.get("MIND_ENABLED", "false").lower() == "true"
         try:
-            memory_enabled = os.environ.get("MEMORY_ENABLED", "false").lower() == "true"
-            if memory_enabled:
-                from ..memory.config import MemorySettings
-                memory_config = MemorySettings.load(
-                    str(_project_root / "config" / "memory.yaml")
-                ).memory
-                from ..memory.manager import MemoryManager
-                memory_manager = MemoryManager(memory_config)
-                log.info("记忆系统已加载")
-            else:
-                log.info("记忆系统已禁用 (MEMORY_ENABLED=false)")
+            from ..memory.config import MemorySettings
+            memory_config = MemorySettings.load(
+                str(_project_root / "config" / "memory.yaml")
+            ).memory
         except Exception as e:
-            log.warning("记忆系统加载失败（环境变量未设？），WS 路径无记忆增强: {}", e)
-        app.state.memory_manager = memory_manager
+            log.warning("心智记忆配置加载失败: {}", e)
         emit_progress("engine_init:memory", "done")
 
         # ── 5. 情绪引擎 ──
@@ -292,9 +286,9 @@ async def lifespan(app: FastAPI):
             mood_config = MoodSettings.load(
                 str(_project_root / "config" / "mood.yaml")
             )
-            MoodEngine(mood_config, data_dir=_project_root / "data")
+            mood_engine = MoodEngine(mood_config, data_dir=_project_root / "data")
             app.state.mood_config = mood_config
-            app.state.mood_engine = None
+            app.state.mood_engine = mood_engine
             log.info("情绪引擎已加载")
         except Exception as e:
             log.warning("情绪引擎加载失败: {}", e)
@@ -309,15 +303,35 @@ async def lifespan(app: FastAPI):
             bond_config = BondSettings.load(
                 str(_project_root / "config" / "bond.yaml")
             )
-            BondTracker(bond_config, data_dir=_project_root / "data")
+            bond_tracker = BondTracker(bond_config, data_dir=_project_root / "data")
             app.state.bond_config = bond_config
-            app.state.bond_tracker = None
+            app.state.bond_tracker = bond_tracker
             log.info("羁绊引擎已加载")
         except Exception as e:
             log.warning("羁绊引擎加载失败: {}", e)
             app.state.bond_config = None
             app.state.bond_tracker = None
         emit_progress("engine_init:bond", "done")
+
+        # 记忆、情绪、羁绊收口到应用级心智协调器。
+        if memory_config is not None and app.state.mood_engine and app.state.bond_tracker:
+            from ..mind import MindManager, MindSettings
+            mind_config = MindSettings.load(
+                str(_project_root / "config" / "mind.yaml")
+            ).mind
+            mind_manager = MindManager(
+                mind_config,
+                memory_config,
+                app.state.mood_engine,
+                app.state.bond_tracker,
+                max_context_tokens=app.state.context_config.sliding_window.max_tokens,
+                enabled=mind_enabled,
+            )
+            app.state.mind_manager = mind_manager
+            app.state.memory_manager = mind_manager.memory_manager
+        else:
+            app.state.mind_manager = None
+            app.state.memory_manager = None
 
         # ── 7. 角色漂移检测配置 ──
         # PersonaDriftGuard 是连接级对象，实际编码模型由正式 RAG 服务长期持有并共享。
@@ -430,7 +444,13 @@ async def lifespan(app: FastAPI):
         log.opt(exception=True).error("应用级单例加载失败，服务无法启动: {}", e)
         emit_fatal("init_failed", str(e))
         # 部分初始化回滚（红线19）
-        for attr in ("persona_guard", "bond_tracker", "mood_engine"):
+        # MindManager 统一拥有记忆、情绪、羁绊及其后台工作线程。
+        if mind_manager:
+            try:
+                mind_manager.cleanup()
+            except Exception as ce:
+                log.warning("mind_manager cleanup 异常: {}", ce)
+        for attr in ("persona_guard",):
             obj = getattr(app.state, attr, None)
             if obj and hasattr(obj, "cleanup"):
                 try:
@@ -451,11 +471,6 @@ async def lifespan(app: FastAPI):
         tool_reg = getattr(app.state, "tool_registry", None)
         if tool_reg:
             tool_reg.clear()
-        if memory_manager:
-            try:
-                memory_manager.cleanup()
-            except Exception as ce:
-                log.warning("memory_manager cleanup 异常: {}", ce)
         try:
             app.state.safety.cleanup()
         except Exception as ce:
@@ -485,21 +500,11 @@ async def lifespan(app: FastAPI):
     tool_registry = getattr(app.state, "tool_registry", None)
     if tool_registry:
         tool_registry.clear()
-    if memory_manager:
+    if mind_manager:
         try:
-            memory_manager.cleanup()
+            mind_manager.cleanup()
         except Exception as e:
-            log.warning("MemoryManager 清理异常: {}", e)
-    if getattr(app.state, "mood_engine", None):
-        try:
-            app.state.mood_engine.cleanup()
-        except Exception as e:
-            log.warning("MoodEngine 清理异常: {}", e)
-    if getattr(app.state, "bond_tracker", None):
-        try:
-            app.state.bond_tracker.cleanup()
-        except Exception as e:
-            log.warning("BondTracker 清理异常: {}", e)
+            log.warning("MindManager 清理异常: {}", e)
     if getattr(app.state, "persona_guard", None):
         try:
             app.state.persona_guard.cleanup()

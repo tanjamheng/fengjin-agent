@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
 import tempfile
 import time
 from dataclasses import dataclass
@@ -22,17 +21,6 @@ from pathlib import Path
 from typing import Optional
 
 from ..utils.logger import get_logger
-
-# ── 标记提取正则 ────────────────────────────────────────────
-
-_NUMBER_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
-_BOND_TAG_RE = re.compile(
-    rf"<!--\s*bond\s*:\s*({_NUMBER_RE})\s*,\s*({_NUMBER_RE})\s*,\s*({_NUMBER_RE})\s*,\s*({_NUMBER_RE})\s*-->",
-    re.IGNORECASE,
-)
-_BOND_TAG_CANDIDATE_RE = re.compile(
-    r"<!--\s*bond\b.*?-->", re.IGNORECASE | re.DOTALL
-)
 
 # ── 默认值 ──────────────────────────────────────────────────
 
@@ -171,7 +159,6 @@ class BondTracker:
       - load(): 加载状态（含自动衰减）
       - update(w, t, f, h): change clamp + 接近度衰减 更新
       - describe(): 生成注入文本（数字+标签）
-      - extract_and_update(full_text): 从 LLM 回复中提取标记并更新（一站式）
       - inject(user_input): 将羁绊状态注入到 user message 头部
       - cleanup(): 幂等清理
 
@@ -203,6 +190,7 @@ class BondTracker:
         self._state: dict = {}
         self._total_rounds: int = 0
         self._cleaned = False
+        self._enabled = True
 
         # 漂移保护（会话级计数，cleanup 时清零）
         self._session_cumulative: dict[str, float] = {}
@@ -239,6 +227,8 @@ class BondTracker:
 
         传入 None 的维度保持不变。
         """
+        if not self._enabled:
+            return self.load()
         s = self._settings
         cur = self.load()  # 确保最新 + 含衰减
 
@@ -359,45 +349,6 @@ class BondTracker:
         label = self._stage_label(w, t, f, h)
         return f"[B W{w:+.2f} T{t:+.2f} F{f:+.2f} H{h:+.2f} {label}]"
 
-    def extract_and_update(self, full_text: str) -> str:
-        """从 LLM 回复中提取羁绊标记，执行 change clamp + 接近度衰减 更新。
-
-        返回剥离标记后的纯文本（用于存 session 和发前端）。
-        LLM 忘记输出标记时跳过更新，静默 log。
-        剥离后文本为空时返回原文（防 LLM 只输出标记的极端情况）。
-        """
-        match = _BOND_TAG_RE.search(full_text)
-        if not match:
-            candidate = _BOND_TAG_CANDIDATE_RE.search(full_text)
-            if candidate:
-                self.log.warning(
-                    "羁绊隐藏标记格式无效，本轮跳过更新: {}",
-                    candidate.group(0),
-                )
-            else:
-                self.log.info("LLM 未输出羁绊隐藏标记，本轮跳过更新")
-            return full_text
-
-        self.log.info("羁绊隐藏标记: {}", match.group(0))
-
-        try:
-            w = float(match.group(1))
-            t = float(match.group(2))
-            f = float(match.group(3))
-            h = float(match.group(4))
-        except (ValueError, IndexError) as e:
-            self.log.warning("羁绊标记解析失败: {}", e)
-            return full_text
-
-        self.update(warmth=w, trust=t, formality=f, humor=h)
-
-        # 剥离标记——用户永远看不到，不进入会话历史
-        clean = _BOND_TAG_CANDIDATE_RE.sub("", full_text).rstrip()
-        if not clean:
-            self.log.warning("剥离羁绊标记后文本为空，保留原文")
-            return full_text
-        return clean
-
     def inject(self, user_input: str) -> str:
         """将羁绊状态注入到 user message 头部。
 
@@ -406,6 +357,8 @@ class BondTracker:
         注意：调用方应在调用本方法之后再调用 mood.inject()——这样 mood 行在上、
         羁绊行在下，与 system_prompt.md 文档顺序一致。
         """
+        if not self._enabled:
+            return user_input
         self.load()  # 确保状态最新（含衰减），首轮也能读到持久化状态
         return f"{self.describe()}\n{user_input}"
 
@@ -429,9 +382,26 @@ class BondTracker:
         self._warned_consecutive = set()
         self._session_braked = set()
 
+    def set_enabled(self, enabled: bool) -> None:
+        """暂停/恢复状态；暂停期间数值和衰减计时均冻结。"""
+        if enabled == self._enabled:
+            return
+        if not enabled:
+            self.load()
+            self._enabled = False
+            return
+        if not self._state:
+            self._state = self._read_file() or self._default_state()
+            self._total_rounds = self._state.get("total_rounds", 0)
+        self._cleaned = False
+        self._state["updated_at_ts"] = time.time()
+        self._write_file(self._state)
+        self._enabled = True
+
     def cleanup(self) -> None:
         """幂等清理（红线18）。"""
         if not self._cleaned:
+            self._enabled = False
             self._state = {}
             self._total_rounds = 0
             self._session_cumulative = {}
@@ -440,7 +410,6 @@ class BondTracker:
             self._warned_cumulative = set()
             self._warned_consecutive = set()
             self._session_braked = set()
-            self._settings = None
             self._cleaned = True
 
     # ── 私有 ────────────────────────────────────────────────
@@ -458,6 +427,8 @@ class BondTracker:
 
     def _decay(self) -> None:
         """指数衰减——每维度向各自的基线回归。加载/更新时自动调用。"""
+        if not self._enabled:
+            return
         now = time.time()
         then = self._state.get("updated_at_ts", now)
         hours = (now - then) / 3600
