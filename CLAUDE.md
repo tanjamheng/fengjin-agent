@@ -68,7 +68,7 @@
 | 风堇角色系统 | 外部 system_prompt.md 定义人设，调角色不改代码 |
 | 心智协调层 | 统一开关记忆/情绪/羁绊；最近 3 轮自然对话、双异步调用、状态 FIFO、JSON 校验重试、失败降级与热更新 |
 | 情绪状态机 | PAD 三维情绪 + EMA 平滑 + 非对称指数衰减；接收心智模型 JSON 目标值并注入后续 user message |
-| 羁绊状态机 | 四维羁绊 + change clamp + 接近度/时间衰减；接收心智模型 JSON 目标值并注入后续 user message |
+| 羁绊状态机 | 四维羁绊 + 分维度 change clamp（W .04/T .02/F .04/H .03）+ 接近度/时间衰减；接收心智模型 JSON 目标值并注入后续 user message |
 | 角色漂移检测 | bge-m3 余弦相似度+EWMA平滑，低于阈值自动注入锚点到user message；会话切换时reset_state()清空漂移状态 |
 | RAG 知识库 | 6 步管道检索风堇相关知识，LLM 自主决定调用时机 |
 | 记忆系统 | 跨会话记住用户信息，双存储（core_memory.md + ChromaDB），异步提取 |

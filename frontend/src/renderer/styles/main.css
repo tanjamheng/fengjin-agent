@@ -640,7 +640,7 @@ html, body {
 .sidebar__item {
   position: relative;
   height: 56px;
-  padding: 10px 12px;
+  padding: 10px 30px 10px 12px; /* 为右侧删除按钮保留空间，兼顾窄窗口下的标题宽度 */
   cursor: pointer;
   border-bottom: 1px solid var(--color-divider);
   border-left: 3px solid transparent; /* 为活跃指示器预留空间，防抖动 */

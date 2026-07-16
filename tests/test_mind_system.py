@@ -310,6 +310,11 @@ class StateAnalyzerTests(unittest.TestCase):
                 {"warmth": 0.62, "trust": 0.25, "formality": 0.45, "humor": 0.15},
             )
         self.assertEqual(result.bond.trust, 0.25)
+        first_system_prompt = client.chat.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("以下是必须严格遵守的 JSON Schema", first_system_prompt)
+        self.assertIn('"additionalProperties":false', first_system_prompt)
+        self.assertIn('"pleasure"', first_system_prompt)
+        self.assertIn('"humor"', first_system_prompt)
         second_messages = client.chat.completions.calls[1]["messages"]
         self.assertEqual(second_messages[-2]["role"], "assistant")
         self.assertIn("未通过 JSON Schema", second_messages[-1]["content"])
@@ -411,6 +416,18 @@ class ColdImportTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class MainPromptRegressionTests(unittest.TestCase):
+    def test_main_prompt_does_not_request_legacy_state_markers(self):
+        project_root = Path(__file__).resolve().parent.parent
+        prompt = (project_root / "config" / "system_prompt.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("<!--mood:", prompt)
+        self.assertNotIn("<!--bond:", prompt)
+        self.assertNotIn("每轮输出格式（必须执行）", prompt)
 
 
 class MindManagerBoundaryTests(unittest.TestCase):
@@ -1186,6 +1203,49 @@ class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
                 previous_environ=previous,
             )
         self.assertEqual(mind.calls, 0)
+
+
+class BondUpdateTests(unittest.TestCase):
+    def test_each_bond_dimension_uses_its_own_change_clamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = BondSettings(
+                warmth_change_clamp=0.04,
+                trust_change_clamp=0.02,
+                formality_change_clamp=0.04,
+                humor_change_clamp=0.03,
+                proximity_floor=1.0,
+            )
+            bond = BondTracker(settings, data_dir=Path(tmp))
+            before = dict(bond.load())
+            after = bond.update(
+                warmth=1.0,
+                trust=1.0,
+                formality=0.0,
+                humor=1.0,
+            )
+
+        self.assertAlmostEqual(after["warmth"] - before["warmth"], 0.04)
+        self.assertAlmostEqual(after["trust"] - before["trust"], 0.02)
+        self.assertAlmostEqual(after["formality"] - before["formality"], -0.04)
+        self.assertAlmostEqual(after["humor"] - before["humor"], 0.03)
+
+    def test_legacy_scalar_change_clamp_remains_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "bond.yaml"
+            config_path.write_text(
+                "bond:\n  update:\n    change_clamp: 0.01\n",
+                encoding="utf-8",
+            )
+            settings = BondSettings.load(str(config_path))
+
+        self.assertEqual(settings.warmth_change_clamp, 0.01)
+        self.assertEqual(settings.trust_change_clamp, 0.01)
+        self.assertEqual(settings.formality_change_clamp, 0.01)
+        self.assertEqual(settings.humor_change_clamp, 0.01)
+
+    def test_humor_decay_baseline_does_not_exceed_initial_value(self):
+        settings = BondSettings()
+        self.assertEqual(settings.humor_baseline, settings.default_humor)
 
 
 class StateFreezeTests(unittest.TestCase):

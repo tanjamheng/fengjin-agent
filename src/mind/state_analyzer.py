@@ -49,6 +49,12 @@ _JSON_SCHEMA = {
     "schema": StateAnalysisResult.model_json_schema(),
 }
 
+_SCHEMA_PROMPT = (
+    "\n\n以下是必须严格遵守的 JSON Schema。顶层和各子对象不得增加字段，"
+    "所有字段都必须出现，所有数值必须直接输出为 JSON number：\n"
+    + json.dumps(_JSON_SCHEMA["schema"], ensure_ascii=False, separators=(",", ":"))
+)
+
 
 class StateAnalyzer:
     def __init__(self, config: MindConfig, client: OpenAI | None = None,
@@ -67,7 +73,7 @@ class StateAnalyzer:
         prompt_path = Path(config.prompt_file)
         if not prompt_path.is_absolute():
             prompt_path = root / prompt_path
-        self.prompt = prompt_path.read_text(encoding="utf-8")
+        self.prompt = prompt_path.read_text(encoding="utf-8").rstrip() + _SCHEMA_PROMPT
         self._mode_lock = threading.Lock()
         self._response_modes: dict[int, str] = {}
 
@@ -108,7 +114,19 @@ class StateAnalyzer:
                 raw = (response.choices[0].message.content or "").strip()
                 try:
                     result = StateAnalysisResult.model_validate_json(raw)
-                    log.info("心智状态 JSON 校验通过 (attempt={})", attempt + 1)
+                    log.info(
+                        "心智状态 JSON 校验通过 (attempt={}): "
+                        "目标 P={:+.3f} A={:.3f} D={:+.3f} "
+                        "W={:.3f} T={:.3f} F={:.3f} H={:.3f}",
+                        attempt + 1,
+                        result.mood.pleasure,
+                        result.mood.arousal,
+                        result.mood.dominance,
+                        result.bond.warmth,
+                        result.bond.trust,
+                        result.bond.formality,
+                        result.bond.humor,
+                    )
                     return result
                 except (ValidationError, ValueError) as exc:
                     last_error = _compact_validation_error(exc)

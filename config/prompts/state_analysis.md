@@ -36,4 +36,6 @@
 - 输出绝对目标值，不输出 delta；后端会负责 EMA、单轮限幅、接近度衰减和时间衰减，不要在模型内重复模拟这些算法
 - 不因工具结果、知识问答的正确与否或回复篇幅长短本身改变关系
 
-只能输出符合指定 JSON Schema 的 JSON，不要解释，不要输出 Markdown 代码块或其他文字。
+输出结构必须是：顶层仅包含 `mood` 和 `bond`；`mood` 必须包含 `pleasure`、`arousal`、`dominance`；`bond` 必须包含 `warmth`、`trust`、`formality`、`humor`。七个字段都必须输出为 JSON 数字，不得缺失、不得输出字符串、不得增加其他字段。
+
+只能输出符合系统附加 JSON Schema 的单个 JSON 对象，不要解释，不要输出 Markdown 代码块或其他文字。

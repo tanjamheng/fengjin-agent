@@ -28,7 +28,10 @@ _DEFAULT_WARMTH = 0.62
 _DEFAULT_TRUST = 0.25
 _DEFAULT_FORMALITY = 0.45
 _DEFAULT_HUMOR = 0.15
-_DEFAULT_CHANGE_CLAMP = 0.05
+_DEFAULT_WARMTH_CHANGE_CLAMP = 0.04
+_DEFAULT_TRUST_CHANGE_CLAMP = 0.02
+_DEFAULT_FORMALITY_CHANGE_CLAMP = 0.04
+_DEFAULT_HUMOR_CHANGE_CLAMP = 0.03
 _DEFAULT_PROXIMITY_FLOOR = 0.25
 _DEFAULT_PROXIMITY_POWER = 4
 _DEFAULT_CHANGE_WARN = 0.08
@@ -43,7 +46,7 @@ _DEFAULT_TRUST_BASELINE = 0.25
 _DEFAULT_FORMALITY_HALF_LIFE = 336.0
 _DEFAULT_FORMALITY_BASELINE = 0.65
 _DEFAULT_HUMOR_HALF_LIFE = 672.0
-_DEFAULT_HUMOR_BASELINE = 0.20
+_DEFAULT_HUMOR_BASELINE = 0.15
 
 # ── 漂移保护默认 ────────────────────────────────────────────
 
@@ -73,7 +76,10 @@ class BondSettings:
     default_humor: float = _DEFAULT_HUMOR
 
     # 更新控制
-    change_clamp: float = _DEFAULT_CHANGE_CLAMP
+    warmth_change_clamp: float = _DEFAULT_WARMTH_CHANGE_CLAMP
+    trust_change_clamp: float = _DEFAULT_TRUST_CHANGE_CLAMP
+    formality_change_clamp: float = _DEFAULT_FORMALITY_CHANGE_CLAMP
+    humor_change_clamp: float = _DEFAULT_HUMOR_CHANGE_CLAMP
     proximity_floor: float = _DEFAULT_PROXIMITY_FLOOR
     proximity_power: int = _DEFAULT_PROXIMITY_POWER
     change_warn_threshold: float = _DEFAULT_CHANGE_WARN
@@ -120,6 +126,18 @@ class BondSettings:
 
         defaults = bond.get("defaults", {})
         update = bond.get("update", {})
+        clamp_config = update.get("change_clamp", {})
+        if isinstance(clamp_config, dict):
+            change_clamps = {
+                "warmth": float(clamp_config.get("warmth", _DEFAULT_WARMTH_CHANGE_CLAMP)),
+                "trust": float(clamp_config.get("trust", _DEFAULT_TRUST_CHANGE_CLAMP)),
+                "formality": float(clamp_config.get("formality", _DEFAULT_FORMALITY_CHANGE_CLAMP)),
+                "humor": float(clamp_config.get("humor", _DEFAULT_HUMOR_CHANGE_CLAMP)),
+            }
+        else:
+            # 兼容旧版单一数值配置。
+            legacy_clamp = float(clamp_config)
+            change_clamps = {dim: legacy_clamp for dim in ("warmth", "trust", "formality", "humor")}
         proximity = update.get("proximity", {})
         drift = bond.get("drift_guard", {})
         decay = bond.get("decay", {})
@@ -130,7 +148,10 @@ class BondSettings:
             default_trust=float(defaults.get("trust", _DEFAULT_TRUST)),
             default_formality=float(defaults.get("formality", _DEFAULT_FORMALITY)),
             default_humor=float(defaults.get("humor", _DEFAULT_HUMOR)),
-            change_clamp=float(update.get("change_clamp", _DEFAULT_CHANGE_CLAMP)),
+            warmth_change_clamp=change_clamps["warmth"],
+            trust_change_clamp=change_clamps["trust"],
+            formality_change_clamp=change_clamps["formality"],
+            humor_change_clamp=change_clamps["humor"],
             proximity_floor=float(proximity.get("floor", _DEFAULT_PROXIMITY_FLOOR)),
             proximity_power=int(proximity.get("power", _DEFAULT_PROXIMITY_POWER)),
             change_warn_threshold=float(update.get("change_warn_threshold", _DEFAULT_CHANGE_WARN)),
@@ -178,6 +199,12 @@ class BondTracker:
             "trust": (s.trust_baseline, math.log(2) / s.trust_half_life_h),
             "formality": (s.formality_baseline, math.log(2) / s.formality_half_life_h),
             "humor": (s.humor_baseline, math.log(2) / s.humor_half_life_h),
+        }
+        self._change_clamps = {
+            "warmth": s.warmth_change_clamp,
+            "trust": s.trust_change_clamp,
+            "formality": s.formality_change_clamp,
+            "humor": s.humor_change_clamp,
         }
 
         # 持久化路径（红线19：以本文件为基准）
@@ -250,8 +277,9 @@ class BondTracker:
             # 1. 计算隐含变化量
             raw_change = target - old
 
-            # 2. 安全帽：单轮变化封顶 ±clamp
-            raw_change = max(-s.change_clamp, min(s.change_clamp, raw_change))
+            # 2. 安全帽：按维度限制单轮变化，信任等长期状态更保守。
+            change_clamp = self._change_clamps[dim]
+            raw_change = max(-change_clamp, min(change_clamp, raw_change))
 
             # 3. 接近度衰减（仅正向变化——升温渐慢，降温不设障碍）
             if raw_change > 0:
