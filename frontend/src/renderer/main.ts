@@ -416,7 +416,11 @@ const chatArea = document.getElementById("chat-area");
 if (!chatArea) throw new Error("Missing #chat-area");
 const chat = new ChatUI(chatArea);
 let mindWarningTimer: ReturnType<typeof setTimeout> | null = null;
+let lastMindWarningAt = Number.NEGATIVE_INFINITY;
 ws.onMindWarning = (message) => {
+  const now = Date.now();
+  if (now - lastMindWarningAt < CONFIG.chat.mindWarningCooldownMs) return;
+  lastMindWarningAt = now;
   let banner = chatArea.querySelector<HTMLElement>(".mind-warning");
   if (!banner) {
     banner = document.createElement("div");
@@ -432,7 +436,7 @@ ws.onMindWarning = (message) => {
   mindWarningTimer = setTimeout(() => {
     banner?.classList.remove("mind-warning--visible");
     mindWarningTimer = null;
-  }, 3000);
+  }, CONFIG.chat.mindWarningDurationMs);
 };
 chat.onSend = (text) => {
   if (appState.isReplying || appState.wsStatus !== "connected") return;

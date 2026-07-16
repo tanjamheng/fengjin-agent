@@ -342,11 +342,15 @@ class MoodEngine:
             return
         if not enabled:
             self.load()
+            self._state["paused"] = True
+            self._state["updated_at_ts"] = time.time()
+            self._write_file(self._state)
             self._enabled = False
             return
         if not self._state:
             self._state = self._read_file() or self._default_state()
         self._cleaned = False
+        self._state["paused"] = False
         self._state["updated_at_ts"] = time.time()
         self._write_file(self._state)
         self._enabled = True
@@ -374,11 +378,12 @@ class MoodEngine:
             "dominance": s.default_dominance,
             "updated_at_ts": time.time(),
             "consecutive_low": 0,
+            "paused": False,
         }
 
     def _decay(self) -> None:
         """指数衰减——向风堇的温暖底色回归。加载/更新时自动调用。"""
-        if not self._enabled:
+        if not self._enabled or self._state.get("paused", False):
             return
         now = time.time()
         then = self._state.get("updated_at_ts", now)

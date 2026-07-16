@@ -359,6 +359,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 try:
                     await ConfigManager.rebuild_clients(
                         websocket.app, main_cfg, mind_cfg, mind_enabled,
+                        previous_environ=_old_environ,
                     )
                 except Exception as e:
                     log.opt(exception=True).error("配置热更新失败: {}", e)

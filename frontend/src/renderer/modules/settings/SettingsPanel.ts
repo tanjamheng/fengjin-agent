@@ -448,7 +448,7 @@ export class SettingsPanel {
     if (!content) return;
     const sections = content.querySelectorAll<HTMLElement>(".settings-section");
     const keys: (keyof ModelConfig)[] = ["api_key", "base_url", "model"];
-    // 第一个 section 是主模型，第二个是记忆模型
+    // 第一个 section 是主模型，第二个是心智模型
     for (const [idx, sectionKey] of (["main", "mind"] as const).entries()) {
       const inputs = sections[idx]?.querySelectorAll<HTMLInputElement>("input");
       if (!inputs) continue;

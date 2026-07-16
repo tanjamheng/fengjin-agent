@@ -121,7 +121,8 @@ class ConfigManager:
             os.environ["MIND_ENABLED"] = "true" if mind_enabled else "false"
 
     @staticmethod
-    async def rebuild_clients(app, main: dict, mind: dict, mind_enabled: bool) -> None:
+    async def rebuild_clients(app, main: dict, mind: dict, mind_enabled: bool,
+                              previous_environ: dict[str, str | None] | None = None) -> None:
         """重建主模型客户端，并在稳定的 MindManager 内重配心智服务。
 
         规则：
@@ -130,9 +131,15 @@ class ConfigManager:
         - 旧资源先停止并关闭，再启动新代次，防止任务串代与连接泄漏
         """
         # ── 主模型客户端 ──
-        need_rebuild_main = any(
-            main.get(k) is not None for k in ("api_key", "base_url", "model")
-        )
+        if previous_environ is None:
+            need_rebuild_main = any(
+                main.get(k) is not None for k in ("api_key", "base_url", "model")
+            )
+        else:
+            need_rebuild_main = any(
+                (previous_environ.get(key) or "") != os.environ.get(key, "")
+                for key in ("FENGJIN_API_KEY", "FENGJIN_BASE_URL", "FENGJIN_MODEL")
+            )
         if need_rebuild_main:
             old_client = getattr(app.state, "client", None)
             try:
@@ -155,7 +162,16 @@ class ConfigManager:
                     ConfigManager._retire_resource(app, old_client)
 
         manager = getattr(app.state, "mind_manager", None)
-        if manager:
+        if previous_environ is None:
+            mind_changed = True
+        else:
+            mind_changed = any(
+                (previous_environ.get(key) or "") != os.environ.get(key, "")
+                for key in ("MIND_API_KEY", "MIND_BASE_URL", "MIND_MODEL")
+            )
+            old_enabled = (previous_environ.get("MIND_ENABLED") or "false").lower() == "true"
+            mind_changed = mind_changed or old_enabled != mind_enabled
+        if manager and mind_changed:
             manager.reconfigure(mind_enabled)
             app.state.memory_manager = manager.memory_manager
 

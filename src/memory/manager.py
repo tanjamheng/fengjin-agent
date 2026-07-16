@@ -94,7 +94,7 @@ class MemoryManager:
                 if facts and should_apply is not None and not should_apply():
                     log.info("丢弃已失效的记忆提取结果")
                 elif facts and self.writer._running:
-                    self.writer.write(facts)
+                    self.writer.write(facts, should_apply=should_apply)
                     log.info("异步记忆提取完成: {} 条事实 ({:.0f}ms)", len(facts), elapsed)
                 elif not facts:
                     log.debug("异步记忆提取: 无新事实 ({:.0f}ms)", elapsed)
@@ -114,8 +114,15 @@ class MemoryManager:
         if hasattr(self, "_lock") and hasattr(self, "_extract_threads"):
             with self._lock:
                 active = [t for t in self._extract_threads if t.is_alive()]
+            deadline = time.monotonic() + 10.0
             for t in active:
-                t.join(timeout=10)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                t.join(timeout=remaining)
+            still_alive = sum(1 for t in active if t.is_alive())
+            if still_alive:
+                self.log.warning("{} 个记忆提取任务在清理超时后仍未结束，将丢弃其结果", still_alive)
             self._extract_threads.clear()
         if hasattr(self, "writer") and self.writer is not None:
             self.writer.stop()

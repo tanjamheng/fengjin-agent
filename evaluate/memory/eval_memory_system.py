@@ -989,12 +989,12 @@ def main():
     storage.delete()  # 清空旧测试数据
     print(f"  ChromaDB: {TEST_CHROMA_DIR}/{TEST_COLLECTION} (count={storage.count()})")
 
-    memo_client = MemorySettings.create_memo_model_client()
-    memo_model = MemorySettings.get_memo_model_name()
-    print(f"  记忆模型: {memo_model}")
+    mind_client = MemorySettings.create_mind_model_client()
+    mind_model = MemorySettings.get_mind_model_name()
+    print(f"  心智模型: {mind_model}")
 
-    extractor = MemoryExtractor(config, memo_client, memo_model, storage)
-    writer = MemoryWriter(config, memo_client, memo_model, storage)
+    extractor = MemoryExtractor(config, mind_client, mind_model, storage)
+    writer = MemoryWriter(config, mind_client, mind_model, storage)
     retriever = MemoryRetriever(config, storage)
 
     judge_client = get_judge_client()

@@ -65,20 +65,28 @@ class MindManager:
     def inject_state(self, user_input: str) -> str:
         if not self.active:
             return user_input
-        with self._lock:
-            value = self.bond_tracker.inject(user_input)
-            return self.mood_engine.inject(value)
+        try:
+            with self._lock:
+                value = self.bond_tracker.inject(user_input)
+                return self.mood_engine.inject(value)
+        except Exception as exc:
+            self.log.opt(exception=True).error("心智状态注入失败，已跳过本轮注入: {}", exc)
+            return user_input
 
     def submit(self, messages: list[dict], trace_id: str,
                on_model_failure: Optional[WarningCallback] = None,
                *, include_state: bool = True) -> None:
         if not self.active:
             return
-        turns = normalize_turns(
-            messages,
-            max_turns=self.config.context_turns,
-            max_tokens=self.max_context_tokens,
-        )
+        try:
+            turns = normalize_turns(
+                messages,
+                max_turns=self.config.context_turns,
+                max_tokens=self.max_context_tokens,
+            )
+        except Exception as exc:
+            self.log.opt(exception=True).error("心智上下文整理失败，已放弃本轮后台任务: {}", exc)
+            return
         if not turns:
             return
 
@@ -86,17 +94,23 @@ class MindManager:
         generation = self._generation
         memory = self.memory_manager
         if memory:
-            memory.extract_conversation_async(
-                format_turns(turns), trace_id=trace_id,
-                on_model_failure=lambda permanent=False: self._handle_model_failure(
-                    generation, callback, permanent
-                ),
-                should_apply=lambda: self._task_valid(generation),
-            )
+            try:
+                memory.extract_conversation_async(
+                    format_turns(turns), trace_id=trace_id,
+                    on_model_failure=lambda permanent=False: self._handle_model_failure(
+                        generation, callback, permanent
+                    ),
+                    should_apply=lambda: self._task_valid(generation),
+                )
+            except Exception as exc:
+                self.log.opt(exception=True).error("记忆后台任务提交失败，已跳过本轮: {}", exc)
         if include_state and self.state_analyzer:
-            task = _StateTask(uuid.uuid4().hex[:8], trace_id, generation, turns, callback)
-            self._queue.put(task)
-            self.log.debug("心智状态任务已提交: {} (queue={})", task.task_id, self._queue.qsize())
+            try:
+                task = _StateTask(uuid.uuid4().hex[:8], trace_id, generation, turns, callback)
+                self._queue.put(task)
+                self.log.debug("心智状态任务已提交: {} (queue={})", task.task_id, self._queue.qsize())
+            except Exception as exc:
+                self.log.opt(exception=True).error("状态后台任务提交失败，已跳过本轮: {}", exc)
 
     def reset_session_state(self) -> None:
         self.mood_engine.reset_state()

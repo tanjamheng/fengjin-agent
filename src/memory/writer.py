@@ -63,14 +63,14 @@ class MemoryWriter:
         self._thread.start()
         self._replay_pending()
 
-    def write(self, facts: list[dict]) -> None:
+    def write(self, facts: list[dict], should_apply=None) -> None:
         """将过滤后的事实加入写入队列（非阻塞），并立即持久化队列快照
 
         入队后立即写 pending_facts.json，保证 LLM 已决定的 facts 不因崩溃丢失。
         ChromaDB 向量去重保证重放幂等。
         """
         for fact in facts:
-            self._queue.put(fact)
+            self._queue.put((fact, should_apply))
         self._checkpoint()
 
     def stop(self) -> None:
@@ -91,7 +91,11 @@ class MemoryWriter:
             except queue.Empty:
                 continue
             try:
-                self._process_fact(item)
+                fact, should_apply = _unpack_item(item)
+                if not _can_apply(should_apply):
+                    self.log.info("丢弃已失效的记忆写入任务")
+                    continue
+                self._process_fact(fact, should_apply)
             except Exception as e:
                 self.log.error("记忆写入失败: {}", e)
             finally:
@@ -105,7 +109,10 @@ class MemoryWriter:
         """
         import json
         with self._queue.mutex:
-            items = list(self._queue.queue)
+            items = [
+                fact for fact, should_apply in map(_unpack_item, self._queue.queue)
+                if _can_apply(should_apply)
+            ]
         if not items:
             # 队列已空，清理残留文件
             # 但如果正在停止，_dump_pending 已经写了文件，不能删除
@@ -125,8 +132,10 @@ class MemoryWriter:
         )
         os.replace(tmp_path, str(self._dump_path))
 
-    def _process_fact(self, fact: dict) -> None:
+    def _process_fact(self, fact: dict, should_apply=None) -> None:
         """处理单条事实：路由到 insert 或 merge，成功后更新快照"""
+        if not _can_apply(should_apply):
+            return
         is_core = fact["importance"] == "high"
         conflict_distance = self.config.thresholds.conflict_distance
 
@@ -137,16 +146,20 @@ class MemoryWriter:
         )
 
         if not results["ids"][0]:
+            if not _can_apply(should_apply):
+                return
             self._insert(fact, is_core)
             if is_core:
                 self._refresh_core_file()
         else:
             distance = results["distances"][0][0]
+            if not _can_apply(should_apply):
+                return
             if distance >= conflict_distance:
                 self._insert(fact, is_core)
             else:
                 old_id = results["ids"][0][0]
-                self._resolve_conflict(old_id, fact, is_core)
+                self._resolve_conflict(old_id, fact, is_core, should_apply)
 
             if is_core:
                 self._refresh_core_file()
@@ -164,14 +177,19 @@ class MemoryWriter:
             memory_type=fact["type"]
         )
 
-    def _resolve_conflict(self, old_id: str, fact: dict, is_core: bool) -> None:
+    def _resolve_conflict(self, old_id: str, fact: dict, is_core: bool,
+                          should_apply=None) -> None:
         """冲突消解。LLM 合并失败时降级为直接插入新事实。"""
+        if not _can_apply(should_apply):
+            return
         old_result = self.storage.get(ids=[old_id])
         old_content = old_result["documents"][0]
         old_meta = old_result["metadatas"][0]
 
         # core 保护：low-importance 不能修改 core 记忆
         if old_meta["is_core"] and not is_core:
+            if not _can_apply(should_apply):
+                return
             self._insert(fact, is_core=False)
             return
 
@@ -179,9 +197,13 @@ class MemoryWriter:
             merged = self._llm_merge(old_content, fact["content"])
         except Exception as e:
             self.log.error("LLM记忆合并失败，降级为直接插入: {}", e)
+            if not _can_apply(should_apply):
+                return
             self._insert(fact, is_core)
             return
 
+        if not _can_apply(should_apply):
+            return
         if merged == "NO_MERGE":
             self._insert(fact, is_core)
             return
@@ -236,7 +258,7 @@ class MemoryWriter:
                 self.log.info("回放 {} 条遗留未处理记忆", len(facts))
                 for fact in facts:
                     fact.pop("_dumped_at", None)
-                    self._queue.put(fact)
+                    self._queue.put((fact, None))
         except (json.JSONDecodeError, OSError) as e:
             self.log.warning("pending_facts.json 读取失败，已跳过: {}", e)
 
@@ -250,9 +272,17 @@ class MemoryWriter:
                 break
             if item is None:
                 continue
-            facts.append(item)
+            fact, should_apply = _unpack_item(item)
+            if _can_apply(should_apply):
+                facts.append(fact)
 
         if not facts:
+            dump_path = Path(self.config.chroma.persist_directory) / "pending_facts.json"
+            if dump_path.exists():
+                try:
+                    dump_path.unlink()
+                except OSError as exc:
+                    self.log.warning("清理已失效记忆快照失败: {}", exc)
             return
 
         import json
@@ -278,3 +308,19 @@ class MemoryWriter:
                                 encoding="utf-8")
         os.replace(tmp_path, str(dump_path))
         self.log.info("已持久化 {} 条未处理记忆到 {}", len(facts), dump_path)
+
+
+def _unpack_item(item) -> tuple[dict, object]:
+    """兼容旧测试或调用直接向队列放入 fact dict。"""
+    if isinstance(item, tuple) and len(item) == 2:
+        return item
+    return item, None
+
+
+def _can_apply(should_apply) -> bool:
+    if should_apply is None:
+        return True
+    try:
+        return bool(should_apply())
+    except Exception:
+        return False

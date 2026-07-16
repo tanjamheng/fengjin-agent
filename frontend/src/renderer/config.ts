@@ -56,5 +56,9 @@ export const CONFIG = {
   chat: {
     /** 判定"已滚到底部"的距离阈值 (px)，用于自动滚动逻辑 */
     autoScrollThreshold: 30,
+    /** 心智模型失败提示显示时长 (ms) */
+    mindWarningDurationMs: 3_000,
+    /** 连续对话失败时的提示冷却 (ms)，避免提示反复闪烁 */
+    mindWarningCooldownMs: 5_000,
   },
 } as const;

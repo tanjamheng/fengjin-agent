@@ -111,6 +111,8 @@ class MemoryExtractor:
                     })
             except Exception as exc:
                 last_error = exc
+                if getattr(exc, "status_code", None) in (401, 403, 404):
+                    raise
 
             if attempt < MAX_PARSE_RETRIES:
                 time.sleep(min(2 ** attempt, 4))

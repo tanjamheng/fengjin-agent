@@ -14,17 +14,17 @@ from ..utils.logger import get_logger
 
 class MoodTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    pleasure: float = Field(ge=-1.0, le=1.0)
-    arousal: float = Field(ge=0.0, le=1.0)
-    dominance: float = Field(ge=-1.0, le=1.0)
+    pleasure: float = Field(strict=True, allow_inf_nan=False, ge=-1.0, le=1.0)
+    arousal: float = Field(strict=True, allow_inf_nan=False, ge=0.0, le=1.0)
+    dominance: float = Field(strict=True, allow_inf_nan=False, ge=-1.0, le=1.0)
 
 
 class BondTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    warmth: float = Field(ge=0.0, le=1.0)
-    trust: float = Field(ge=0.0, le=1.0)
-    formality: float = Field(ge=0.0, le=1.0)
-    humor: float = Field(ge=0.0, le=1.0)
+    warmth: float = Field(strict=True, allow_inf_nan=False, ge=0.0, le=1.0)
+    trust: float = Field(strict=True, allow_inf_nan=False, ge=0.0, le=1.0)
+    formality: float = Field(strict=True, allow_inf_nan=False, ge=0.0, le=1.0)
+    humor: float = Field(strict=True, allow_inf_nan=False, ge=0.0, le=1.0)
 
 
 class StateAnalysisResult(BaseModel):
@@ -79,8 +79,10 @@ class StateAnalyzer:
                     "messages": messages,
                     "max_tokens": self.config.state_max_tokens,
                     "temperature": 0.1,
-                    "response_format": self._response_format(),
                 }
+                response_format = self._response_format()
+                if response_format is not None:
+                    kwargs["response_format"] = response_format
                 response = self.client.chat.completions.create(**kwargs)
                 raw = (response.choices[0].message.content or "").strip()
                 try:
@@ -101,11 +103,14 @@ class StateAnalyzer:
             except BadRequestError as exc:
                 text = str(exc)
                 lowered = text.lower()
-                if self._response_mode == "json_schema" and (
+                if self._response_mode in ("json_schema", "json_object") and (
                     "response_format" in lowered or "json_schema" in lowered
                 ):
-                    self._response_mode = "json_object"
-                    log.warning("供应商不支持 json_schema，降级为 json_object")
+                    previous_mode = self._response_mode
+                    self._response_mode = (
+                        "json_object" if previous_mode == "json_schema" else "prompt_only"
+                    )
+                    log.warning("供应商不支持 {}，降级为 {}", previous_mode, self._response_mode)
                     last_error = text
                     continue
                 last_error = text
@@ -124,10 +129,12 @@ class StateAnalyzer:
     def close(self) -> None:
         self.client.close()
 
-    def _response_format(self) -> dict:
+    def _response_format(self) -> dict | None:
         if self._response_mode == "json_schema":
             return {"type": "json_schema", "json_schema": _JSON_SCHEMA}
-        return {"type": "json_object"}
+        if self._response_mode == "json_object":
+            return {"type": "json_object"}
+        return None
 
 
 def _pick(source: dict, keys: tuple[str, ...]) -> dict:

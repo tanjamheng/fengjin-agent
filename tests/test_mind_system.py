@@ -1,15 +1,26 @@
 """心智模型改造的核心回归测试。"""
 
 import json
+import os
+import queue
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
+
+import httpx
+from openai import BadRequestError
 
 from src.agent.context_manager import estimate_messages_tokens
 from src.mind.config import MindConfig
 from src.mind.context_builder import normalize_turns
-from src.mind.state_analyzer import StateAnalyzer
+from src.mind.manager import MindManager
+from src.mind.state_analyzer import StateAnalysisResult, StateAnalyzer
+from src.memory.writer import MemoryWriter
+from src.server.config_manager import ConfigManager
+from src.utils.logger import get_logger
 from src.mood.engine import MoodEngine, MoodSettings
 from src.bond.tracker import BondSettings, BondTracker
 
@@ -22,6 +33,8 @@ class _FakeCompletions:
     def create(self, **kwargs):
         self.calls.append(kwargs)
         content = next(self.outputs)
+        if isinstance(content, Exception):
+            raise content
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
         )
@@ -70,6 +83,26 @@ class MindContextTests(unittest.TestCase):
 
 
 class StateAnalyzerTests(unittest.TestCase):
+    def test_schema_rejects_coerced_and_non_finite_numbers(self):
+        invalid_payloads = [
+            {
+                "mood": {"pleasure": "0.5", "arousal": 0.3, "dominance": 0.5},
+                "bond": {"warmth": 0.62, "trust": 0.25, "formality": 0.45, "humor": 0.15},
+            },
+            {
+                "mood": {"pleasure": 0.5, "arousal": True, "dominance": 0.5},
+                "bond": {"warmth": 0.62, "trust": 0.25, "formality": 0.45, "humor": 0.15},
+            },
+            {
+                "mood": {"pleasure": 0.5, "arousal": 0.3, "dominance": 0.5},
+                "bond": {"warmth": float("nan"), "trust": 0.25, "formality": 0.45, "humor": 0.15},
+            },
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    StateAnalysisResult.model_validate(payload)
+
     def test_schema_failure_keeps_retry_history(self):
         invalid = '{"mood":{"pleasure":0.7}}'
         valid = json.dumps({
@@ -92,6 +125,94 @@ class StateAnalyzerTests(unittest.TestCase):
         second_messages = client.chat.completions.calls[1]["messages"]
         self.assertEqual(second_messages[-2]["role"], "assistant")
         self.assertIn("未通过 JSON Schema", second_messages[-1]["content"])
+
+    def test_response_format_falls_back_to_prompt_only(self):
+        unsupported = lambda: BadRequestError(
+            "response_format is not supported",
+            response=httpx.Response(
+                400, request=httpx.Request("POST", "https://example.test/chat")
+            ),
+            body=None,
+        )
+        valid = json.dumps({
+            "mood": {"pleasure": 0.7, "arousal": 0.3, "dominance": 0.5},
+            "bond": {"warmth": 0.62, "trust": 0.25, "formality": 0.45, "humor": 0.15},
+        })
+        client = _FakeClient([unsupported(), unsupported(), valid])
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = Path(tmp) / "prompt.md"
+            prompt.write_text("只输出JSON", encoding="utf-8")
+            analyzer = StateAnalyzer(
+                MindConfig(prompt_file=str(prompt), max_retries=3), client, "fake"
+            )
+            analyzer.analyze(
+                [{"user": "你好", "assistant": "你好，灰宝。"}],
+                {"pleasure": 0.65, "arousal": 0.25, "dominance": 0.52},
+                {"warmth": 0.62, "trust": 0.25, "formality": 0.45, "humor": 0.15},
+            )
+        calls = client.chat.completions.calls
+        self.assertEqual(calls[0]["response_format"]["type"], "json_schema")
+        self.assertEqual(calls[1]["response_format"]["type"], "json_object")
+        self.assertNotIn("response_format", calls[2])
+
+
+class MindManagerBoundaryTests(unittest.TestCase):
+    def test_submit_internal_failure_never_escapes_to_dialogue(self):
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._enabled = True
+        manager._ready = True
+        manager._cleaned = False
+        manager.config = MindConfig()
+        manager.max_context_tokens = 1_000
+        manager.log = get_logger("mind_test")
+        with patch("src.mind.manager.normalize_turns", side_effect=RuntimeError("boom")):
+            manager.submit([], "trace")
+
+    def test_stale_memory_generation_is_rejected_before_storage_access(self):
+        class _FailIfUsedStorage:
+            def query(self, **_kwargs):
+                raise AssertionError("stale task must not access storage")
+
+        writer = object.__new__(MemoryWriter)
+        writer.storage = _FailIfUsedStorage()
+        writer._process_fact(
+            {"content": "旧任务", "type": "semantic", "importance": "low"},
+            should_apply=lambda: False,
+        )
+
+
+class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unchanged_mind_config_does_not_restart_worker(self):
+        class _Mind:
+            memory_manager = object()
+
+            def __init__(self):
+                self.calls = 0
+
+            def reconfigure(self, _enabled):
+                self.calls += 1
+
+        mind = _Mind()
+        app = SimpleNamespace(state=SimpleNamespace(mind_manager=mind))
+        previous = {
+            "FENGJIN_API_KEY": "main-key",
+            "FENGJIN_BASE_URL": "https://main.test",
+            "FENGJIN_MODEL": "main-model",
+            "MIND_API_KEY": "mind-key",
+            "MIND_BASE_URL": "https://mind.test",
+            "MIND_MODEL": "mind-model",
+            "MIND_ENABLED": "true",
+        }
+        with patch.dict(os.environ, previous, clear=False):
+            await ConfigManager.rebuild_clients(
+                app,
+                {"api_key": None, "base_url": None, "model": None},
+                {"api_key": None, "base_url": None, "model": None},
+                True,
+                previous_environ=previous,
+            )
+        self.assertEqual(mind.calls, 0)
 
 
 class StateFreezeTests(unittest.TestCase):
@@ -124,6 +245,30 @@ class StateFreezeTests(unittest.TestCase):
             bond.set_enabled(True)
             self.assertAlmostEqual(mood.load()["pleasure"], mood_value, places=4)
             self.assertAlmostEqual(bond.load()["trust"], bond_value, places=4)
+
+    def test_disabled_state_stays_frozen_across_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            mood = MoodEngine(MoodSettings(), data_dir=data_dir)
+            bond = BondTracker(BondSettings(), data_dir=data_dir)
+            mood.update(pleasure=0.95)
+            bond.update(warmth=0.9)
+            mood.set_enabled(False)
+            bond.set_enabled(False)
+            mood_value = mood.load()["pleasure"]
+            bond_value = bond.load()["warmth"]
+
+            mood_restarted = MoodEngine(MoodSettings(), data_dir=data_dir)
+            bond_restarted = BondTracker(BondSettings(), data_dir=data_dir)
+            mood_restarted.set_enabled(False)
+            bond_restarted.set_enabled(False)
+            self.assertAlmostEqual(mood_restarted.load()["pleasure"], mood_value, places=6)
+            self.assertAlmostEqual(bond_restarted.load()["warmth"], bond_value, places=6)
+
+            mood_restarted.set_enabled(True)
+            bond_restarted.set_enabled(True)
+            self.assertAlmostEqual(mood_restarted.load()["pleasure"], mood_value, places=6)
+            self.assertAlmostEqual(bond_restarted.load()["warmth"], bond_value, places=6)
 
 
 if __name__ == "__main__":
