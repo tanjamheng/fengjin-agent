@@ -1051,9 +1051,14 @@ def main():
         results["answer_relevance"] = eval_answer_relevance(retriever, storage, config, judge_client)
 
     finally:
-        # 清理
-        writer.stop()
-        storage.delete()
+        # 清理顺序：先停写入，再删测试数据，最后释放共享模型/连接与 HTTP 客户端。
+        try:
+            writer.stop()
+            storage.delete()
+        finally:
+            storage.cleanup()
+            mind_client.close()
+            judge_client.close()
         print("\n测试数据已清理")
 
     # 生成报告

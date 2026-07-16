@@ -1,7 +1,11 @@
 mind:
   context_turns: 3
+  # 为系统提示、当前七维状态及记忆/状态 JSON 输出预留，避免总上下文越界
+  context_reserved_tokens: 3072
   state_max_tokens: 512
   timeout_seconds: 45
   max_retries: 3
   cleanup_timeout_seconds: 10
+  # 保持每轮 FIFO、不丢任务；超过阈值仅记录积压告警
+  queue_warning_threshold: 10
   prompt_file: config/prompts/state_analysis.md

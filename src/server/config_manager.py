@@ -257,7 +257,12 @@ class ConfigManager:
             0, getattr(app.state, "_active_ws_connections", 0) - 1
         )
         if app.state._active_ws_connections == 0:
-            await ConfigManager.cleanup_retired_resources(app)
+            config_lock = getattr(app.state, "_config_update_lock", None)
+            if config_lock is None:
+                await ConfigManager.cleanup_retired_resources(app)
+            else:
+                async with config_lock:
+                    await ConfigManager.cleanup_retired_resources(app)
 
     @staticmethod
     async def cleanup_retired_resources(app) -> None:

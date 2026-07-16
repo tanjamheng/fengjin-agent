@@ -388,6 +388,11 @@ def main():
             enabled=mind_enabled,
         )
         memory_manager = mind_manager.memory_manager
+    else:
+        # 心智必须作为整体启停；部分组件初始化成功时也不能绕过总开关注入。
+        for engine in (mood_engine, bond_tracker):
+            if engine:
+                engine.set_enabled(False)
 
     context_manager = ContextManager(
         config=context_settings.context,
@@ -445,8 +450,8 @@ def main():
             safety=safety_engine,
             context_manager=context_manager,
             mind_manager=mind_manager,
-            mood_engine=mood_engine,
-            bond_tracker=bond_tracker,
+            mood_engine=mood_engine if mind_manager else None,
+            bond_tracker=bond_tracker if mind_manager else None,
             persona_guard=persona_guard,
         )
     except Exception as e:

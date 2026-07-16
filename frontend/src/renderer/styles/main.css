@@ -1078,7 +1078,7 @@ html, body {
 .settings-section {
   margin-bottom: 18px;
 }
-/* 记忆关闭时灰化标题和字段行，保留 toggle row 不灰 */
+/* 心智关闭时灰化标题和字段行，保留 toggle row 不灰 */
 .settings-section--disabled .settings-section-title,
 .settings-section--disabled .settings-field {
   opacity: 0.4;
@@ -1093,7 +1093,7 @@ html, body {
   border-bottom: 1px solid rgba(180, 160, 200, 0.12);
 }
 
-/* 记忆模型版块与主模型之间留间距 */
+/* 心智模型版块与主模型之间留间距 */
 .settings-section + .settings-section {
   margin-top: 8px;
 }

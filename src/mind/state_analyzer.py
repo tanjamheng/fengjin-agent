@@ -72,7 +72,8 @@ class StateAnalyzer:
             {"role": "user", "content": payload},
         ]
         last_error = ""
-        for attempt in range(self.config.max_retries + 1):
+        attempt = 0
+        while attempt <= self.config.max_retries:
             try:
                 kwargs = {
                     "model": self.model,
@@ -103,8 +104,12 @@ class StateAnalyzer:
             except BadRequestError as exc:
                 text = str(exc)
                 lowered = text.lower()
-                if self._response_mode in ("json_schema", "json_object") and (
-                    "response_format" in lowered or "json_schema" in lowered
+                unsupported_markers = (
+                    "response_format", "json_schema", "json_object",
+                    "json mode", "structured output",
+                )
+                if self._response_mode in ("json_schema", "json_object") and any(
+                    marker in lowered for marker in unsupported_markers
                 ):
                     previous_mode = self._response_mode
                     self._response_mode = (
@@ -112,6 +117,7 @@ class StateAnalyzer:
                     )
                     log.warning("供应商不支持 {}，降级为 {}", previous_mode, self._response_mode)
                     last_error = text
+                    # 能力协商不消耗业务重试次数。
                     continue
                 last_error = text
                 if _is_permanent_error(exc):
@@ -123,6 +129,7 @@ class StateAnalyzer:
 
             if attempt < self.config.max_retries:
                 time.sleep(min(0.5 * (2 ** attempt), 2.0))
+            attempt += 1
 
         raise MindModelError(f"心智状态分析重试后失败: {last_error}")
 

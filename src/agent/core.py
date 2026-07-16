@@ -149,6 +149,8 @@ class Agent:
         trace_id: str = "",
         on_token: Optional[Callable] = None,
         skills: Optional[list[str]] = None,
+        _client_snapshot=None,
+        _config_snapshot=None,
     ) -> str:
         """完整对话管线
 
@@ -173,7 +175,10 @@ class Agent:
             raise ValueError(
                 f"输入过长（{len(user_input)}字符），请限制在 {MAX_INPUT_LENGTH} 字符以内"
             )
-        self.config.validate_main_model_config()
+        # 热更新只影响下一轮对话；一次 Tool Calling 链始终使用同一客户端和配置。
+        chat_config = _config_snapshot or self.config
+        chat_client = _client_snapshot or self.client
+        chat_config.validate_main_model_config()
 
         self.trace_id = trace_id or generate_trace_id()
         logger = get_logger("core", trace_id=self.trace_id)
@@ -203,7 +208,8 @@ class Agent:
         try:
             # 3. 安全检测（三态分流：P0 规则引擎 → P1 Llama Guard）
             t_safety_start = time.monotonic()
-            result = self.safety.check(message_content, trace_id=self.trace_id)
+            # Skill 增强文本不是用户原话，不能替代原始输入的安全边界。
+            result = self.safety.check(user_input, trace_id=self.trace_id)
             t_safety = (time.monotonic() - t_safety_start) * 1000
             # 安全检测详情由 SafetyManager 内部日志输出（P0/P1 各自耗时）
 
@@ -262,7 +268,7 @@ class Agent:
         total_tokens = 0
         tool_definitions = self.tool_registry.get_all_definitions()
         max_tool_rounds = (
-            self.config.agent.max_tool_rounds if tool_definitions else 0
+            chat_config.agent.max_tool_rounds if tool_definitions else 0
         )
 
         async def _execute_tool(name: str, args: dict) -> str:
@@ -272,10 +278,13 @@ class Agent:
 
         try:
             while True:
+                if controller.cancel_requested:
+                    logger.info("工具链继续前检测到取消信号")
+                    break
                 # 5a. 组装上下文 + 滑动窗口
                 t_build_start = time.monotonic()
                 system_content = assemble_system_prompt(
-                    self.config, comfort_prompt
+                    chat_config, comfort_prompt
                 )
                 api_messages = _build_api_messages(
                     self.session_mgr,
@@ -321,14 +330,14 @@ class Agent:
                     logger.info(
                         "调用 LLM: {} ({} 条消息, 裁剪 {}→{}, "
                         "~{}→{} tk, 组装 {:.0f}ms)",
-                        self.config.model, len(api_messages),
+                        chat_config.model, len(api_messages),
                         pre_trim_count, post_trim_count,
                         pre_trim_tokens, post_trim_tokens, t_build,
                     )
                 else:
                     logger.info(
                         "调用 LLM: {} ({} 条消息, ~{} tk, 组装 {:.0f}ms)",
-                        self.config.model, len(api_messages),
+                        chat_config.model, len(api_messages),
                         pre_trim_tokens, t_build,
                     )
 
@@ -338,13 +347,13 @@ class Agent:
                 tool_calls_data: dict[int, dict] = {}
 
                 async for text_delta, tc_delta in stream_llm(
-                    client=self.client,
-                    model=self.config.model,
+                    client=chat_client,
+                    model=chat_config.model,
                     messages=api_messages,
                     controller=controller,
                     tools=tool_definitions if tool_definitions else None,
-                    temperature=self.config.agent.temperature,
-                    max_tokens=self.config.agent.max_tokens,
+                    temperature=chat_config.agent.temperature,
+                    max_tokens=chat_config.agent.max_tokens,
                 ):
                     # 文本 token
                     if text_delta:
@@ -406,6 +415,8 @@ class Agent:
 
                 t_tools_start = time.monotonic()
                 for idx in sorted(tool_calls_data.keys()):
+                    if controller.cancel_requested:
+                        break
                     tc = tool_calls_data[idx]
                     tool_name = tc["name"]
                     try:
@@ -422,6 +433,8 @@ class Agent:
                         result_text = await _execute_tool(
                             tool_name, tool_input
                         )
+                        if controller.cancel_requested:
+                            break
                         t_tool = (
                             time.monotonic() - t_tool_start
                         ) * 1000

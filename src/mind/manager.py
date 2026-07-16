@@ -26,6 +26,26 @@ class _StateTask:
     warn: WarningCallback
 
 
+class _GenerationGate:
+    """把最终记忆提交与 generation 切换放在同一把锁下。"""
+
+    def __init__(self, manager: "MindManager", generation: int):
+        self.manager = manager
+        self.generation = generation
+
+    def __call__(self) -> bool:
+        return self.manager._task_valid(self.generation)
+
+    def commit(self, action) -> bool:
+        # 独立 commit 锁只与 generation 切换互斥，不阻塞主对话读取/注入状态。
+        with self.manager._generation_lock:
+            with self.manager._lock:
+                if not self.manager.active or self.generation != self.manager._generation:
+                    return False
+            action()
+            return True
+
+
 class MindManager:
     """稳定的应用级引用；热更新只替换内部服务，不替换本对象。"""
 
@@ -38,7 +58,15 @@ class MindManager:
         self.bond_tracker = bond_tracker
         self.max_context_tokens = max_context_tokens
         self.log = get_logger("mind")
+        self._context_token_budget = max_context_tokens - config.context_reserved_tokens
+        if self._context_token_budget < 256:
+            self.log.error(
+                "心智上下文预算不足: total={} reserved={}，心智系统将降级关闭",
+                max_context_tokens, config.context_reserved_tokens,
+            )
+            enabled = False
         self._lock = threading.RLock()
+        self._generation_lock = threading.RLock()
         self._generation = 0
         self._enabled = False
         self._ready = False
@@ -46,6 +74,7 @@ class MindManager:
         self.memory_manager: MemoryManager | None = None
         self.state_analyzer: StateAnalyzer | None = None
         self._queue: queue.Queue[_StateTask | None] = queue.Queue()
+        self._next_queue_warning = config.queue_warning_threshold
         self._worker: threading.Thread | None = None
         self.reconfigure(enabled)
 
@@ -82,7 +111,11 @@ class MindManager:
             turns = normalize_turns(
                 messages,
                 max_turns=self.config.context_turns,
-                max_tokens=self.max_context_tokens,
+                max_tokens=getattr(
+                    self,
+                    "_context_token_budget",
+                    max(256, self.max_context_tokens - self.config.context_reserved_tokens),
+                ),
             )
         except Exception as exc:
             self.log.opt(exception=True).error("心智上下文整理失败，已放弃本轮后台任务: {}", exc)
@@ -92,6 +125,7 @@ class MindManager:
 
         callback = _once(on_model_failure or (lambda: None))
         generation = self._generation
+        generation_gate = _GenerationGate(self, generation)
         memory = self.memory_manager
         if memory:
             try:
@@ -100,7 +134,7 @@ class MindManager:
                     on_model_failure=lambda permanent=False: self._handle_model_failure(
                         generation, callback, permanent
                     ),
-                    should_apply=lambda: self._task_valid(generation),
+                    should_apply=generation_gate,
                 )
             except Exception as exc:
                 self.log.opt(exception=True).error("记忆后台任务提交失败，已跳过本轮: {}", exc)
@@ -108,7 +142,16 @@ class MindManager:
             try:
                 task = _StateTask(uuid.uuid4().hex[:8], trace_id, generation, turns, callback)
                 self._queue.put(task)
-                self.log.debug("心智状态任务已提交: {} (queue={})", task.task_id, self._queue.qsize())
+                queue_size = self._queue.qsize()
+                self.log.debug("心智状态任务已提交: {} (queue={})", task.task_id, queue_size)
+                warning_threshold = getattr(self.config, "queue_warning_threshold", 10)
+                next_warning = getattr(self, "_next_queue_warning", warning_threshold)
+                if queue_size >= next_warning:
+                    self.log.warning(
+                        "心智状态任务积压: queue={} threshold={}（保持 FIFO，不丢任务）",
+                        queue_size, next_warning,
+                    )
+                    self._next_queue_warning = max(next_warning * 2, queue_size + 1)
             except Exception as exc:
                 self.log.opt(exception=True).error("状态后台任务提交失败，已跳过本轮: {}", exc)
 
@@ -117,14 +160,15 @@ class MindManager:
         self.bond_tracker.reset_state()
 
     def reconfigure(self, enabled: bool) -> None:
-        with self._lock:
-            self._cleaned = False
-            self._generation += 1
-            self._enabled = False
-            self._ready = False
-            self.mood_engine.set_enabled(False)
-            self.bond_tracker.set_enabled(False)
-        self._stop_services()
+        with self._generation_lock:
+            with self._lock:
+                self._cleaned = False
+                self._generation += 1
+                self._enabled = False
+                self._ready = False
+                self.mood_engine.set_enabled(False)
+                self.bond_tracker.set_enabled(False)
+        self._stop_services(wait_for_memory=True)
         with self._lock:
             self._enabled = enabled
         if not enabled:
@@ -140,6 +184,7 @@ class MindManager:
                 client=MindSettings.create_client(self.config),
                 model_name=model_name,
                 max_retries=self.config.max_retries,
+                queue_warning_threshold=self.config.queue_warning_threshold,
             )
             analyzer = StateAnalyzer(
                 self.config,
@@ -153,6 +198,7 @@ class MindManager:
                 self.mood_engine.set_enabled(True)
                 self.bond_tracker.set_enabled(True)
                 self._queue = queue.Queue()
+                self._next_queue_warning = self.config.queue_warning_threshold
                 worker_queue = self._queue
                 self._worker = threading.Thread(
                     target=self._worker_loop, args=(worker_queue,), daemon=True
@@ -183,14 +229,15 @@ class MindManager:
                 self.bond_tracker.set_enabled(False)
 
     def cleanup(self) -> None:
-        with self._lock:
-            if self._cleaned:
-                return
-            self._cleaned = True
-            self._generation += 1
-            self._enabled = False
-            self._ready = False
-        self._stop_services()
+        with self._generation_lock:
+            with self._lock:
+                if self._cleaned:
+                    return
+                self._cleaned = True
+                self._generation += 1
+                self._enabled = False
+                self._ready = False
+        self._stop_services(wait_for_memory=False)
         self.mood_engine.cleanup()
         self.bond_tracker.cleanup()
 
@@ -211,10 +258,10 @@ class MindManager:
                     bond_before = dict(self.bond_tracker.load())
                 started = time.monotonic()
                 result = analyzer.analyze(task.turns, mood_before, bond_before, task.trace_id)
-                if not self._task_valid(task.generation):
-                    self.log.info("丢弃过期心智任务: {}", task.task_id)
-                    continue
                 with self._lock:
+                    if not self.active or task.generation != self._generation:
+                        self.log.info("丢弃过期心智任务: {}", task.task_id)
+                        continue
                     mood_after = self.mood_engine.update(**result.mood.model_dump())
                     bond_after = self.bond_tracker.update(**result.bond.model_dump())
                 self.log.info(
@@ -231,6 +278,8 @@ class MindManager:
                 self.log.opt(exception=True).error("心智状态后台任务异常，已放弃本轮: {}", exc)
             finally:
                 worker_queue.task_done()
+                if worker_queue.qsize() < self.config.queue_warning_threshold:
+                    self._next_queue_warning = self.config.queue_warning_threshold
 
     def _handle_model_failure(self, generation: int, callback: WarningCallback,
                               permanent: bool) -> None:
@@ -248,7 +297,7 @@ class MindManager:
         with self._lock:
             return self.active and generation == self._generation
 
-    def _stop_services(self) -> None:
+    def _stop_services(self, *, wait_for_memory: bool) -> None:
         with self._lock:
             worker = self._worker
             memory = self.memory_manager
@@ -258,12 +307,31 @@ class MindManager:
             self.state_analyzer = None
             if worker and worker.is_alive():
                 self._queue.put(None)
+        if memory:
+            try:
+                memory.cleanup()
+                if wait_for_memory:
+                    memory.wait_cleanup()
+            except Exception as exc:
+                self.log.opt(exception=True).error("心智记忆组件清理异常: {}", exc)
         if worker and worker.is_alive() and worker is not threading.current_thread():
             worker.join(timeout=self.config.cleanup_timeout_seconds)
             if worker.is_alive():
-                self.log.warning("心智状态 Worker 清理超时，将丢弃未完成结果")
-        if memory:
-            memory.cleanup()
+                self.log.warning("心智状态 Worker 清理超时，资源将在请求结束后延迟释放")
+                threading.Thread(
+                    target=self._deferred_service_cleanup,
+                    args=(worker, analyzer),
+                    name="mind-deferred-cleanup",
+                    daemon=True,
+                ).start()
+                return
+        self._cleanup_analyzer(analyzer)
+
+    def _deferred_service_cleanup(self, worker, analyzer) -> None:
+        worker.join()
+        self._cleanup_analyzer(analyzer)
+
+    def _cleanup_analyzer(self, analyzer) -> None:
         if analyzer:
             try:
                 analyzer.close()

@@ -164,7 +164,7 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | | `quick_replies` (可选，最多3条) / `mind_warning` / `error` |
 
 > 完整字段定义 + 时序图 → `核心文档/核心4_WS通信协议.md`
-> TypeScript 类型定义 → `frontend/src/types/protocol.ts`
+> TypeScript 类型定义 → `frontend/src/renderer/types/protocol.ts`
 
 ### 文档导航
 
@@ -441,7 +441,7 @@ AI风堇_治愈晨昏/
 
 启动：Config/主模型客户端 → Safety → Mood + Bond → MindManager（Memory + StateAnalyzer + FIFO Worker）→ Persona → RAG/MCP → Context/Agent → Session
 
-退出：连接先 Session.flush() + 连接级 Persona.cleanup()；应用 lifespan 再关闭主模型客户端 → RAG/MCP → MindManager.cleanup()（停止状态 Worker、等待记忆任务、停止 Writer、关闭心智客户端与存储、清理 Mood/Bond）→ 应用级 Persona/Safety → logger.complete()。CLI 由 Agent.cleanup() 持有 MindManager；WS 由应用 lifespan 持有，连接断开不得清理应用级心智资源。
+退出：连接先 Session.flush() + 连接级 Persona.cleanup()；应用 lifespan 再关闭主模型客户端 → RAG/MCP → MindManager.cleanup()（停止状态 Worker、等待记忆任务、停止 Writer、关闭心智客户端与存储、清理 Mood/Bond）→ 应用级 Persona/Safety → logger.complete()。心智热更新必须等待旧代 MemoryWriter/WAL/Chroma 完全释放后才能创建新代；普通退出超时可延迟清理，但不得提前关闭在途请求仍使用的资源。CLI 由 Agent.cleanup() 持有 MindManager；WS 由应用 lifespan 持有，连接断开不得清理应用级心智资源。
 
 ---
 

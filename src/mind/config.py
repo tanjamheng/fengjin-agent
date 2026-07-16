@@ -10,10 +10,12 @@ from pydantic import BaseModel, Field
 
 class MindConfig(BaseModel):
     context_turns: int = Field(default=3, ge=1, le=10)
+    context_reserved_tokens: int = Field(default=3072, ge=512, le=16384)
     state_max_tokens: int = Field(default=512, ge=128, le=4096)
     timeout_seconds: float = Field(default=45.0, gt=0)
     max_retries: int = Field(default=3, ge=0, le=5)
     cleanup_timeout_seconds: float = Field(default=10.0, gt=0)
+    queue_warning_threshold: int = Field(default=10, ge=1, le=10000)
     prompt_file: str = "config/prompts/state_analysis.md"
 
 

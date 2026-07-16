@@ -5,7 +5,7 @@ import re
 import time
 from pathlib import Path
 
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
 from .config import MemoryConfig, MemorySettings
 from .storage import MemoryStorage
@@ -34,6 +34,7 @@ class MemoryExtractor:
         self.model = model
         self.storage = storage
         self.max_retries = max_retries
+        self._response_mode = "json_object"
         self.log = get_logger("memory_extractor")
         try:
             self._extraction_prompt = Path(config.extraction.prompt_file).read_text(
@@ -90,14 +91,17 @@ class MemoryExtractor:
         ]
 
         last_error: Exception | None = None
-        for attempt in range(self.max_retries + 1):
+        attempt = 0
+        while attempt <= self.max_retries:
             try:
-                response = self.client.chat.completions.create(
+                kwargs = dict(
                     model=self.model,
                     max_tokens=self.config.extraction.max_tokens,
                     messages=messages,
-                    response_format={"type": "json_object"}
                 )
+                if self._response_mode == "json_object":
+                    kwargs["response_format"] = {"type": "json_object"}
+                response = self.client.chat.completions.create(**kwargs)
                 raw_text = (response.choices[0].message.content or "").strip()
                 facts, error = self._parse_and_validate(raw_text)
                 if facts is not None:
@@ -111,6 +115,22 @@ class MemoryExtractor:
                         "role": "user",
                         "content": f"返回的JSON格式有误：{error}\n请修正后重新返回，只返回合法JSON。"
                     })
+            except BadRequestError as exc:
+                lowered = str(exc).lower()
+                unsupported_markers = (
+                    "response_format", "json_object", "json mode", "structured output"
+                )
+                if self._response_mode == "json_object" and any(
+                    marker in lowered for marker in unsupported_markers
+                ):
+                    self._response_mode = "prompt_only"
+                    self.log.warning("供应商不支持 json_object，记忆提取降级为 prompt_only")
+                    last_error = exc
+                    # 能力协商不消耗业务重试次数；立即用 prompt-only 重发。
+                    continue
+                last_error = exc
+                if getattr(exc, "status_code", None) in (401, 403, 404):
+                    raise
             except Exception as exc:
                 last_error = exc
                 if getattr(exc, "status_code", None) in (401, 403, 404):
@@ -118,6 +138,7 @@ class MemoryExtractor:
 
             if attempt < self.max_retries:
                 time.sleep(min(2 ** attempt, 4))
+            attempt += 1
 
         self.log.warning("记忆提取调用或JSON校验失败，已重试 {} 次后放弃: {}", self.max_retries, last_error)
         if isinstance(last_error, MemoryModelOutputError):

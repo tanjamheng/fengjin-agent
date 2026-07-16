@@ -468,7 +468,7 @@ export class SettingsPanel {
   private async _save(): Promise<void> {
     this._readForm();
 
-    // 无任何修改（含纯记忆字段保存时 _dirty 已由 _markDirty 设为 true）
+    // 无任何修改（含纯心智模型字段保存时 _dirty 已由 _markDirty 设为 true）
     if (!this._dirty) {
       this._close(null); // 无修改则直接关闭面板
       return;

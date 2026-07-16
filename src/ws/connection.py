@@ -39,58 +39,16 @@ async def websocket_endpoint(websocket: WebSocket):
     from ..server.config_manager import ConfigManager
     ConfigManager.register_connection(websocket.app)
 
-    # 应用级单例（启动时加载，含 GPU 模型，所有连接共享）
-    config = websocket.app.state.config
-    client = websocket.app.state.client
-    safety = websocket.app.state.safety
-
-    # 每连接独立：会话管理器 + 上下文管理器 + Agent
-    _project_root = _PROJECT_ROOT
-    _sessions_dir = str(_project_root / "data" / "sessions")
-    session_mgr = SessionManager(data_dir=_sessions_dir)
-    mind_manager = getattr(websocket.app.state, "mind_manager", None)
-    context_mgr = ContextManager(
-        websocket.app.state.context_config,
-        memory_retriever=mind_manager if mind_manager else None,
-    )
-    tool_registry = getattr(websocket.app.state, "tool_registry", None)
-    mood_engine = mind_manager.mood_engine if mind_manager else None
-    bond_tracker = mind_manager.bond_tracker if mind_manager else None
-    persona_guard = None
-    persona_embedding_acquired = False
-
-    persona_config = getattr(websocket.app.state, "persona_config", None)
-    persona_model_path = getattr(websocket.app.state, "persona_model_path", "")
-    if persona_config is not None and persona_model_path:
-        try:
-            from ..persona.drift_guard import PersonaDriftGuard
-            from ..rag import embedding_registry as _emb_reg
-            from ..utils.helpers import resolve_device
-
-            # 与 RAG / MemoryStorage 使用同一预算决策；若 RAG 已常驻 bge-m3，
-            # 注册表会复用其实际设备上的同一实例。
-            _emb = _emb_reg.acquire(
-                persona_model_path,
-                resolve_device("auto", "bge-m3"),
-            )
-            persona_embedding_acquired = True
-            persona_guard = PersonaDriftGuard(_emb, persona_config)
-            if persona_guard.anchor_count < 3:
-                persona_guard.cleanup()
-                persona_guard = None
-                _emb_reg.release()
-                persona_embedding_acquired = False
-        except Exception as e:
-            log.warning("连接级角色漂移检测创建失败: {}", e)
-            if persona_guard:
-                persona_guard.cleanup()
-                persona_guard = None
-            if persona_embedding_acquired:
-                try:
-                    _emb_reg.release()
-                except Exception:
-                    pass
-                persona_embedding_acquired = False
+    try:
+        async with _get_config_lock(websocket.app):
+            (
+                config, client, safety, session_mgr, mind_manager, context_mgr,
+                tool_registry, mood_engine, bond_tracker, persona_guard,
+                persona_embedding_acquired,
+            ) = _setup_connection_resources(websocket)
+    except Exception:
+        await ConfigManager.unregister_connection(websocket.app)
+        raise
 
     event_loop = asyncio.get_running_loop()
 
@@ -108,27 +66,45 @@ async def websocket_endpoint(websocket: WebSocket):
         except RuntimeError:
             log.debug("心智提示跳过：事件循环已关闭")
 
-    # Agent — CLI/WS 共用的对话入口
-    agent = Agent(
-        config=config,
-        session_mgr=session_mgr,
-        safety=safety,
-        client=client,
-        context_manager=context_mgr,
-        mind_manager=mind_manager,
-        on_mind_warning=_notify_mind_failure,
-        tool_registry=tool_registry,
-        mood_engine=mood_engine,
-        bond_tracker=bond_tracker,
-        persona_guard=persona_guard,
-    )
-    ConfigManager.register_agent(websocket.app, agent)
-
-    # 不预先创建会话——等用户发送第一条消息时才创建
-    await websocket.send_json({
-        "type": "connected",
-        "session_id": "",
-    })
+    # Agent 构造和首包发送仍可能因早期断连失败；此阶段也必须对称释放资源。
+    agent = None
+    try:
+        agent = Agent(
+            config=config,
+            session_mgr=session_mgr,
+            safety=safety,
+            client=client,
+            context_manager=context_mgr,
+            mind_manager=mind_manager,
+            on_mind_warning=_notify_mind_failure,
+            tool_registry=tool_registry,
+            mood_engine=mood_engine,
+            bond_tracker=bond_tracker,
+            persona_guard=persona_guard,
+        )
+        async with _get_config_lock(websocket.app):
+            # 构造期间配置可能已完成一次事务；注册前重新绑定已提交版本。
+            agent.client = websocket.app.state.client
+            agent.config = websocket.app.state.config
+            ConfigManager.register_agent(websocket.app, agent)
+        # 不预先创建会话——等用户发送第一条消息时才创建
+        await websocket.send_json({"type": "connected", "session_id": ""})
+    except Exception:
+        if agent is not None:
+            ConfigManager.unregister_agent(websocket.app, agent)
+        if persona_guard:
+            try:
+                persona_guard.cleanup()
+            except Exception as cleanup_exc:
+                log.warning("早期断连时 PersonaDriftGuard 清理异常: {}", cleanup_exc)
+        if persona_embedding_acquired:
+            try:
+                from ..rag import embedding_registry as _emb_reg
+                _emb_reg.release()
+            except Exception as release_exc:
+                log.warning("早期断连时 embedding release 异常: {}", release_exc)
+        await ConfigManager.unregister_connection(websocket.app)
+        raise
 
     # 流任务状态
     current_stream: Optional[asyncio.Task] = None
@@ -209,7 +185,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 agent.cancel()
                 if current_stream and not current_stream.done():
                     try:
-                        await current_stream
+                        await asyncio.wait_for(current_stream, timeout=5)
+                    except asyncio.TimeoutError:
+                        current_stream.cancel()
+                        try:
+                            await current_stream
+                        except (asyncio.CancelledError, Exception):
+                            pass
                     except asyncio.CancelledError:
                         pass
                     except BlockedError:
@@ -273,6 +255,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # ── delete_session ──
             elif msg_type == "delete_session":
+                await _cancel_active_stream(agent, current_stream, "delete_session")
                 target_id = data.get("session_id", "")
                 is_current_session = bool(target_id and target_id == session_mgr.get_current_session_id())
                 deleted = session_mgr.delete_session(target_id)
@@ -298,6 +281,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # ── rename_session ──
             elif msg_type == "rename_session":
+                await _cancel_active_stream(agent, current_stream, "rename_session")
                 target_id = data.get("session_id", "")
                 new_title = (data.get("title", "") or "").strip()
                 if not target_id or not new_title:
@@ -322,7 +306,8 @@ async def websocket_endpoint(websocket: WebSocket):
             # ── get_config ──
             elif msg_type == "get_config":
                 from ..server.config_manager import ConfigManager
-                cfg = ConfigManager.get_current_config()
+                async with _get_config_lock(websocket.app):
+                    cfg = ConfigManager.get_current_config()
                 await websocket.send_json({
                     "type": "current_config",
                     **cfg,
@@ -347,59 +332,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     continue
 
-                # 保存旧 os.environ 快照（用于 rebuild 失败时回滚）
-                _old_environ = {k: os.environ.get(k) for k in [
-                    "FENGJIN_API_KEY", "FENGJIN_BASE_URL", "FENGJIN_MODEL",
-                    "MIND_API_KEY", "MIND_BASE_URL", "MIND_MODEL", "MIND_ENABLED",
-                ]}
-
-                # 先更新 os.environ（rebuild 内部 _reload_dotenv 需读取新值）
-                ConfigManager.apply_to_os_environ(main_cfg, mind_cfg, mind_enabled)
-
-                # 重建客户端
-                try:
-                    await ConfigManager.rebuild_clients(
-                        websocket.app, main_cfg, mind_cfg, mind_enabled,
-                        previous_environ=_old_environ,
-                    )
-                except Exception as e:
-                    log.opt(exception=True).error("配置热更新失败: {}", e)
-                    # 回滚 os.environ 到旧值
-                    for k, v in _old_environ.items():
-                        if v is None:
-                            os.environ.pop(k, None)
-                        else:
-                            os.environ[k] = v
-                    await websocket.send_json({
-                        "type": "config_updated",
-                        "success": False,
-                        "errors": ["配置热更新失败，请重启后端"],
-                    })
-                    continue
-
-                # 成功后：写 .env（持久化）+ 更新局部引用 + 更新已有 Agent
-                env_persisted = ConfigManager.update_env_file(main_cfg, mind_cfg, mind_enabled)
-                client = websocket.app.state.client
-                context_mgr = ContextManager(
-                    websocket.app.state.context_config,
-                    memory_retriever=mind_manager if mind_manager else None,
+                success, update_errors = await _apply_config_update(
+                    websocket.app, main_cfg, mind_cfg, mind_enabled
                 )
-                # 更新当前连接已有 Agent 的引用（后续消息使用新配置）
+                client = websocket.app.state.client
                 agent.client = client
-                agent.context_manager = context_mgr
-
-                # 持久化失败：运行时已生效，但重启后回滚——必须告知用户（红线8：静默失败零容忍）
-                if not env_persisted:
-                    await websocket.send_json({
-                        "type": "config_updated",
-                        "success": False,
-                        "errors": ["配置已生效，但持久化失败，重启后端后将回滚"],
-                    })
-                    continue
-
                 await websocket.send_json({
                     "type": "config_updated",
-                    "success": True,
+                    "success": success,
+                    **({"errors": update_errors} if update_errors else {}),
                 })
 
     except WebSocketDisconnect:
@@ -450,11 +391,196 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # ── 对话事件 → 报文映射 ──────────────────────────────────────
 
+
+def _setup_connection_resources(websocket: WebSocket) -> tuple:
+    """构造连接级资源；Persona acquire 在任何异常路径都对称释放。"""
+    app_state = websocket.app.state
+    config = app_state.config
+    client = app_state.client
+    safety = app_state.safety
+    session_mgr = SessionManager(data_dir=str(_PROJECT_ROOT / "data" / "sessions"))
+    mind_manager = getattr(app_state, "mind_manager", None)
+    context_mgr = ContextManager(
+        app_state.context_config,
+        memory_retriever=mind_manager if mind_manager else None,
+    )
+    tool_registry = getattr(app_state, "tool_registry", None)
+    mood_engine = mind_manager.mood_engine if mind_manager else None
+    bond_tracker = mind_manager.bond_tracker if mind_manager else None
+    persona_guard = None
+    persona_embedding_acquired = False
+
+    persona_config = getattr(app_state, "persona_config", None)
+    persona_model_path = getattr(app_state, "persona_model_path", "")
+    if persona_config is not None and persona_model_path:
+        try:
+            from ..persona.drift_guard import PersonaDriftGuard
+            from ..rag import embedding_registry as embedding_registry
+            from ..utils.helpers import resolve_device
+
+            embedding = embedding_registry.acquire(
+                persona_model_path, resolve_device("auto", "bge-m3")
+            )
+            persona_embedding_acquired = True
+            persona_guard = PersonaDriftGuard(embedding, persona_config)
+            if persona_guard.anchor_count < 3:
+                persona_guard.cleanup()
+                persona_guard = None
+                embedding_registry.release()
+                persona_embedding_acquired = False
+        except Exception as exc:
+            log.warning("连接级角色漂移检测创建失败: {}", exc)
+            if persona_guard:
+                try:
+                    persona_guard.cleanup()
+                except Exception as cleanup_exc:
+                    log.warning("连接级 Persona 回滚异常: {}", cleanup_exc)
+            persona_guard = None
+            if persona_embedding_acquired:
+                try:
+                    embedding_registry.release()
+                except Exception as release_exc:
+                    log.warning("连接级 embedding 回滚异常: {}", release_exc)
+                persona_embedding_acquired = False
+
+    return (
+        config, client, safety, session_mgr, mind_manager, context_mgr,
+        tool_registry, mood_engine, bond_tracker, persona_guard,
+        persona_embedding_acquired,
+    )
+
+
+def _get_config_lock(app) -> asyncio.Lock:
+    """应用级配置事务锁，序列化所有 WS 的读取、重建与持久化。"""
+    lock = getattr(app.state, "_config_update_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        app.state._config_update_lock = lock
+    return lock
+
+
+async def _cancel_active_stream(agent: Agent, task: Optional[asyncio.Task],
+                                operation: str) -> None:
+    """会话写操作前结束当前生成，避免磁盘快照覆盖在途消息。"""
+    if task is None or task.done():
+        return
+    agent.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=30)
+    except asyncio.TimeoutError:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    except (asyncio.CancelledError, BlockedError):
+        pass
+    except Exception as exc:
+        log.opt(exception=True).error("{} 取消旧流异常: {}", operation, exc)
+
+
+async def _apply_config_update(app, main_cfg: dict, mind_cfg: dict,
+                               mind_enabled: bool) -> tuple[bool, list[str]]:
+    from ..server.config_manager import ConfigManager
+
+    env_keys = (
+        "FENGJIN_API_KEY", "FENGJIN_BASE_URL", "FENGJIN_MODEL",
+        "MIND_API_KEY", "MIND_BASE_URL", "MIND_MODEL", "MIND_ENABLED",
+    )
+    async with _get_config_lock(app):
+        old_environ = {key: os.environ.get(key) for key in env_keys}
+        old_client = getattr(app.state, "client", None)
+        old_config = getattr(app.state, "config", None)
+        agents = list(getattr(app.state, "_active_agents", ()))
+        old_agent_refs = [(agent, agent.client, agent.config) for agent in agents]
+        manager = getattr(app.state, "mind_manager", None)
+        old_mind_generation = getattr(manager, "_generation", None)
+
+        async def _rollback_runtime() -> None:
+            _restore_environ(old_environ)
+            new_client = getattr(app.state, "client", None)
+            app.state.client = old_client
+            app.state.config = old_config
+            for active_agent, agent_client, agent_config in old_agent_refs:
+                active_agent.client = agent_client
+                active_agent.config = agent_config
+            retired = getattr(app.state, "_retired_resources", [])
+            while old_client in retired:
+                retired.remove(old_client)
+            if new_client is not None and new_client is not old_client:
+                try:
+                    await new_client.close()
+                except Exception as close_exc:
+                    log.warning("回滚时关闭新主模型客户端失败: {}", close_exc)
+            # 只有本次 rebuild 真正触碰过心智 generation，才重建旧代。
+            if manager is not None and getattr(manager, "_generation", None) != old_mind_generation:
+                old_enabled = (old_environ.get("MIND_ENABLED") or "false").lower() == "true"
+                try:
+                    await asyncio.to_thread(manager.reconfigure, old_enabled)
+                    app.state.memory_manager = manager.memory_manager
+                except Exception as rollback_exc:
+                    log.opt(exception=True).error("心智配置回滚失败: {}", rollback_exc)
+
+        ConfigManager.apply_to_os_environ(main_cfg, mind_cfg, mind_enabled)
+        try:
+            await ConfigManager.rebuild_clients(
+                app, main_cfg, mind_cfg, mind_enabled,
+                previous_environ=old_environ,
+            )
+        except Exception as exc:
+            log.opt(exception=True).error("配置热更新失败，正在回滚: {}", exc)
+            await _rollback_runtime()
+            return False, ["配置热更新失败，已恢复原配置"]
+
+        if not ConfigManager.update_env_file(main_cfg, mind_cfg, mind_enabled):
+            await _rollback_runtime()
+            return False, ["配置持久化失败，已恢复原配置"]
+        if getattr(app.state, "_active_chat_count", 0) == 0:
+            await ConfigManager.cleanup_retired_resources(app)
+        return True, []
+
+
+def _restore_environ(snapshot: dict[str, str | None]) -> None:
+    for key, value in snapshot.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
 async def _handle_user_msg(
     websocket: WebSocket,
     data: dict,
     agent: Agent,
     session_mgr: SessionManager,
+):
+    """跟踪应用级在途对话，使热更新旧客户端在最后一轮结束后及时释放。"""
+    app = websocket.app
+    # 与配置事务串行完成快照；锁随即释放，不阻塞整轮生成。
+    async with _get_config_lock(app):
+        chat_client = agent.client
+        chat_config = agent.config
+        app.state._active_chat_count = getattr(app.state, "_active_chat_count", 0) + 1
+    try:
+        return await _handle_user_msg_impl(
+            websocket, data, agent, session_mgr, chat_client, chat_config
+        )
+    finally:
+        app.state._active_chat_count = max(
+            0, getattr(app.state, "_active_chat_count", 0) - 1
+        )
+        if app.state._active_chat_count == 0:
+            from ..server.config_manager import ConfigManager
+            async with _get_config_lock(app):
+                await ConfigManager.cleanup_retired_resources(app)
+
+
+async def _handle_user_msg_impl(
+    websocket: WebSocket,
+    data: dict,
+    agent: Agent,
+    session_mgr: SessionManager,
+    chat_client,
+    chat_config,
 ):
     """消费 Agent.chat() 的 token，映射为 WS 报文"""
     user_content = data.get("content", "")
@@ -489,6 +615,8 @@ async def _handle_user_msg(
             user_content,
             trace_id=trace_id,
             on_token=_send_token,
+            _client_snapshot=chat_client,
+            _config_snapshot=chat_config,
         )
 
         await websocket.send_json({

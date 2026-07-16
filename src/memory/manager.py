@@ -33,9 +33,11 @@ class MemoryManager:
     """
 
     def __init__(self, config: MemoryConfig, *, client=None,
-                 model_name: str | None = None, max_retries: int = 3):
+                 model_name: str | None = None, max_retries: int = 3,
+                 queue_warning_threshold: int = 10):
         small_client = client or MemorySettings.create_mind_model_client()
         self.client = small_client
+        self._cleanup_complete = threading.Event()
         model_name = model_name or MemorySettings.get_mind_model_name()
 
         self.storage = None
@@ -65,6 +67,8 @@ class MemoryManager:
         self._extract_threads: list[threading.Thread] = []
         self._lock = threading.Lock()
         self._conversation_queue: queue.Queue[_ConversationTask | None] = queue.Queue()
+        self._queue_warning_threshold = queue_warning_threshold
+        self._next_queue_warning = queue_warning_threshold
         self._conversation_stop = threading.Event()
         self._conversation_worker = threading.Thread(
             target=self._conversation_loop,
@@ -128,10 +132,19 @@ class MemoryManager:
             should_apply=should_apply,
         )
         self._conversation_queue.put(task)
+        queue_size = self._conversation_queue.qsize()
         self.log.debug(
             "记忆提取任务已提交: {} (queue={})",
-            task.task_id, self._conversation_queue.qsize(),
+            task.task_id, queue_size,
         )
+        warning_threshold = getattr(self, "_queue_warning_threshold", 10)
+        next_warning = getattr(self, "_next_queue_warning", warning_threshold)
+        if queue_size >= next_warning:
+            self.log.warning(
+                "记忆提取任务积压: queue={} threshold={}（保持 FIFO，不丢任务）",
+                queue_size, next_warning,
+            )
+            self._next_queue_warning = max(next_warning * 2, queue_size + 1)
 
     def _conversation_loop(self) -> None:
         while True:
@@ -169,9 +182,15 @@ class MemoryManager:
                     task.on_model_failure(getattr(e, "status_code", None) in (401, 403, 404))
             finally:
                 self._conversation_queue.task_done()
+                threshold = getattr(self, "_queue_warning_threshold", 10)
+                if self._conversation_queue.qsize() < threshold:
+                    self._next_queue_warning = threshold
 
     def cleanup(self) -> None:
         """停止写入线程并关闭存储（防御部分初始化：任意属性缺失时跳过对应步骤）"""
+        if getattr(self, "_cleanup_started", False):
+            return
+        self._cleanup_started = True
         if hasattr(self, "_conversation_stop"):
             self._conversation_stop.set()
         worker = getattr(self, "_conversation_worker", None)
@@ -179,7 +198,14 @@ class MemoryManager:
             self._conversation_queue.put(None)
             worker.join(timeout=10.0)
             if worker.is_alive():
-                self.log.warning("记忆 FIFO Worker 清理超时，将丢弃未完成结果")
+                self.log.warning("记忆 FIFO Worker 清理超时，资源将在请求结束后延迟释放")
+                threading.Thread(
+                    target=self._deferred_cleanup,
+                    args=(worker,),
+                    name="mind-memory-deferred-cleanup",
+                    daemon=True,
+                ).start()
+                return
         self._conversation_worker = None
         if hasattr(self, "_lock") and hasattr(self, "_extract_threads"):
             with self._lock:
@@ -192,13 +218,58 @@ class MemoryManager:
                 t.join(timeout=remaining)
             still_alive = sum(1 for t in active if t.is_alive())
             if still_alive:
-                self.log.warning("{} 个记忆提取任务在清理超时后仍未结束，将丢弃其结果", still_alive)
+                self.log.warning("{} 个记忆提取任务仍在运行，资源将在任务结束后延迟释放", still_alive)
+                threading.Thread(
+                    target=self._deferred_legacy_cleanup,
+                    args=(active,),
+                    name="mind-memory-legacy-cleanup",
+                    daemon=True,
+                ).start()
+                return
             self._extract_threads.clear()
+        self._finish_cleanup()
+
+    def _deferred_cleanup(self, worker: threading.Thread) -> None:
+        worker.join()
+        self._conversation_worker = None
+        self._finish_cleanup()
+
+    def _deferred_legacy_cleanup(self, threads: list[threading.Thread]) -> None:
+        for thread in threads:
+            thread.join()
+        self._extract_threads.clear()
+        self._finish_cleanup()
+
+    def _finish_cleanup(self) -> None:
         if hasattr(self, "writer") and self.writer is not None:
-            self.writer.stop()
+            writer = self.writer
             self.writer = None
+            try:
+                writer.stop()
+            except Exception as exc:
+                self.log.opt(exception=True).error("记忆 Writer 停止异常: {}", exc)
+            writer_thread = getattr(writer, "_thread", None)
+            if writer_thread is not None and writer_thread.is_alive():
+                self.log.warning("记忆 Writer 仍在运行，存储将在写入结束后延迟释放")
+                threading.Thread(
+                    target=self._deferred_writer_cleanup,
+                    args=(writer_thread,),
+                    name="mind-memory-writer-cleanup",
+                    daemon=True,
+                ).start()
+                return
+        self._finish_storage_cleanup()
+
+    def _deferred_writer_cleanup(self, writer_thread: threading.Thread) -> None:
+        writer_thread.join()
+        self._finish_storage_cleanup()
+
+    def _finish_storage_cleanup(self) -> None:
         if hasattr(self, "storage") and self.storage is not None:
-            self.storage.cleanup()
+            try:
+                self.storage.cleanup()
+            except Exception as exc:
+                self.log.opt(exception=True).error("记忆存储清理异常: {}", exc)
             self.storage = None
         if hasattr(self, "client") and self.client is not None:
             try:
@@ -208,6 +279,11 @@ class MemoryManager:
             self.client = None
         self.extractor = None
         self.retriever = None
+        self._cleanup_complete.set()
+
+    def wait_cleanup(self) -> None:
+        """等待所有旧代 Writer/Storage 完全释放；热更新创建新代前调用。"""
+        self._cleanup_complete.wait()
 
 
 def _is_model_error(exc: Exception) -> bool:

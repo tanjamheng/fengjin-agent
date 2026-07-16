@@ -99,7 +99,9 @@ class MemoryStorage:
     def add(self, memory_id: str, content: str, is_core: bool,
             memory_type: str) -> None:
         """添加一条记忆"""
-        self.collection.add(
+        # WAL 重放可能在 Chroma 已提交、确认记录尚未删除的窗口发生。
+        # 使用确定 ID 的 upsert 使该窗口幂等，不产生重复记忆。
+        self.collection.upsert(
             documents=[content],
             ids=[memory_id],
             metadatas=[{

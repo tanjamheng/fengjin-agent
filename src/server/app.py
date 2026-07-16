@@ -332,6 +332,9 @@ async def lifespan(app: FastAPI):
         else:
             app.state.mind_manager = None
             app.state.memory_manager = None
+            for engine in (app.state.mood_engine, app.state.bond_tracker):
+                if engine:
+                    engine.set_enabled(False)
 
         # ── 7. 角色漂移检测配置 ──
         # PersonaDriftGuard 是连接级对象，实际编码模型由正式 RAG 服务长期持有并共享。
@@ -450,6 +453,16 @@ async def lifespan(app: FastAPI):
                 mind_manager.cleanup()
             except Exception as ce:
                 log.warning("mind_manager cleanup 异常: {}", ce)
+        else:
+            for name, engine in (
+                ("MoodEngine", getattr(app.state, "mood_engine", None)),
+                ("BondTracker", getattr(app.state, "bond_tracker", None)),
+            ):
+                if engine:
+                    try:
+                        engine.cleanup()
+                    except Exception as ce:
+                        log.warning("{} 初始化回滚异常: {}", name, ce)
         for attr in ("persona_guard",):
             obj = getattr(app.state, attr, None)
             if obj and hasattr(obj, "cleanup"):
@@ -505,6 +518,17 @@ async def lifespan(app: FastAPI):
             mind_manager.cleanup()
         except Exception as e:
             log.warning("MindManager 清理异常: {}", e)
+    else:
+        # 部分初始化时 MindManager 不接管资源，应用层负责释放孤立状态组件。
+        for name, engine in (
+            ("MoodEngine", getattr(app.state, "mood_engine", None)),
+            ("BondTracker", getattr(app.state, "bond_tracker", None)),
+        ):
+            if engine:
+                try:
+                    engine.cleanup()
+                except Exception as e:
+                    log.warning("{} 清理异常: {}", name, e)
     if getattr(app.state, "persona_guard", None):
         try:
             app.state.persona_guard.cleanup()

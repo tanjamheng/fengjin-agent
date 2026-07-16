@@ -41,6 +41,23 @@ class RenameSessionMessage(BaseModel):
     title: str
 
 
+class ModelConfigPayload(BaseModel):
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+
+
+class GetConfigMessage(BaseModel):
+    type: str = "get_config"
+
+
+class UpdateConfigMessage(BaseModel):
+    type: str = "update_config"
+    main: ModelConfigPayload
+    mind: ModelConfigPayload
+    mind_enabled: bool
+
+
 # ── 后端 → 前端 ──────────────────────────────────────────────
 
 class ConnectedMessage(BaseModel):
@@ -125,6 +142,19 @@ class MindWarningMessage(BaseModel):
     message: str
 
 
+class CurrentConfigMessage(BaseModel):
+    type: str = "current_config"
+    main: ModelConfigPayload
+    mind: ModelConfigPayload
+    mind_enabled: bool
+
+
+class ConfigUpdatedMessage(BaseModel):
+    type: str = "config_updated"
+    success: bool
+    errors: Optional[list[str]] = None
+
+
 # ── 联合类型 ─────────────────────────────────────────────────
 
 ServerMessage = Union[
@@ -141,6 +171,8 @@ ServerMessage = Union[
     QuickRepliesMessage,
     ErrorMessage,
     MindWarningMessage,
+    CurrentConfigMessage,
+    ConfigUpdatedMessage,
 ]
 
 ClientMessage = Union[
@@ -151,4 +183,6 @@ ClientMessage = Union[
     LoadSessionMessage,
     DeleteSessionMessage,
     RenameSessionMessage,
+    GetConfigMessage,
+    UpdateConfigMessage,
 ]

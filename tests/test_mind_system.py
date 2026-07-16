@@ -9,7 +9,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from openai import BadRequestError
@@ -21,8 +21,10 @@ from src.mind.manager import MindManager
 from src.mind.state_analyzer import StateAnalysisResult, StateAnalyzer
 from src.memory.writer import MemoryWriter
 from src.memory.manager import MemoryManager
+from src.memory.extractor import MemoryExtractor
 from src.memory.config import MemoryConfig
 from src.server.config_manager import ConfigManager
+from src.ws.connection import _apply_config_update
 from src.session import MessageMeta, SessionManager
 from src.utils.logger import get_logger
 from src.mood.engine import MoodEngine, MoodSettings
@@ -181,7 +183,96 @@ class StateAnalyzerTests(unittest.TestCase):
         self.assertNotIn("response_format", calls[2])
 
 
+class MemoryExtractorTests(unittest.TestCase):
+    def test_json_object_falls_back_to_prompt_only(self):
+        unsupported = BadRequestError(
+            "response_format is not supported",
+            response=httpx.Response(
+                400, request=httpx.Request("POST", "https://example.test/chat")
+            ),
+            body=None,
+        )
+        client = _FakeClient([
+            unsupported,
+            '{"facts":[{"content":"用户喜欢晴天","type":"semantic","importance":"low"}]}',
+        ])
+
+        class _Storage:
+            def query(self, **_kwargs):
+                return {"distances": [[]]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = Path(tmp) / "memory.md"
+            prompt.write_text("只输出JSON", encoding="utf-8")
+            config = MemoryConfig(extraction={"prompt_file": str(prompt)})
+            extractor = MemoryExtractor(
+                config, client, "fake", _Storage(), max_retries=2
+            )
+            facts = extractor.extract_conversation("用户：我喜欢晴天")
+
+        self.assertEqual(facts[0]["content"], "用户喜欢晴天")
+        self.assertIn("response_format", client.chat.completions.calls[0])
+        self.assertNotIn("response_format", client.chat.completions.calls[1])
+
+
 class MindManagerBoundaryTests(unittest.TestCase):
+    def test_memory_wal_is_persisted_before_task_is_queued(self):
+        fact = {"content": "用户喜欢晴天", "type": "semantic", "importance": "low"}
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = object.__new__(MemoryWriter)
+            writer._dump_path = Path(tmp) / "pending_facts.json"
+            writer._wal_lock = threading.RLock()
+            writer._pending = {}
+            writer._callbacks = {}
+
+            class _InspectQueue:
+                def put(_self, task_id):
+                    payload = json.loads(writer._dump_path.read_text(encoding="utf-8"))
+                    persisted_ids = {item["task_id"] for item in payload["tasks"]}
+                    self.assertIn(task_id, persisted_ids)
+
+            writer._queue = _InspectQueue()
+            writer.write([fact])
+
+    def test_memory_wal_replay_keeps_file_and_skips_bad_items(self):
+        valid = {"content": "用户喜欢晴天", "type": "semantic", "importance": "low"}
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = object.__new__(MemoryWriter)
+            writer._dump_path = Path(tmp) / "pending_facts.json"
+            writer._dump_path.write_text(
+                json.dumps([None, valid], ensure_ascii=False), encoding="utf-8"
+            )
+            writer._wal_lock = threading.RLock()
+            writer._pending = {}
+            writer._callbacks = {}
+            writer._queue = queue.Queue()
+            writer.log = get_logger("memory_wal_replay_test")
+
+            writer._replay_pending()
+
+            self.assertTrue(writer._dump_path.exists())
+            self.assertEqual(len(writer._pending), 1)
+            task_id = writer._queue.get_nowait()
+            self.assertIn(task_id, writer._pending)
+
+    def test_core_file_stage_is_checkpointed_before_refresh(self):
+        fact = {"content": "用户生日是今天", "type": "episodic", "importance": "high"}
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = object.__new__(MemoryWriter)
+            writer._dump_path = Path(tmp) / "pending_facts.json"
+            writer._wal_lock = threading.RLock()
+            record = {"task_id": "task-1", "fact": fact, "stage": "storage"}
+            writer._pending = {"task-1": record}
+            writer._callbacks = {"task-1": None}
+            writer._apply_fact_storage = lambda *_args, **_kwargs: True
+            writer._refresh_core_file = lambda: (_ for _ in ()).throw(OSError("disk"))
+
+            with self.assertRaises(OSError):
+                writer._process_record(record)
+
+            payload = json.loads(writer._dump_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["tasks"][0]["stage"], "core_file")
+
     def test_memory_merge_retries_then_drops_conflicting_fact(self):
         class _TemporaryModelError(RuntimeError):
             status_code = 500
@@ -358,6 +449,89 @@ class MindManagerBoundaryTests(unittest.TestCase):
 
 
 class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_persist_failure_rolls_runtime_back(self):
+        class _Client:
+            def __init__(self):
+                self.closed = False
+
+            async def close(self):
+                self.closed = True
+
+        old_client = _Client()
+        new_client = _Client()
+        old_config = SimpleNamespace(model="old")
+        new_config = SimpleNamespace(model="new")
+        agent = SimpleNamespace(client=old_client, config=old_config)
+        app = SimpleNamespace(state=SimpleNamespace(
+            client=old_client,
+            config=old_config,
+            mind_manager=None,
+            _active_agents=[agent],
+            _active_chat_count=0,
+            _retired_resources=[],
+        ))
+
+        async def _rebuild(*_args, **_kwargs):
+            app.state.client = new_client
+            app.state.config = new_config
+            agent.client = new_client
+            agent.config = new_config
+            app.state._retired_resources.append(old_client)
+
+        with patch.object(ConfigManager, "apply_to_os_environ"), \
+             patch.object(ConfigManager, "rebuild_clients", new=AsyncMock(side_effect=_rebuild)), \
+             patch.object(ConfigManager, "update_env_file", return_value=False):
+            success, _errors = await _apply_config_update(
+                app,
+                {"api_key": "new", "base_url": None, "model": None},
+                {"api_key": None, "base_url": None, "model": None},
+                False,
+            )
+
+        self.assertFalse(success)
+        self.assertIs(app.state.client, old_client)
+        self.assertIs(agent.client, old_client)
+        self.assertNotIn(old_client, app.state._retired_resources)
+        self.assertTrue(new_client.closed)
+
+    async def test_main_rebuild_failure_does_not_restart_untouched_mind(self):
+        class _Mind:
+            _generation = 7
+            memory_manager = object()
+
+            def __init__(self):
+                self.reconfigure_calls = 0
+
+            def reconfigure(self, _enabled):
+                self.reconfigure_calls += 1
+
+        mind = _Mind()
+        old_client = object()
+        old_config = SimpleNamespace(model="old")
+        app = SimpleNamespace(state=SimpleNamespace(
+            client=old_client,
+            config=old_config,
+            mind_manager=mind,
+            _active_agents=[],
+            _active_chat_count=0,
+            _retired_resources=[],
+        ))
+        with patch.object(ConfigManager, "apply_to_os_environ"), \
+             patch.object(
+                 ConfigManager,
+                 "rebuild_clients",
+                 new=AsyncMock(side_effect=RuntimeError("main failed")),
+             ):
+            success, _errors = await _apply_config_update(
+                app,
+                {"api_key": "bad", "base_url": None, "model": None},
+                {"api_key": None, "base_url": None, "model": None},
+                False,
+            )
+
+        self.assertFalse(success)
+        self.assertEqual(mind.reconfigure_calls, 0)
+
     async def test_main_config_update_reaches_all_connected_agents(self):
         class _Agent:
             pass
