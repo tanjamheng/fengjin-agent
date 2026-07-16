@@ -8,6 +8,7 @@ import json
 import os
 import asyncio
 import secrets
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,19 @@ log = get_logger("ws")
 SERVER_PING_INTERVAL = 25    # 秒，服务端主动发 ping（asyncio，不受浏览器节流影响）
 HEARTBEAT_TIMEOUT = 60       # 秒，超时无 pong 则断连
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_MIND_WARNING_LOCK = threading.Lock()
+
+
+def _mark_pending_mind_warning(app) -> None:
+    with _MIND_WARNING_LOCK:
+        app.state._pending_mind_warning = True
+
+
+def _take_pending_mind_warning(app) -> bool:
+    with _MIND_WARNING_LOCK:
+        pending = bool(getattr(app.state, "_pending_mind_warning", False))
+        app.state._pending_mind_warning = False
+        return pending
 
 
 @router.websocket("/ws")
@@ -60,10 +74,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     "message": "心智模型好像出了点问题呢。",
                 })
             except Exception as exc:
+                _mark_pending_mind_warning(websocket.app)
                 log.debug("心智提示发送失败（连接可能已关闭）: {}", exc)
         try:
             event_loop.call_soon_threadsafe(asyncio.create_task, _send())
         except RuntimeError:
+            _mark_pending_mind_warning(websocket.app)
             log.debug("心智提示跳过：事件循环已关闭")
 
     # Agent 构造和首包发送仍可能因早期断连失败；此阶段也必须对称释放资源。
@@ -89,6 +105,17 @@ async def websocket_endpoint(websocket: WebSocket):
             ConfigManager.register_agent(websocket.app, agent)
         # 不预先创建会话——等用户发送第一条消息时才创建
         await websocket.send_json({"type": "connected", "session_id": ""})
+        pending_mind_warning = _take_pending_mind_warning(websocket.app)
+        mind_enabled = os.getenv("MIND_ENABLED", "false").lower() == "true"
+        if pending_mind_warning and mind_enabled:
+            try:
+                await websocket.send_json({
+                    "type": "mind_warning",
+                    "message": "心智模型好像出了点问题呢。",
+                })
+            except Exception:
+                _mark_pending_mind_warning(websocket.app)
+                raise
     except Exception:
         if agent is not None:
             ConfigManager.unregister_agent(websocket.app, agent)

@@ -80,6 +80,7 @@ class MindManager:
         self._next_user_warning_at = 0.0
         self._worker: threading.Thread | None = None
         self._startup_thread: threading.Thread | None = None
+        self._startup_threads: set[threading.Thread] = set()
         self._retired_memory_cleanups: set[threading.Event] = set()
         self.reconfigure(enabled)
 
@@ -198,22 +199,38 @@ class MindManager:
             self.log.info("心智系统已关闭，记忆/情绪/羁绊已冻结")
             return
         worker = threading.Thread(
-            target=self._start_services,
+            target=self._background_start_services,
             args=(generation, on_failure),
             name="mind-service-startup",
             daemon=True,
         )
         with self._lock:
             self._startup_thread = worker
+            startup_threads = getattr(self, "_startup_threads", None)
+            if startup_threads is None:
+                startup_threads = self._startup_threads = set()
+            startup_threads.add(worker)
         worker.start()
         self.log.info("心智系统正在后台启动")
+
+    def _background_start_services(
+        self, generation: int, on_failure: Optional[WarningCallback] = None
+    ) -> None:
+        try:
+            self._start_services(generation, on_failure)
+        finally:
+            with self._lock:
+                getattr(self, "_startup_threads", set()).discard(
+                    threading.current_thread()
+                )
 
     def _start_services(
         self, generation: int, on_failure: Optional[WarningCallback] = None
     ) -> None:
         # 用户可能在旧代异步清理尚未结束时立即重新开启。新代 MemoryManager
         # 会复用同一 Chroma 目录，因此必须先等旧 Writer/Storage 完整退出。
-        self._wait_retired_memory_cleanups()
+        if not self._wait_retired_memory_cleanups(generation):
+            return
         if not self._startup_current(generation):
             return
         memory = None
@@ -362,6 +379,7 @@ class MindManager:
                 self._enabled = False
                 self._ready = False
         self._stop_services(wait_for_memory=False)
+        self._join_startup_threads()
         self.mood_engine.cleanup()
         self.bond_tracker.cleanup()
 
@@ -516,14 +534,31 @@ class MindManager:
             with self._lock:
                 self._retired_memory_cleanups.discard(cleanup_done)
 
-    def _wait_retired_memory_cleanups(self) -> None:
+    def _wait_retired_memory_cleanups(self, generation: int | None = None) -> bool:
         while True:
             with self._lock:
                 pending = tuple(self._retired_memory_cleanups)
             if not pending:
-                return
+                return True
             for cleanup_done in pending:
-                cleanup_done.wait()
+                while not cleanup_done.wait(timeout=0.1):
+                    if generation is not None and not self._startup_current(generation):
+                        return False
+
+    def _join_startup_threads(self) -> None:
+        deadline = time.monotonic() + self.config.cleanup_timeout_seconds
+        current = threading.current_thread()
+        with self._lock:
+            threads = tuple(
+                thread for thread in getattr(self, "_startup_threads", set())
+                if thread is not current
+            )
+        for thread in threads:
+            remaining = max(0.0, deadline - time.monotonic())
+            thread.join(timeout=remaining)
+        alive = [thread.name for thread in threads if thread.is_alive()]
+        if alive:
+            self.log.warning("心智启动线程清理超时，将由 generation 门禁阻止过期发布: {}", alive)
 
     def _deferred_service_cleanup(self, worker, analyzer) -> None:
         worker.join()

@@ -199,7 +199,10 @@ class MemoryExtractor:
             if not isinstance(fact, dict):
                 continue
 
-            content = fact.get("content", "").strip()
+            raw_content = fact.get("content", "")
+            if not isinstance(raw_content, str):
+                return None, "fact.content必须是字符串"
+            content = raw_content.strip()
             if not content:
                 continue
 

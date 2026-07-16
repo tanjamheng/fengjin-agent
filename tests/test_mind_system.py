@@ -3,6 +3,8 @@
 import json
 import os
 import queue
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -373,6 +375,43 @@ class MemoryExtractorTests(unittest.TestCase):
         self.assertIn("response_format", client.chat.completions.calls[0])
         self.assertNotIn("response_format", client.chat.completions.calls[1])
 
+    def test_non_string_content_enters_json_correction_retry(self):
+        client = _FakeClient([
+            '{"facts":[{"content":123,"type":"semantic","importance":"low"}]}',
+            '{"facts":[{"content":"用户喜欢晴天","type":"semantic","importance":"low"}]}',
+        ])
+
+        class _Storage:
+            def query(self, **_kwargs):
+                return {"distances": [[]]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = Path(tmp) / "memory.md"
+            prompt.write_text("只输出JSON", encoding="utf-8")
+            config = MemoryConfig(extraction={"prompt_file": str(prompt)})
+            extractor = MemoryExtractor(
+                config, client, "fake", _Storage(), max_retries=1
+            )
+            facts = extractor.extract_conversation("用户：我喜欢晴天")
+
+        self.assertEqual(facts[0]["content"], "用户喜欢晴天")
+        retry_messages = client.chat.completions.calls[1]["messages"]
+        self.assertIn("fact.content必须是字符串", retry_messages[-1]["content"])
+
+
+class ColdImportTests(unittest.TestCase):
+    def test_memory_manager_imports_in_fresh_interpreter(self):
+        project_root = Path(__file__).resolve().parent.parent
+        result = subprocess.run(
+            [sys.executable, "-c", "import src.memory.manager"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 class MindManagerBoundaryTests(unittest.TestCase):
     def test_background_enable_returns_before_service_startup_finishes(self):
@@ -395,6 +434,19 @@ class MindManagerBoundaryTests(unittest.TestCase):
             self.assertTrue(entered.wait(timeout=1))
             release.set()
             manager._startup_thread.join(timeout=1)
+            self.assertFalse(manager._startup_threads)
+
+    def test_stale_startup_stops_waiting_for_retired_memory(self):
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._retired_memory_cleanups = {threading.Event()}
+
+        with patch.object(manager, "_startup_current", return_value=False):
+            started = time.monotonic()
+            completed = manager._wait_retired_memory_cleanups(generation=9)
+
+        self.assertFalse(completed)
+        self.assertLess(time.monotonic() - started, 0.3)
 
     def test_close_during_background_start_prevents_stale_publish(self):
         constructor_entered = threading.Event()

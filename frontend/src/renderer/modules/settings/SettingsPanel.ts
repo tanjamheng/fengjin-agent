@@ -86,7 +86,7 @@ export class SettingsPanel {
 
   /** 外部关闭面板（不触发 resolve，仅清理 DOM） */
   close(): void {
-    this._close(null);
+    this._close(null, true);
   }
 
   /** 更新内存中的数据（get_config 返回后调用） */
@@ -111,7 +111,7 @@ export class SettingsPanel {
 
     // 点击遮罩关闭
     this._overlay.addEventListener("click", (e) => {
-      if (e.target === this._overlay) this._close(null);
+      if (e.target === this._overlay && !this._saving) this._close(null);
     });
 
     const card = document.createElement("div");
@@ -183,7 +183,7 @@ export class SettingsPanel {
 
     // Escape 关闭
     this._keyHandler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") this._close(null);
+      if (e.key === "Escape" && !this._saving) this._close(null);
       if (e.key === "Tab") this._handleTabTrap(e);
     };
     document.addEventListener("keydown", this._keyHandler);
@@ -436,8 +436,10 @@ export class SettingsPanel {
 
   private _saveBtn!: HTMLButtonElement;
   private _cancelBtn!: HTMLButtonElement;
+  private _saving = false;
 
   setSaving(saving: boolean): void {
+    this._saving = saving;
     if (!this._saveBtn || !this._cancelBtn) return;
     this._saveBtn.disabled = saving;
     this._cancelBtn.disabled = saving;
@@ -501,7 +503,8 @@ export class SettingsPanel {
     }
   }
 
-  private _close(result: SettingsData | null): void {
+  private _close(result: SettingsData | null, force = false): void {
+    if (this._saving && !force) return;
     document.removeEventListener("keydown", this._keyHandler!);
     this._overlay.classList.remove("dialog-overlay--visible");
     setTimeout(() => {
