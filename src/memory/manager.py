@@ -11,6 +11,7 @@ from .config import MemoryConfig, MemorySettings
 from .storage import MemoryStorage
 from .extractor import MemoryExtractor
 from .writer import MemoryWriter
+from ..mind.model_runtime import MindModelRuntime
 from .retriever import MemoryRetriever
 from ..utils.logger import get_logger
 
@@ -20,7 +21,7 @@ class _ConversationTask:
     task_id: str
     conversation_text: str
     trace_id: str
-    on_model_failure: Optional[Callable[[bool], None]]
+    on_model_failure: Optional[Callable[[bool, bool], None]]
     should_apply: Optional[Callable[[], bool]]
 
 
@@ -34,11 +35,17 @@ class MemoryManager:
 
     def __init__(self, config: MemoryConfig, *, client=None,
                  model_name: str | None = None, max_retries: int = 3,
-                 queue_warning_threshold: int = 10):
-        small_client = client or MemorySettings.create_mind_model_client()
-        self.client = small_client
+                 queue_warning_threshold: int = 10,
+                 runtime: MindModelRuntime | None = None):
         self._cleanup_complete = threading.Event()
         model_name = model_name or MemorySettings.get_mind_model_name()
+        if runtime is None:
+            small_client = client or MemorySettings.create_mind_model_client()
+            runtime = MindModelRuntime.single_client(small_client, model_name)
+            self._owns_runtime = True
+        else:
+            self._owns_runtime = False
+        self.model_runtime = runtime
 
         self.storage = None
         self.extractor = None
@@ -47,12 +54,14 @@ class MemoryManager:
         try:
             self.storage = MemoryStorage(config)
             self.extractor = MemoryExtractor(
-                config, small_client, model_name, self.storage,
+                config, None, model_name, self.storage,
                 max_retries=max_retries,
+                runtime=runtime,
             )
             self.writer = MemoryWriter(
-                config, small_client, model_name, self.storage,
+                config, None, model_name, self.storage,
                 max_retries=max_retries,
+                runtime=runtime,
             )
             self.retriever = MemoryRetriever(config, self.storage)
         except Exception:
@@ -61,7 +70,8 @@ class MemoryManager:
                 self.writer.stop()
             if self.storage:
                 self.storage.cleanup()
-            small_client.close()
+            if self._owns_runtime:
+                runtime.close()
             raise
         self.log = get_logger("memory_manager")
         self._extract_threads: list[threading.Thread] = []
@@ -157,9 +167,14 @@ class MemoryManager:
                     continue
                 log = self.log.bind(trace_id=task.trace_id) if task.trace_id else self.log
                 t_start = time.time()
-                facts = self.extractor.extract_conversation(
-                    task.conversation_text, trace_id=task.trace_id
-                )
+                runtime_version = None
+                with self.model_runtime.acquire("memory") as lease:
+                    runtime_version = lease.version
+                    facts = self.extractor.extract_conversation(
+                        task.conversation_text,
+                        trace_id=task.trace_id,
+                        runtime_lease=lease,
+                    )
                 elapsed = (time.time() - t_start) * 1000
                 if facts and not _can_apply(task.should_apply):
                     log.info("丢弃已失效的记忆提取结果: {}", task.task_id)
@@ -179,7 +194,14 @@ class MemoryManager:
                     "记忆提取失败 [task={} trace={}]: {}", task.task_id, task.trace_id, e
                 )
                 if task.on_model_failure and _is_model_error(e):
-                    task.on_model_failure(getattr(e, "status_code", None) in (401, 403, 404))
+                    current_runtime = (
+                        runtime_version is not None
+                        and self.model_runtime.is_current(runtime_version)
+                    )
+                    task.on_model_failure(
+                        getattr(e, "status_code", None) in (401, 403, 404),
+                        current_runtime,
+                    )
             finally:
                 self._conversation_queue.task_done()
                 threshold = getattr(self, "_queue_warning_threshold", 10)
@@ -271,12 +293,8 @@ class MemoryManager:
             except Exception as exc:
                 self.log.opt(exception=True).error("记忆存储清理异常: {}", exc)
             self.storage = None
-        if hasattr(self, "client") and self.client is not None:
-            try:
-                self.client.close()
-            except Exception as e:
-                self.log.warning("记忆模型客户端关闭异常: {}", e)
-            self.client = None
+        if getattr(self, "_owns_runtime", False):
+            self.model_runtime.close()
         self.extractor = None
         self.retriever = None
         self._cleanup_complete.set()

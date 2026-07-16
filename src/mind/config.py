@@ -16,6 +16,7 @@ class MindConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=5)
     cleanup_timeout_seconds: float = Field(default=10.0, gt=0)
     queue_warning_threshold: int = Field(default=10, ge=1, le=10000)
+    warning_cooldown_seconds: float = Field(default=30.0, ge=0, le=3600)
     prompt_file: str = "config/prompts/state_analysis.md"
 
 

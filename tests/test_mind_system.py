@@ -16,9 +16,10 @@ from openai import BadRequestError
 
 from src.agent.context_manager import estimate_messages_tokens
 from src.agent.core import _build_api_messages
-from src.mind.config import MindConfig
+from src.mind.config import MindConfig, MindSettings
 from src.mind.context_builder import normalize_turns
 from src.mind.manager import MindManager
+from src.mind.model_runtime import MindModelRuntime
 from src.mind.state_analyzer import StateAnalysisResult, StateAnalyzer
 from src.memory.writer import MemoryWriter
 from src.memory.manager import MemoryManager
@@ -53,6 +54,155 @@ class _FakeClient:
 
     def close(self):
         pass
+
+
+class MindModelRuntimeTests(unittest.TestCase):
+    def test_swap_preserves_inflight_snapshot_and_delays_old_close(self):
+        class _ClosableClient:
+            def __init__(self, name):
+                self.name = name
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        old_memory = _ClosableClient("old-memory")
+        old_state = _ClosableClient("old-state")
+        new_memory = _ClosableClient("new-memory")
+        new_state = _ClosableClient("new-state")
+        runtime = MindModelRuntime(old_memory, old_state, "old-model")
+
+        old_lease = runtime.acquire("memory")
+        runtime.swap(new_memory, new_state, "new-model")
+
+        self.assertIs(old_lease.client, old_memory)
+        self.assertEqual(old_lease.model, "old-model")
+        self.assertFalse(old_memory.closed)
+        self.assertFalse(old_state.closed)
+        with runtime.acquire("state") as new_lease:
+            self.assertIs(new_lease.client, new_state)
+            self.assertEqual(new_lease.model, "new-model")
+
+        old_lease.release()
+        self.assertTrue(old_memory.closed)
+        self.assertTrue(old_state.closed)
+        runtime.close()
+        self.assertTrue(new_memory.closed)
+        self.assertTrue(new_state.closed)
+
+    def test_config_barrier_holds_queued_acquire_until_committed_runtime(self):
+        old_client = _FakeClient([])
+        new_client = _FakeClient([])
+        runtime = MindModelRuntime(old_client, old_client, "old-model")
+        runtime.pause_new_acquires()
+        acquired = []
+        finished = threading.Event()
+
+        def _acquire():
+            with runtime.acquire("memory") as lease:
+                acquired.append((lease.client, lease.model))
+            finished.set()
+
+        worker = threading.Thread(target=_acquire)
+        worker.start()
+        self.assertFalse(finished.wait(timeout=0.05))
+
+        runtime.swap(new_client, new_client, "new-model")
+        self.assertFalse(finished.wait(timeout=0.05))
+        runtime.resume_new_acquires()
+
+        self.assertTrue(finished.wait(timeout=1))
+        worker.join(timeout=1)
+        self.assertEqual(acquired, [(new_client, "new-model")])
+        runtime.close()
+
+    def test_state_request_keeps_old_runtime_for_all_retries(self):
+        entered = threading.Event()
+        resume = threading.Event()
+        valid = json.dumps({
+            "mood": {"pleasure": 0.7, "arousal": 0.3, "dominance": 0.5},
+            "bond": {"warmth": 0.62, "trust": 0.25, "formality": 0.45, "humor": 0.15},
+        })
+
+        class _BlockingCompletions(_FakeCompletions):
+            def create(self, **kwargs):
+                if not self.calls:
+                    entered.set()
+                    resume.wait(timeout=1)
+                return super().create(**kwargs)
+
+        old_client = _FakeClient([])
+        old_client.chat.completions = _BlockingCompletions([
+            '{"mood":{"pleasure":0.7}}', valid,
+        ])
+        new_client = _FakeClient([valid])
+        runtime = MindModelRuntime(old_client, old_client, "old-model")
+        analyzer = StateAnalyzer(MindConfig(max_retries=1), runtime=runtime)
+        result_holder = []
+
+        worker = threading.Thread(target=lambda: result_holder.append(
+            analyzer.analyze(
+                [{"user": "你好", "assistant": "你好，灰宝。"}],
+                {"pleasure": 0.65, "arousal": 0.25, "dominance": 0.52},
+                {"warmth": 0.62, "trust": 0.25, "formality": 0.45, "humor": 0.15},
+            )
+        ))
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1))
+        runtime.swap(new_client, new_client, "new-model")
+        resume.set()
+        worker.join(timeout=2)
+
+        self.assertEqual(len(result_holder), 1)
+        self.assertEqual(len(old_client.chat.completions.calls), 2)
+        self.assertEqual(len(new_client.chat.completions.calls), 0)
+        self.assertTrue(all(
+            call["model"] == "old-model"
+            for call in old_client.chat.completions.calls
+        ))
+        runtime.close()
+
+    def test_retired_runtime_failure_does_not_disable_current_runtime(self):
+        callback_calls = []
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._enabled = True
+        manager._ready = True
+        manager._cleaned = False
+        manager._generation = 1
+        manager.mood_engine = SimpleNamespace(set_enabled=lambda _value: None)
+        manager.bond_tracker = SimpleNamespace(set_enabled=lambda _value: None)
+
+        manager._handle_model_failure(
+            1, lambda: callback_calls.append(True), permanent=True,
+            current_runtime=False,
+        )
+
+        self.assertTrue(manager._ready)
+        self.assertEqual(callback_calls, [])
+
+    def test_failure_warning_is_rate_limited_and_permanent_error_invalidates_generation(self):
+        callback_calls = []
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._generation_lock = threading.RLock()
+        manager._enabled = True
+        manager._ready = True
+        manager._cleaned = False
+        manager._generation = 3
+        manager._next_user_warning_at = 0.0
+        manager.config = MindConfig(warning_cooldown_seconds=30)
+        manager.log = get_logger("mind_warning_cooldown_test")
+        manager.mood_engine = SimpleNamespace(set_enabled=lambda _value: None)
+        manager.bond_tracker = SimpleNamespace(set_enabled=lambda _value: None)
+
+        manager._handle_model_failure(3, lambda: callback_calls.append("first"), False)
+        manager._handle_model_failure(3, lambda: callback_calls.append("second"), False)
+        manager._handle_model_failure(3, lambda: callback_calls.append("third"), True)
+
+        self.assertEqual(callback_calls, ["first"])
+        self.assertEqual(manager._generation, 4)
+        self.assertFalse(manager._ready)
 
 
 class MindContextTests(unittest.TestCase):
@@ -225,6 +375,97 @@ class MemoryExtractorTests(unittest.TestCase):
 
 
 class MindManagerBoundaryTests(unittest.TestCase):
+    def test_background_enable_returns_before_service_startup_finishes(self):
+        entered = threading.Event()
+        release = threading.Event()
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager.log = get_logger("mind_background_start_test")
+
+        def _start_services(_generation, _on_failure=None):
+            entered.set()
+            release.wait(timeout=1)
+
+        with patch.object(manager, "_prepare_reconfigure", return_value=9), \
+             patch.object(manager, "_start_services", side_effect=_start_services):
+            started = time.monotonic()
+            manager.reconfigure_background(True)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 0.2)
+            self.assertTrue(entered.wait(timeout=1))
+            release.set()
+            manager._startup_thread.join(timeout=1)
+
+    def test_close_during_background_start_prevents_stale_publish(self):
+        constructor_entered = threading.Event()
+        release_constructor = threading.Event()
+        created = {}
+
+        class _Client:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class _Memory:
+            def __init__(self, *_args, **_kwargs):
+                self.cleaned = False
+                created["memory"] = self
+                constructor_entered.set()
+                release_constructor.wait(timeout=1)
+
+            def cleanup(self):
+                self.cleaned = True
+
+            def wait_cleanup(self):
+                pass
+
+        class _Analyzer:
+            def __init__(self, *_args, **_kwargs):
+                self.closed = False
+                created["analyzer"] = self
+
+            def close(self):
+                self.closed = True
+
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._generation = 1
+        manager._enabled = True
+        manager._ready = False
+        manager._cleaned = False
+        manager._retired_memory_cleanups = set()
+        manager.memory_manager = None
+        manager.state_analyzer = None
+        manager.model_runtime = None
+        manager.config = MindConfig()
+        manager.memory_config = MemoryConfig()
+        manager.log = get_logger("mind_stale_start_test")
+        manager.mood_engine = SimpleNamespace(set_enabled=lambda _value: None)
+        manager.bond_tracker = SimpleNamespace(set_enabled=lambda _value: None)
+        clients = [_Client(), _Client()]
+
+        with patch.object(MindSettings, "validate_environment"), \
+             patch.object(MindSettings, "model_name", return_value="model"), \
+             patch.object(MindSettings, "create_client", side_effect=clients), \
+             patch("src.mind.manager.MemoryManager", _Memory), \
+             patch("src.mind.manager.StateAnalyzer", _Analyzer):
+            worker = threading.Thread(target=manager._start_services, args=(1,))
+            worker.start()
+            self.assertTrue(constructor_entered.wait(timeout=1))
+            with manager._lock:
+                manager._generation = 2
+                manager._enabled = False
+            release_constructor.set()
+            worker.join(timeout=2)
+
+        self.assertIsNone(manager.memory_manager)
+        self.assertIsNone(manager.model_runtime)
+        self.assertTrue(created["memory"].cleaned)
+        self.assertTrue(created["analyzer"].closed)
+        self.assertTrue(all(client.closed for client in clients))
+
     def test_memory_wal_is_persisted_before_task_is_queued(self):
         fact = {"content": "用户喜欢晴天", "type": "semantic", "importance": "low"}
         with tempfile.TemporaryDirectory() as tmp:
@@ -426,7 +667,7 @@ class MindManagerBoundaryTests(unittest.TestCase):
         processed = []
 
         class _Extractor:
-            def extract_conversation(self, text, trace_id=""):
+            def extract_conversation(self, text, trace_id="", runtime_lease=None):
                 if text == "first":
                     time.sleep(0.02)
                 return [{"content": text, "type": "semantic", "importance": "low"}]
@@ -439,6 +680,7 @@ class MindManagerBoundaryTests(unittest.TestCase):
 
         manager = object.__new__(MemoryManager)
         manager.log = get_logger("memory_fifo_test")
+        manager.model_runtime = MindModelRuntime.single_client(_FakeClient([]), "fake")
         manager.extractor = _Extractor()
         manager.writer = _Writer()
         manager._conversation_queue = queue.Queue()
@@ -453,11 +695,208 @@ class MindManagerBoundaryTests(unittest.TestCase):
         manager._conversation_stop.set()
         manager._conversation_queue.put(None)
         manager._conversation_worker.join(timeout=1)
+        manager.model_runtime.close()
 
         self.assertEqual(processed, ["first", "second"])
 
+    def test_disable_does_not_wait_for_inflight_memory_cleanup(self):
+        cleanup_started = threading.Event()
+        allow_cleanup = threading.Event()
+
+        class _Memory:
+            def cleanup(self):
+                cleanup_started.set()
+                allow_cleanup.wait(timeout=1)
+
+            def wait_cleanup(self):
+                pass
+
+        class _Runtime:
+            def close(self):
+                pass
+
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._worker = None
+        manager.memory_manager = _Memory()
+        manager.state_analyzer = None
+        manager.model_runtime = _Runtime()
+        manager._queue = queue.Queue()
+        manager._retired_memory_cleanups = set()
+        manager.log = get_logger("mind_fast_disable_test")
+
+        started = time.monotonic()
+        manager._stop_services(wait_for_memory=False)
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 0.2)
+        self.assertTrue(cleanup_started.wait(timeout=1))
+        allow_cleanup.set()
+
+    def test_next_enable_waits_for_retired_memory_cleanup(self):
+        cleanup_started = threading.Event()
+        allow_cleanup = threading.Event()
+        cleanup_complete = threading.Event()
+
+        class _Memory:
+            def cleanup(self):
+                cleanup_started.set()
+                allow_cleanup.wait(timeout=1)
+                cleanup_complete.set()
+
+            def wait_cleanup(self):
+                cleanup_complete.wait(timeout=1)
+
+        class _Runtime:
+            def close(self):
+                pass
+
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._worker = None
+        manager.memory_manager = _Memory()
+        manager.state_analyzer = None
+        manager.model_runtime = _Runtime()
+        manager._queue = queue.Queue()
+        manager._retired_memory_cleanups = set()
+        manager.log = get_logger("mind_reenable_cleanup_test")
+
+        manager._stop_services(wait_for_memory=False)
+        self.assertTrue(cleanup_started.wait(timeout=1))
+
+        enable_wait_finished = threading.Event()
+        waiter = threading.Thread(
+            target=lambda: (
+                manager._wait_retired_memory_cleanups(),
+                enable_wait_finished.set(),
+            )
+        )
+        waiter.start()
+        self.assertFalse(enable_wait_finished.wait(timeout=0.05))
+
+        allow_cleanup.set()
+        self.assertTrue(enable_wait_finished.wait(timeout=1))
+        waiter.join(timeout=1)
+
+    def test_disable_discards_inflight_state_result(self):
+        entered = threading.Event()
+        resume = threading.Event()
+
+        class _State:
+            def __init__(self, value):
+                self.value = dict(value)
+                self.update_calls = 0
+
+            def load(self):
+                return dict(self.value)
+
+            def update(self, **targets):
+                self.update_calls += 1
+                self.value.update(targets)
+                return dict(self.value)
+
+        class _Analyzer:
+            def analyze(self, *_args):
+                entered.set()
+                resume.wait(timeout=1)
+                return StateAnalysisResult.model_validate({
+                    "mood": {"pleasure": 0.8, "arousal": 0.3, "dominance": 0.4},
+                    "bond": {"warmth": 0.7, "trust": 0.3, "formality": 0.4, "humor": 0.2},
+                })
+
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._enabled = True
+        manager._ready = True
+        manager._cleaned = False
+        manager._generation = 1
+        manager.config = MindConfig()
+        manager.max_context_tokens = 1_000
+        manager.log = get_logger("mind_disable_inflight_test")
+        manager.memory_manager = None
+        manager.state_analyzer = _Analyzer()
+        manager.mood_engine = _State({
+            "pleasure": 0.0, "arousal": 0.2, "dominance": 0.3,
+        })
+        manager.bond_tracker = _State({
+            "warmth": 0.5, "trust": 0.2, "formality": 0.5, "humor": 0.1,
+        })
+        manager._queue = queue.Queue()
+        worker = threading.Thread(target=manager._worker_loop, args=(manager._queue,))
+        worker.start()
+
+        manager.submit([
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好，灰宝。"},
+        ], "trace")
+        self.assertTrue(entered.wait(timeout=1))
+        with manager._lock:
+            manager._enabled = False
+            manager._ready = False
+            manager._generation += 1
+        resume.set()
+        manager._queue.put(None)
+        worker.join(timeout=2)
+
+        self.assertEqual(manager.mood_engine.update_calls, 0)
+        self.assertEqual(manager.bond_tracker.update_calls, 0)
+
 
 class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_enable_is_scheduled_only_after_config_persistence(self):
+        order = []
+
+        class _Mind:
+            _generation = 1
+            model_runtime = None
+            memory_manager = None
+
+            def begin_config_update(self):
+                return None
+
+            def end_config_update(self, _runtime):
+                order.append("barrier_released")
+
+            def reconfigure_background(self, enabled, _on_failure=None):
+                order.append(f"reconfigure:{enabled}")
+
+        app = SimpleNamespace(state=SimpleNamespace(
+            client=object(),
+            config=SimpleNamespace(model="main"),
+            mind_manager=_Mind(),
+            _active_agents=[],
+            _active_chat_count=0,
+            _retired_resources=[],
+        ))
+
+        def _persist(*_args, **_kwargs):
+            order.append("persist")
+            return True
+
+        environment = {
+            "FENGJIN_API_KEY": "main-key",
+            "FENGJIN_BASE_URL": "https://main.test",
+            "FENGJIN_MODEL": "main-model",
+            "MIND_API_KEY": "mind-key",
+            "MIND_BASE_URL": "https://mind.test",
+            "MIND_MODEL": "mind-model",
+            "MIND_ENABLED": "false",
+        }
+        with patch.dict(os.environ, environment, clear=False), \
+             patch.object(ConfigManager, "apply_to_os_environ"), \
+             patch.object(ConfigManager, "update_env_file", side_effect=_persist), \
+             patch.object(ConfigManager, "cleanup_retired_resources", new=AsyncMock()):
+            success, _errors = await _apply_config_update(
+                app,
+                {"api_key": None, "base_url": None, "model": None},
+                {"api_key": None, "base_url": None, "model": None},
+                True,
+            )
+
+        self.assertTrue(success)
+        self.assertLess(order.index("persist"), order.index("reconfigure:True"))
+        self.assertEqual(order[-1], "barrier_released")
+
     async def test_persist_failure_rolls_runtime_back(self):
         class _Client:
             def __init__(self):
@@ -507,12 +946,19 @@ class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
         class _Mind:
             _generation = 7
             memory_manager = object()
+            model_runtime = None
 
             def __init__(self):
                 self.reconfigure_calls = 0
 
-            def reconfigure(self, _enabled):
+            def reconfigure_background(self, _enabled, _on_failure=None):
                 self.reconfigure_calls += 1
+
+            def begin_config_update(self):
+                return None
+
+            def end_config_update(self, _runtime):
+                pass
 
         mind = _Mind()
         old_client = object()
@@ -590,7 +1036,7 @@ class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(agent.client, new_client)
             self.assertIs(agent.config, new_config)
 
-    async def test_changed_mind_config_rebuilds_off_event_loop_thread(self):
+    async def test_changed_mind_config_swaps_runtime_off_event_loop_thread(self):
         event_loop_thread = threading.get_ident()
 
         class _Mind:
@@ -598,8 +1044,12 @@ class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
 
             def __init__(self):
                 self.thread_id = None
+                self.reconfigure_calls = 0
 
             def reconfigure(self, _enabled):
+                self.reconfigure_calls += 1
+
+            def update_model_runtime(self, _on_failure=None):
                 self.thread_id = threading.get_ident()
 
         mind = _Mind()
@@ -625,6 +1075,7 @@ class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(mind.thread_id)
         self.assertNotEqual(mind.thread_id, event_loop_thread)
+        self.assertEqual(mind.reconfigure_calls, 0)
 
     async def test_unchanged_mind_config_does_not_restart_worker(self):
         class _Mind:

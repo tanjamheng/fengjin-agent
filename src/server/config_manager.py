@@ -124,13 +124,15 @@ class ConfigManager:
 
     @staticmethod
     async def rebuild_clients(app, main: dict, mind: dict, mind_enabled: bool,
-                              previous_environ: dict[str, str | None] | None = None) -> None:
+                              previous_environ: dict[str, str | None] | None = None,
+                              on_mind_failure=None,
+                              defer_mind_reconfigure: bool = False) -> None:
         """重建主模型客户端，并在稳定的 MindManager 内重配心智服务。
 
         规则：
         - 主模型配置有变更 → 重建 AsyncOpenAI 客户端
-        - 心智配置/开关有变更 → 在稳定的 MindManager 内重建两个后台服务
-        - 旧资源先停止并关闭，再启动新代次，防止任务串代与连接泄漏
+        - 心智开关有变更 → 立即更新期望状态，耗时启用在后台完成
+        - 仅 Key/Base URL/模型变更 → 原子切换模型运行时，保留队列和在途结果
         """
         # ── 主模型客户端 ──
         if previous_environ is None:
@@ -170,16 +172,21 @@ class ConfigManager:
 
         manager = getattr(app.state, "mind_manager", None)
         if previous_environ is None:
-            mind_changed = True
+            mind_credentials_changed = True
+            enabled_changed = True
         else:
-            mind_changed = any(
+            mind_credentials_changed = any(
                 (previous_environ.get(key) or "") != os.environ.get(key, "")
                 for key in ("MIND_API_KEY", "MIND_BASE_URL", "MIND_MODEL")
             )
             old_enabled = (previous_environ.get("MIND_ENABLED") or "false").lower() == "true"
-            mind_changed = mind_changed or old_enabled != mind_enabled
-        if manager and mind_changed:
-            await asyncio.to_thread(manager.reconfigure, mind_enabled)
+            enabled_changed = old_enabled != mind_enabled
+        if manager and enabled_changed:
+            if not defer_mind_reconfigure:
+                manager.reconfigure_background(mind_enabled, on_mind_failure)
+                app.state.memory_manager = manager.memory_manager
+        elif manager and mind_credentials_changed and mind_enabled:
+            await asyncio.to_thread(manager.update_model_runtime, on_mind_failure)
             app.state.memory_manager = manager.memory_manager
 
     @staticmethod

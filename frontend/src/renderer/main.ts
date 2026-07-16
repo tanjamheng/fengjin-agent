@@ -340,6 +340,7 @@ ws.onConnected = (sessionId: string) => {
   _loadingSession = false;
   _loadingSessionId = null;
   _settingsPanelClose?.(); _settingsPanelClose = null; // 重连时清理残留设置面板句柄
+  _settingsPanelSetSaving = null;
   _settingsPanelVisible = false;
   log.info("Backend connected (session={})", sessionId || "(new)");
   appState.currentSessionId = sessionId;
@@ -355,6 +356,7 @@ ws.onConnected = (sessionId: string) => {
 let _settingsData: SettingsData | null = null;
 let _settingsPanelVisible = false;
 let _settingsPanelClose: (() => void) | null = null; // 面板关闭句柄，用于 onConfigUpdated 中清理 DOM
+let _settingsPanelSetSaving: ((saving: boolean) => void) | null = null;
 
 ws.onCurrentConfig = (data) => {
   _settingsData = {
@@ -369,14 +371,17 @@ ws.onConfigUpdated = (result) => {
   const actions = document.querySelector(".settings-actions");
   if (!actions) { _settingsPanelVisible = false; return; }
   log.info("Config update result: {}", result.success ? "success" : "failed");
-  // 后端仅在运行时重建成功且 .env 持久化成功后才发送 success，
-  // 所以成功时应立即退出设置页，不再人为停留数秒。
+  // success 表示配置已原子落盘；心智启用可能仍在后台等待旧资源释放，
+  // 不应让设置页继续阻塞用户。
   if (result.success) {
     _settingsPanelClose?.();
     _settingsPanelClose = null;
+    _settingsPanelSetSaving = null;
     _settingsPanelVisible = false;
     return;
   }
+
+  _settingsPanelSetSaving?.(false);
 
   // 清除旧提示
   actions.querySelector(".settings-saved-hint")?.remove();
@@ -405,6 +410,7 @@ ws.onStatusChange = (status) => {
     _loadingSessionId = null;
     _settingsPanelVisible = false; // 断线时重置设置面板可见性
 		_settingsPanelClose?.(); _settingsPanelClose = null;
+    _settingsPanelSetSaving = null;
     appState.isReplying = false;
     chat.endReplyMode();
     sidebar.setDisabled(false);
@@ -548,6 +554,7 @@ sidebar.onOpenSettings = async () => {
     closedAfterSave = true;
     panel.close();
   };
+  _settingsPanelSetSaving = (saving) => panel.setSaving(saving);
   panel.onSave = (result) => {
     const main = {
       api_key: result.main.api_key,
@@ -569,6 +576,7 @@ sidebar.onOpenSettings = async () => {
     }
     _settingsPanelVisible = false;
     _settingsPanelClose = null;
+    _settingsPanelSetSaving = null;
     return;
   }
 };

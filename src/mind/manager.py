@@ -9,6 +9,7 @@ from typing import Callable, Optional
 
 from .config import MindConfig, MindSettings
 from .context_builder import format_turns, normalize_turns
+from .model_runtime import MindModelRuntime
 from .state_analyzer import MindModelError, StateAnalyzer
 from ..memory.config import MemoryConfig
 from ..memory.manager import MemoryManager
@@ -73,9 +74,13 @@ class MindManager:
         self._cleaned = False
         self.memory_manager: MemoryManager | None = None
         self.state_analyzer: StateAnalyzer | None = None
+        self.model_runtime: MindModelRuntime | None = None
         self._queue: queue.Queue[_StateTask | None] = queue.Queue()
         self._next_queue_warning = config.queue_warning_threshold
+        self._next_user_warning_at = 0.0
         self._worker: threading.Thread | None = None
+        self._startup_thread: threading.Thread | None = None
+        self._retired_memory_cleanups: set[threading.Event] = set()
         self.reconfigure(enabled)
 
     @property
@@ -131,8 +136,8 @@ class MindManager:
             try:
                 memory.extract_conversation_async(
                     format_turns(turns), trace_id=trace_id,
-                    on_model_failure=lambda permanent=False: self._handle_model_failure(
-                        generation, callback, permanent
+                    on_model_failure=lambda permanent=False, current_runtime=True: self._handle_model_failure(
+                        generation, callback, permanent, current_runtime
                     ),
                     should_apply=generation_gate,
                 )
@@ -159,74 +164,193 @@ class MindManager:
         self.mood_engine.reset_state()
         self.bond_tracker.reset_state()
 
-    def reconfigure(self, enabled: bool) -> None:
+    def _prepare_reconfigure(self, enabled: bool) -> int:
         with self._generation_lock:
             with self._lock:
                 self._cleaned = False
                 self._generation += 1
+                generation = self._generation
                 self._enabled = False
                 self._ready = False
                 self.mood_engine.set_enabled(False)
                 self.bond_tracker.set_enabled(False)
-        self._stop_services(wait_for_memory=True)
+        self._stop_services(wait_for_memory=False)
         with self._lock:
-            self._enabled = enabled
+            if self._generation == generation and not self._cleaned:
+                self._enabled = enabled
+        return generation
+
+    def reconfigure(self, enabled: bool) -> None:
+        """同步启停，供启动初始化和 CLI 使用。"""
+        generation = self._prepare_reconfigure(enabled)
+        # 关闭要立即冻结并返回；只有即将启动新代服务时才等待旧资源彻底释放。
         if not enabled:
             self.log.info("心智系统已关闭，记忆/情绪/羁绊已冻结")
             return
+        self._start_services(generation)
+
+    def reconfigure_background(
+        self, enabled: bool, on_failure: Optional[WarningCallback] = None
+    ) -> None:
+        """设置页使用：逻辑状态立即生效，耗时初始化在后台完成。"""
+        generation = self._prepare_reconfigure(enabled)
+        if not enabled:
+            self.log.info("心智系统已关闭，记忆/情绪/羁绊已冻结")
+            return
+        worker = threading.Thread(
+            target=self._start_services,
+            args=(generation, on_failure),
+            name="mind-service-startup",
+            daemon=True,
+        )
+        with self._lock:
+            self._startup_thread = worker
+        worker.start()
+        self.log.info("心智系统正在后台启动")
+
+    def _start_services(
+        self, generation: int, on_failure: Optional[WarningCallback] = None
+    ) -> None:
+        # 用户可能在旧代异步清理尚未结束时立即重新开启。新代 MemoryManager
+        # 会复用同一 Chroma 目录，因此必须先等旧 Writer/Storage 完整退出。
+        self._wait_retired_memory_cleanups()
+        if not self._startup_current(generation):
+            return
         memory = None
         analyzer = None
+        runtime = None
         try:
             MindSettings.validate_environment()
             model_name = MindSettings.model_name()
+            memory_client = MindSettings.create_client(self.config)
+            try:
+                state_client = MindSettings.create_client(self.config)
+            except Exception:
+                memory_client.close()
+                raise
+            runtime = MindModelRuntime(memory_client, state_client, model_name)
             memory = MemoryManager(
                 self.memory_config,
-                client=MindSettings.create_client(self.config),
                 model_name=model_name,
                 max_retries=self.config.max_retries,
                 queue_warning_threshold=self.config.queue_warning_threshold,
+                runtime=runtime,
             )
             analyzer = StateAnalyzer(
-                self.config,
-                MindSettings.create_client(self.config),
-                model_name,
+                self.config, model=model_name, runtime=runtime,
             )
             with self._lock:
-                self.memory_manager = memory
-                self.state_analyzer = analyzer
-                self._ready = True
-                self.mood_engine.set_enabled(True)
-                self.bond_tracker.set_enabled(True)
-                self._queue = queue.Queue()
-                self._next_queue_warning = self.config.queue_warning_threshold
-                worker_queue = self._queue
-                self._worker = threading.Thread(
-                    target=self._worker_loop, args=(worker_queue,), daemon=True
-                )
-                self._worker.start()
+                if not self._startup_current(generation):
+                    stale = True
+                else:
+                    stale = False
+                if stale:
+                    pass
+                else:
+                    self.memory_manager = memory
+                    self.state_analyzer = analyzer
+                    self.model_runtime = runtime
+                    self._ready = True
+                    self.mood_engine.set_enabled(True)
+                    self.bond_tracker.set_enabled(True)
+                    self._queue = queue.Queue()
+                    self._next_queue_warning = self.config.queue_warning_threshold
+                    worker_queue = self._queue
+                    self._worker = threading.Thread(
+                        target=self._worker_loop, args=(worker_queue,), daemon=True
+                    )
+                    self._worker.start()
+            if stale:
+                self._cleanup_unpublished_services(memory, analyzer, runtime)
+                return
             self.log.info("心智系统已启用")
         except Exception as exc:
             self.log.warning("心智系统配置或初始化失败，已降级关闭: {}", exc)
-            if memory:
-                try:
-                    memory.cleanup()
-                except Exception as cleanup_exc:
-                    self.log.warning("心智记忆组件初始化回滚异常: {}", cleanup_exc)
-            if analyzer:
-                try:
-                    analyzer.close()
-                except Exception as cleanup_exc:
-                    self.log.warning("心智状态组件初始化回滚异常: {}", cleanup_exc)
+            self._cleanup_unpublished_services(memory, analyzer, runtime)
+            should_warn = False
             with self._lock:
                 # 构造后半段（含 Worker 启动）失败时也必须撤销已发布引用和状态开关。
                 if self.memory_manager is memory:
                     self.memory_manager = None
                 if self.state_analyzer is analyzer:
                     self.state_analyzer = None
-                self._worker = None
-                self._ready = False
-                self.mood_engine.set_enabled(False)
-                self.bond_tracker.set_enabled(False)
+                if self.model_runtime is runtime:
+                    self.model_runtime = None
+                if self._generation == generation:
+                    self._worker = None
+                    self._ready = False
+                    self.mood_engine.set_enabled(False)
+                    self.bond_tracker.set_enabled(False)
+                    should_warn = True
+            if should_warn:
+                self._notify_user_warning(on_failure)
+
+    def _startup_current(self, generation: int) -> bool:
+        with self._lock:
+            return (
+                self._generation == generation
+                and self._enabled
+                and not self._cleaned
+            )
+
+    def _cleanup_unpublished_services(self, memory, analyzer, runtime) -> None:
+        if memory:
+            self._cleanup_memory(memory, wait=False)
+        if analyzer:
+            self._cleanup_analyzer(analyzer)
+        if runtime:
+            runtime.close()
+
+    def update_model_runtime(
+        self, on_failure: Optional[WarningCallback] = None
+    ) -> None:
+        """热切换 Key/Base URL/模型；保留队列和在途任务。"""
+        with self._lock:
+            if not self._enabled or self._cleaned:
+                return
+            runtime = self.model_runtime
+        if runtime is None:
+            # 后台启用尚未发布运行时时，以新 generation 取代旧启动任务，
+            # 确保最终只会发布最新环境变量对应的客户端。
+            self.reconfigure_background(True, on_failure)
+            return
+
+        MindSettings.validate_environment()
+        model_name = MindSettings.model_name()
+        memory_client = MindSettings.create_client(self.config)
+        try:
+            state_client = MindSettings.create_client(self.config)
+        except Exception:
+            memory_client.close()
+            raise
+
+        with self._lock:
+            if (
+                not self._enabled
+                or self._cleaned
+                or self.model_runtime is not runtime
+            ):
+                memory_client.close()
+                state_client.close()
+                return
+            version = runtime.swap(memory_client, state_client, model_name)
+            self._ready = True
+            self.mood_engine.set_enabled(True)
+            self.bond_tracker.set_enabled(True)
+        self.log.info("心智模型运行时已热切换: version={} model={}", version, model_name)
+
+    def begin_config_update(self) -> MindModelRuntime | None:
+        """暂停未开始的模型调用，避免任务观察到尚未落盘的临时配置。"""
+        with self._lock:
+            runtime = self.model_runtime
+        if runtime is not None:
+            runtime.pause_new_acquires()
+        return runtime
+
+    @staticmethod
+    def end_config_update(runtime: MindModelRuntime | None) -> None:
+        if runtime is not None:
+            runtime.resume_new_acquires()
 
     def cleanup(self) -> None:
         with self._generation_lock:
@@ -273,7 +397,13 @@ class MindManager:
                 )
             except MindModelError as exc:
                 self.log.error("心智状态模型失败: task={} error={}", task.task_id, exc)
-                self._handle_model_failure(task.generation, task.warn, exc.permanent)
+                current_runtime = (
+                    exc.runtime_version is not None
+                    and analyzer.runtime.is_current(exc.runtime_version)
+                )
+                self._handle_model_failure(
+                    task.generation, task.warn, exc.permanent, current_runtime
+                )
             except Exception as exc:
                 self.log.opt(exception=True).error("心智状态后台任务异常，已放弃本轮: {}", exc)
             finally:
@@ -282,16 +412,39 @@ class MindManager:
                     self._next_queue_warning = self.config.queue_warning_threshold
 
     def _handle_model_failure(self, generation: int, callback: WarningCallback,
-                              permanent: bool) -> None:
-        if not self._task_valid(generation):
+                              permanent: bool, current_runtime: bool = True) -> None:
+        if not current_runtime or not self._task_valid(generation):
             return
-        callback()
+        self._notify_user_warning(callback)
         if permanent:
-            with self._lock:
-                self._ready = False
-                self.mood_engine.set_enabled(False)
-                self.bond_tracker.set_enabled(False)
+            # 用新 generation 一次性失效本次无效配置下的全部排队/在途任务；
+            # 修复配置后只处理新提交的任务，不让旧对话延迟污染状态。
+            with self._generation_lock:
+                with self._lock:
+                    if generation != self._generation:
+                        return
+                    self._generation += 1
+                    self._ready = False
+                    self.mood_engine.set_enabled(False)
+                    self.bond_tracker.set_enabled(False)
             self.log.warning("心智模型配置不可用，已停止心智注入和新任务")
+
+    def _notify_user_warning(
+        self, callback: Optional[WarningCallback]
+    ) -> None:
+        if callback is None:
+            return
+        now = time.monotonic()
+        with self._lock:
+            if now < self._next_user_warning_at:
+                return
+            self._next_user_warning_at = (
+                now + self.config.warning_cooldown_seconds
+            )
+        try:
+            callback()
+        except Exception as exc:
+            self.log.warning("心智异常提示发送失败: {}", exc)
 
     def _task_valid(self, generation: int) -> bool:
         with self._lock:
@@ -302,19 +455,37 @@ class MindManager:
             worker = self._worker
             memory = self.memory_manager
             analyzer = self.state_analyzer
+            runtime = self.model_runtime
             self._worker = None
             self.memory_manager = None
             self.state_analyzer = None
+            self.model_runtime = None
             if worker and worker.is_alive():
                 self._queue.put(None)
         if memory:
-            try:
-                memory.cleanup()
-                if wait_for_memory:
-                    memory.wait_cleanup()
-            except Exception as exc:
-                self.log.opt(exception=True).error("心智记忆组件清理异常: {}", exc)
+            if wait_for_memory:
+                self._cleanup_memory(memory, wait=True)
+            else:
+                cleanup_done = threading.Event()
+                with self._lock:
+                    self._retired_memory_cleanups.add(cleanup_done)
+                threading.Thread(
+                    target=self._cleanup_retired_memory,
+                    args=(memory, cleanup_done),
+                    name="mind-memory-service-cleanup",
+                    daemon=True,
+                ).start()
+        if runtime:
+            runtime.close()
         if worker and worker.is_alive() and worker is not threading.current_thread():
+            if not wait_for_memory:
+                threading.Thread(
+                    target=self._deferred_service_cleanup,
+                    args=(worker, analyzer),
+                    name="mind-deferred-cleanup",
+                    daemon=True,
+                ).start()
+                return
             worker.join(timeout=self.config.cleanup_timeout_seconds)
             if worker.is_alive():
                 self.log.warning("心智状态 Worker 清理超时，资源将在请求结束后延迟释放")
@@ -326,6 +497,33 @@ class MindManager:
                 ).start()
                 return
         self._cleanup_analyzer(analyzer)
+
+    def _cleanup_memory(self, memory: MemoryManager, wait: bool) -> None:
+        try:
+            memory.cleanup()
+            if wait:
+                memory.wait_cleanup()
+        except Exception as exc:
+            self.log.opt(exception=True).error("心智记忆组件清理异常: {}", exc)
+
+    def _cleanup_retired_memory(
+        self, memory: MemoryManager, cleanup_done: threading.Event
+    ) -> None:
+        try:
+            self._cleanup_memory(memory, wait=True)
+        finally:
+            cleanup_done.set()
+            with self._lock:
+                self._retired_memory_cleanups.discard(cleanup_done)
+
+    def _wait_retired_memory_cleanups(self) -> None:
+        while True:
+            with self._lock:
+                pending = tuple(self._retired_memory_cleanups)
+            if not pending:
+                return
+            for cleanup_done in pending:
+                cleanup_done.wait()
 
     def _deferred_service_cleanup(self, worker, analyzer) -> None:
         worker.join()

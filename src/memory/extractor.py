@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from openai import BadRequestError, OpenAI
 
 from .config import MemoryConfig, MemorySettings
 from .storage import MemoryStorage
+from ..mind.model_runtime import MindModelRuntime
 from ..utils.logger import get_logger
 
 MAX_PARSE_RETRIES = 3
@@ -26,15 +28,20 @@ class MemoryExtractor:
     2. 规则兜底：PII 黑名单 + 向量去重（代码层）
     """
 
-    def __init__(self, config: MemoryConfig, client: OpenAI,
+    def __init__(self, config: MemoryConfig, client: OpenAI | None,
                  model: str, storage: MemoryStorage,
-                 max_retries: int = MAX_PARSE_RETRIES):
+                 max_retries: int = MAX_PARSE_RETRIES,
+                 *, runtime: MindModelRuntime | None = None):
         self.config = config
-        self.client = client
-        self.model = model
+        if runtime is None:
+            if client is None:
+                raise ValueError("MemoryExtractor 需要 client 或 runtime")
+            runtime = MindModelRuntime.single_client(client, model)
+        self.runtime = runtime
         self.storage = storage
         self.max_retries = max_retries
-        self._response_mode = "json_object"
+        self._mode_lock = threading.Lock()
+        self._response_modes: dict[int, str] = {}
         self.log = get_logger("memory_extractor")
         try:
             self._extraction_prompt = Path(config.extraction.prompt_file).read_text(
@@ -70,9 +77,10 @@ class MemoryExtractor:
             return []
         return self._rule_filter(facts)
 
-    def extract_conversation(self, conversation_text: str, trace_id: str = "") -> list[dict]:
+    def extract_conversation(self, conversation_text: str, trace_id: str = "",
+                             runtime_lease=None) -> list[dict]:
         """从归一化后的最近多轮对话提取最新一轮产生的新事实。"""
-        facts = self._llm_extract_text(conversation_text)
+        facts = self._llm_extract_text(conversation_text, runtime_lease)
         return self._rule_filter(facts) if facts else []
 
     def _llm_extract(self, user_input: str, assistant_message: str) -> list[dict]:
@@ -80,8 +88,13 @@ class MemoryExtractor:
         conversation_text = f"用户：{user_input}\n风堇：{assistant_message}"
         return self._llm_extract_text(conversation_text)
 
-    def _llm_extract_text(self, conversation_text: str) -> list[dict]:
+    def _llm_extract_text(self, conversation_text: str, runtime_lease=None) -> list[dict]:
         """调用心智模型提取事实，历史只用于理解最新一轮。"""
+        if runtime_lease is None:
+            with self.runtime.acquire("memory") as lease:
+                return self._llm_extract_text(conversation_text, lease)
+
+        lease = runtime_lease
         messages = [
             {"role": "system", "content": self._extraction_prompt},
             {"role": "user", "content": (
@@ -92,16 +105,17 @@ class MemoryExtractor:
 
         last_error: Exception | None = None
         attempt = 0
+        response_mode = self._get_response_mode(lease.version)
         while attempt <= self.max_retries:
             try:
                 kwargs = dict(
-                    model=self.model,
+                    model=lease.model,
                     max_tokens=self.config.extraction.max_tokens,
                     messages=messages,
                 )
-                if self._response_mode == "json_object":
+                if response_mode == "json_object":
                     kwargs["response_format"] = {"type": "json_object"}
-                response = self.client.chat.completions.create(**kwargs)
+                response = lease.client.chat.completions.create(**kwargs)
                 raw_text = (response.choices[0].message.content or "").strip()
                 facts, error = self._parse_and_validate(raw_text)
                 if facts is not None:
@@ -120,10 +134,11 @@ class MemoryExtractor:
                 unsupported_markers = (
                     "response_format", "json_object", "json mode", "structured output"
                 )
-                if self._response_mode == "json_object" and any(
+                if response_mode == "json_object" and any(
                     marker in lowered for marker in unsupported_markers
                 ):
-                    self._response_mode = "prompt_only"
+                    response_mode = "prompt_only"
+                    self._set_response_mode(lease.version, response_mode)
                     self.log.warning("供应商不支持 json_object，记忆提取降级为 prompt_only")
                     last_error = exc
                     # 能力协商不消耗业务重试次数；立即用 prompt-only 重发。
@@ -146,6 +161,14 @@ class MemoryExtractor:
         if last_error is not None:
             raise last_error
         raise MemoryModelOutputError("记忆模型未返回可用结果")
+
+    def _get_response_mode(self, version: int) -> str:
+        with self._mode_lock:
+            return self._response_modes.setdefault(version, "json_object")
+
+    def _set_response_mode(self, version: int, mode: str) -> None:
+        with self._mode_lock:
+            self._response_modes[version] = mode
 
     def _parse_and_validate(self, text: str) -> tuple[list[dict] | None, str]:
         """解析 JSON 并校验字段完整性

@@ -13,6 +13,7 @@ from openai import OpenAI
 
 from .config import MemoryConfig
 from .storage import MemoryStorage
+from ..mind.model_runtime import MindModelRuntime
 from ..utils.helpers import get_project_root
 from ..utils.logger import get_logger
 
@@ -22,11 +23,15 @@ class MemoryWriter:
 
     _WAL_VERSION = 1
 
-    def __init__(self, config: MemoryConfig, client: OpenAI,
-                 model: str, storage: MemoryStorage, max_retries: int = 3):
+    def __init__(self, config: MemoryConfig, client: OpenAI | None,
+                 model: str, storage: MemoryStorage, max_retries: int = 3,
+                 *, runtime: MindModelRuntime | None = None):
         self.config = config
-        self.client = client
-        self.model = model
+        if runtime is None:
+            if client is None:
+                raise ValueError("MemoryWriter 需要 client 或 runtime")
+            runtime = MindModelRuntime.single_client(client, model)
+        self.runtime = runtime
         self.storage = storage
         self.max_retries = max_retries
         self.log = get_logger("memory_writer")
@@ -251,14 +256,26 @@ class MemoryWriter:
         )
 
     def _llm_merge(self, old_memory: str, new_fact: str) -> str:
+        runtime = getattr(self, "runtime", None)
+        if runtime is None:
+            return self._llm_merge_with_client(
+                old_memory, new_fact, self.client, self.model
+            )
+        with runtime.acquire("memory") as lease:
+            return self._llm_merge_with_client(
+                old_memory, new_fact, lease.client, lease.model
+            )
+
+    def _llm_merge_with_client(self, old_memory: str, new_fact: str,
+                               client, model: str) -> str:
         prompt = self._merge_prompt_template.replace(
             "{old_memory}", old_memory
         ).replace("{new_fact}", new_fact)
         last_error = None
         for attempt in range(self.max_retries + 1):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
+                response = client.chat.completions.create(
+                    model=model,
                     max_tokens=self.config.merge.max_tokens,
                     messages=[{"role": "user", "content": prompt}],
                 )

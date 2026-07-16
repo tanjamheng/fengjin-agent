@@ -161,6 +161,7 @@ export class SettingsPanel {
     cancelBtn.className = "dialog-btn dialog-btn--cancel";
     cancelBtn.textContent = "取消";
     cancelBtn.addEventListener("click", () => this._close(null));
+    this._cancelBtn = cancelBtn;
 
     const saveBtn = document.createElement("button");
     saveBtn.className = "dialog-btn dialog-btn--confirm settings-save-btn";
@@ -434,6 +435,15 @@ export class SettingsPanel {
   // ---- 脏跟踪 & 保存 ----
 
   private _saveBtn!: HTMLButtonElement;
+  private _cancelBtn!: HTMLButtonElement;
+
+  setSaving(saving: boolean): void {
+    if (!this._saveBtn || !this._cancelBtn) return;
+    this._saveBtn.disabled = saving;
+    this._cancelBtn.disabled = saving;
+    this._saveBtn.textContent = saving ? "正在保存…" : this._saveLabel;
+    this._collectFocusable();
+  }
 
   private _markDirty(): void {
     if (!this._dirty) {
@@ -475,7 +485,13 @@ export class SettingsPanel {
     }
 
     if (this.onSave) {
-      this.onSave(JSON.parse(JSON.stringify(this._data)));
+      this.setSaving(true);
+      try {
+        this.onSave(JSON.parse(JSON.stringify(this._data)));
+      } catch (error) {
+        this.setSaving(false);
+        throw error;
+      }
       return;
     }
 

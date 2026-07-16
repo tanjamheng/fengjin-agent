@@ -8,4 +8,6 @@ mind:
   cleanup_timeout_seconds: 10
   # 保持每轮 FIFO、不丢任务；超过阈值仅记录积压告警
   queue_warning_threshold: 10
+  # 连续超时/5xx 时避免反复打扰用户；日志仍逐次记录
+  warning_cooldown_seconds: 30
   prompt_file: config/prompts/state_analysis.md

@@ -333,7 +333,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 success, update_errors = await _apply_config_update(
-                    websocket.app, main_cfg, mind_cfg, mind_enabled
+                    websocket.app, main_cfg, mind_cfg, mind_enabled,
+                    agent.on_mind_warning,
                 )
                 client = websocket.app.state.client
                 agent.client = client
@@ -480,7 +481,8 @@ async def _cancel_active_stream(agent: Agent, task: Optional[asyncio.Task],
 
 
 async def _apply_config_update(app, main_cfg: dict, mind_cfg: dict,
-                               mind_enabled: bool) -> tuple[bool, list[str]]:
+                               mind_enabled: bool,
+                               on_mind_failure=None) -> tuple[bool, list[str]]:
     from ..server.config_manager import ConfigManager
 
     env_keys = (
@@ -494,7 +496,15 @@ async def _apply_config_update(app, main_cfg: dict, mind_cfg: dict,
         agents = list(getattr(app.state, "_active_agents", ()))
         old_agent_refs = [(agent, agent.client, agent.config) for agent in agents]
         manager = getattr(app.state, "mind_manager", None)
+        runtime_barrier = (
+            manager.begin_config_update() if manager is not None else None
+        )
         old_mind_generation = getattr(manager, "_generation", None)
+        old_mind_runtime_version = (
+            manager.model_runtime.current_version
+            if manager is not None and getattr(manager, "model_runtime", None) is not None
+            else None
+        )
 
         async def _rollback_runtime() -> None:
             _restore_environ(old_environ)
@@ -516,28 +526,52 @@ async def _apply_config_update(app, main_cfg: dict, mind_cfg: dict,
             if manager is not None and getattr(manager, "_generation", None) != old_mind_generation:
                 old_enabled = (old_environ.get("MIND_ENABLED") or "false").lower() == "true"
                 try:
-                    await asyncio.to_thread(manager.reconfigure, old_enabled)
+                    manager.reconfigure_background(old_enabled, on_mind_failure)
                     app.state.memory_manager = manager.memory_manager
                 except Exception as rollback_exc:
                     log.opt(exception=True).error("心智配置回滚失败: {}", rollback_exc)
+            elif (
+                manager is not None
+                and old_mind_runtime_version is not None
+                and getattr(manager, "model_runtime", None) is not None
+                and manager.model_runtime.current_version != old_mind_runtime_version
+            ):
+                try:
+                    await asyncio.to_thread(
+                        manager.update_model_runtime, on_mind_failure
+                    )
+                except Exception as rollback_exc:
+                    log.opt(exception=True).error("心智模型运行时回滚失败: {}", rollback_exc)
 
-        ConfigManager.apply_to_os_environ(main_cfg, mind_cfg, mind_enabled)
         try:
-            await ConfigManager.rebuild_clients(
-                app, main_cfg, mind_cfg, mind_enabled,
-                previous_environ=old_environ,
-            )
-        except Exception as exc:
-            log.opt(exception=True).error("配置热更新失败，正在回滚: {}", exc)
-            await _rollback_runtime()
-            return False, ["配置热更新失败，已恢复原配置"]
+            ConfigManager.apply_to_os_environ(main_cfg, mind_cfg, mind_enabled)
+            try:
+                await ConfigManager.rebuild_clients(
+                    app, main_cfg, mind_cfg, mind_enabled,
+                    previous_environ=old_environ,
+                    on_mind_failure=on_mind_failure,
+                    defer_mind_reconfigure=True,
+                )
+            except Exception as exc:
+                log.opt(exception=True).error("配置热更新失败，正在回滚: {}", exc)
+                await _rollback_runtime()
+                return False, ["配置热更新失败，已恢复原配置"]
 
-        if not ConfigManager.update_env_file(main_cfg, mind_cfg, mind_enabled):
-            await _rollback_runtime()
-            return False, ["配置持久化失败，已恢复原配置"]
-        if getattr(app.state, "_active_chat_count", 0) == 0:
-            await ConfigManager.cleanup_retired_resources(app)
-        return True, []
+            if not ConfigManager.update_env_file(main_cfg, mind_cfg, mind_enabled):
+                await _rollback_runtime()
+                return False, ["配置持久化失败，已恢复原配置"]
+            old_enabled = (
+                (old_environ.get("MIND_ENABLED") or "false").lower() == "true"
+            )
+            if manager is not None and old_enabled != mind_enabled:
+                manager.reconfigure_background(mind_enabled, on_mind_failure)
+                app.state.memory_manager = manager.memory_manager
+            if getattr(app.state, "_active_chat_count", 0) == 0:
+                await ConfigManager.cleanup_retired_resources(app)
+            return True, []
+        finally:
+            if manager is not None:
+                manager.end_config_update(runtime_barrier)
 
 
 def _restore_environ(snapshot: dict[str, str | None]) -> None:

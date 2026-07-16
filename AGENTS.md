@@ -275,6 +275,7 @@ AI风堇_治愈晨昏/
 │   │
 │   ├── mind/                        # 心智协调层
 │   │   ├── manager.py               # 总开关、双任务、FIFO Worker、降级与热更新
+│   │   ├── model_runtime.py         # 模型配置原子切换、请求快照与旧客户端延迟释放
 │   │   ├── state_analyzer.py        # JSON Schema 状态分析与任务内纠错重试
 │   │   ├── context_builder.py       # 最近 3 轮自然对话与 Token 裁剪
 │   │   └── config.py                # MindSettings / MIND_* 客户端
@@ -416,6 +417,8 @@ AI风堇_治愈晨昏/
 - 主对话模型：`FENGJIN_API_KEY` / `FENGJIN_BASE_URL` / `FENGJIN_MODEL`
 - 后台心智模型：`MIND_API_KEY` / `MIND_BASE_URL` / `MIND_MODEL`，总开关 `MIND_ENABLED`
 - 记忆与状态分析共享心智 API 配置，但使用两个独立调用过程、独立 Prompt 和独立失败边界；主对话永不等待心智任务
+- 关闭心智时丢弃排队任务，在途请求自然结束但结果作废；关闭立即返回，但重新开启须等待旧 MemoryManager 的 Writer/Storage 清理完成；更换 Key/Base URL/模型时保留队列，在途请求固定旧快照，未开始任务使用新快照，旧客户端延迟释放
+- 设置页只等待配置原子落盘，心智启用在后台完成；后台启动必须以 generation 收敛到最新期望状态。配置事务期间暂停发放新运行时租约，提交/回滚后再恢复；永久配置错误失效该配置下全部旧任务，用户异常提示全局 30 秒限频但日志不限频
 
 ## 三种能力模型
 
@@ -441,7 +444,7 @@ AI风堇_治愈晨昏/
 
 启动：Config/主模型客户端 → Safety → Mood + Bond → MindManager（Memory + StateAnalyzer + FIFO Worker）→ Persona → RAG/MCP → Context/Agent → Session
 
-退出：连接先 Session.flush() + 连接级 Persona.cleanup()；应用 lifespan 再关闭主模型客户端 → RAG/MCP → MindManager.cleanup()（停止状态 Worker、等待记忆任务、停止 Writer、关闭心智客户端与存储、清理 Mood/Bond）→ 应用级 Persona/Safety → logger.complete()。心智热更新必须等待旧代 MemoryWriter/WAL/Chroma 完全释放后才能创建新代；普通退出超时可延迟清理，但不得提前关闭在途请求仍使用的资源。CLI 由 Agent.cleanup() 持有 MindManager；WS 由应用 lifespan 持有，连接断开不得清理应用级心智资源。
+退出：连接先 Session.flush() + 连接级 Persona.cleanup()；应用 lifespan 再关闭主模型客户端 → RAG/MCP → MindManager.cleanup()（失效队列、延迟清理在途请求、停止 Writer、关闭心智客户端与存储、清理 Mood/Bond）→ 应用级 Persona/Safety → logger.complete()。心智 Key/Base URL/模型热更新只切换 `MindModelRuntime`，不得重建 MemoryWriter/WAL/Chroma；运行时租约保证旧客户端在最后一个在途请求结束后关闭。关闭心智可后台清理，但再次开启前必须等待旧 MemoryManager 清理完成。CLI 由 Agent.cleanup() 持有 MindManager；WS 由应用 lifespan 持有，连接断开不得清理应用级心智资源。
 
 ---
 
