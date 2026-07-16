@@ -204,13 +204,23 @@ class MindManager:
             name="mind-service-startup",
             daemon=True,
         )
+        start_error = None
         with self._lock:
             self._startup_thread = worker
             startup_threads = getattr(self, "_startup_threads", None)
             if startup_threads is None:
                 startup_threads = self._startup_threads = set()
             startup_threads.add(worker)
-        worker.start()
+            # 线程登记与启动必须在同一临界区；否则 cleanup 可能 join 尚未启动的线程。
+            try:
+                worker.start()
+            except Exception as exc:
+                startup_threads.discard(worker)
+                start_error = exc
+        if start_error is not None:
+            self.log.error("心智后台启动线程创建失败: {}", start_error)
+            self._notify_user_warning(on_failure)
+            return
         self.log.info("心智系统正在后台启动")
 
     def _background_start_services(
@@ -554,6 +564,8 @@ class MindManager:
                 if thread is not current
             )
         for thread in threads:
+            if thread.ident is None:
+                continue
             remaining = max(0.0, deadline - time.monotonic())
             thread.join(timeout=remaining)
         alive = [thread.name for thread in threads if thread.is_alive()]

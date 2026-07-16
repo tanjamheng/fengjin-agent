@@ -183,8 +183,8 @@ export class WSClient {
     main: { api_key: string | null; base_url: string | null; model: string | null },
     mind: { api_key: string | null; base_url: string | null; model: string | null },
     mind_enabled: boolean,
-  ): void {
-    this._send({
+  ): boolean {
+    return this._send({
       type: "update_config",
       main,
       mind,

@@ -448,6 +448,33 @@ class MindManagerBoundaryTests(unittest.TestCase):
         self.assertFalse(completed)
         self.assertLess(time.monotonic() - started, 0.3)
 
+    def test_cleanup_join_ignores_registered_but_unstarted_thread(self):
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager.config = SimpleNamespace(cleanup_timeout_seconds=0.1)
+        manager.log = get_logger("mind_unstarted_join_test")
+        unstarted = threading.Thread(target=lambda: None)
+        manager._startup_threads = {unstarted}
+
+        manager._join_startup_threads()
+
+        self.assertIsNone(unstarted.ident)
+
+    def test_background_thread_start_failure_degrades_without_escaping(self):
+        manager = object.__new__(MindManager)
+        manager._lock = threading.RLock()
+        manager._startup_threads = set()
+        manager.log = get_logger("mind_start_failure_test")
+        warning = lambda: None
+
+        with patch.object(manager, "_prepare_reconfigure", return_value=7), \
+             patch.object(manager, "_notify_user_warning") as notify, \
+             patch.object(threading.Thread, "start", side_effect=RuntimeError("boom")):
+            manager.reconfigure_background(True, warning)
+
+        self.assertFalse(manager._startup_threads)
+        notify.assert_called_once_with(warning)
+
     def test_close_during_background_start_prevents_stale_publish(self):
         constructor_entered = threading.Event()
         release_constructor = threading.Event()

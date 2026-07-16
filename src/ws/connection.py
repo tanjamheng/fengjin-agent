@@ -77,7 +77,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 _mark_pending_mind_warning(websocket.app)
                 log.debug("心智提示发送失败（连接可能已关闭）: {}", exc)
         try:
-            event_loop.call_soon_threadsafe(asyncio.create_task, _send())
+            # 在线程安全回调真正执行时才创建 coroutine，避免关闭的事件循环遗留未 await 警告。
+            event_loop.call_soon_threadsafe(lambda: asyncio.create_task(_send()))
         except RuntimeError:
             _mark_pending_mind_warning(websocket.app)
             log.debug("心智提示跳过：事件循环已关闭")

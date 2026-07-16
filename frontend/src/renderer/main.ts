@@ -566,7 +566,9 @@ sidebar.onOpenSettings = async () => {
       base_url: result.mind.base_url,
       model: result.mind.model,
     };
-    ws.updateConfig(main, mind, result.mind_enabled);
+    if (!ws.updateConfig(main, mind, result.mind_enabled)) {
+      panel.setSaving(false);
+    }
   };
 
   const result = await panel.show();
