@@ -20,6 +20,13 @@ class Message(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     metadata: MessageMeta = Field(default_factory=MessageMeta)
 
+    @property
+    def display_content(self) -> str:
+        """面向用户展示原始输入；内部 Skill 增强文本仅供主模型上下文使用。"""
+        if self.role == "user" and self.metadata.raw_content is not None:
+            return self.metadata.raw_content
+        return self.content
+
 
 class Session(BaseModel):
     """一个完整会话"""

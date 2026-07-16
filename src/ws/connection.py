@@ -122,6 +122,7 @@ async def websocket_endpoint(websocket: WebSocket):
         bond_tracker=bond_tracker,
         persona_guard=persona_guard,
     )
+    ConfigManager.register_agent(websocket.app, agent)
 
     # 不预先创建会话——等用户发送第一条消息时才创建
     await websocket.send_json({
@@ -258,7 +259,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "messages": [
                             {
                                 "role": m.role,
-                                "content": m.content,
+                                "content": m.display_content,
                                 "timestamp": m.timestamp.isoformat(),
                             }
                             for m in loaded.messages
@@ -442,6 +443,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 _emb_reg.release()
             except Exception as e:
                 log.warning("连接级 persona embedding release 异常: {}", e)
+        ConfigManager.unregister_agent(websocket.app, agent)
         await ConfigManager.unregister_connection(websocket.app)
         log.info("WebSocket 连接关闭，会话已保存")
 

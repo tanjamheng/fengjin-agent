@@ -32,7 +32,8 @@ class MemoryManager:
     - extract_async(user_input, assistant_message)：异步提取+写入
     """
 
-    def __init__(self, config: MemoryConfig, *, client=None, model_name: str | None = None):
+    def __init__(self, config: MemoryConfig, *, client=None,
+                 model_name: str | None = None, max_retries: int = 3):
         small_client = client or MemorySettings.create_mind_model_client()
         self.client = small_client
         model_name = model_name or MemorySettings.get_mind_model_name()
@@ -43,8 +44,14 @@ class MemoryManager:
         self.retriever = None
         try:
             self.storage = MemoryStorage(config)
-            self.extractor = MemoryExtractor(config, small_client, model_name, self.storage)
-            self.writer = MemoryWriter(config, small_client, model_name, self.storage)
+            self.extractor = MemoryExtractor(
+                config, small_client, model_name, self.storage,
+                max_retries=max_retries,
+            )
+            self.writer = MemoryWriter(
+                config, small_client, model_name, self.storage,
+                max_retries=max_retries,
+            )
             self.retriever = MemoryRetriever(config, self.storage)
         except Exception:
             # 部分初始化失败：清理已初始化的组件
@@ -144,7 +151,10 @@ class MemoryManager:
                 if facts and not _can_apply(task.should_apply):
                     log.info("丢弃已失效的记忆提取结果: {}", task.task_id)
                 elif facts and self.writer._running:
-                    self.writer.write(facts, should_apply=task.should_apply)
+                    self.writer.write(
+                        facts,
+                        should_apply=task.should_apply,
+                    )
                     log.info(
                         "异步记忆提取完成: task={} {} 条事实 ({:.0f}ms)",
                         task.task_id, len(facts), elapsed,

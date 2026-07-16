@@ -120,7 +120,7 @@ def _print_recent_messages(console: Console, session_mgr: SessionManager, n: int
 
     for msg in recent:
         if msg.role == "user":
-            console.print(f"[bold blue]你:[/bold blue] {msg.content}")
+            console.print(f"[bold blue]你:[/bold blue] {msg.display_content}")
         else:
             console.print(f"[bold green]风堇:[/bold green] {msg.content}")
     console.print("")
@@ -250,7 +250,7 @@ def _handle_command(cmd: str, args: str, console: Console,
         console.print(f"[dim]=== {session.title}（共 {session.message_count} 条）===[/dim]")
         for msg in session.messages:
             if msg.role == "user":
-                console.print(f"[bold blue]你:[/bold blue] {msg.content}")
+                console.print(f"[bold blue]你:[/bold blue] {msg.display_content}")
             else:
                 console.print(f"[bold green]风堇:[/bold green] {msg.content}")
         console.print("[dim]=== 结束 ===[/dim]\n")

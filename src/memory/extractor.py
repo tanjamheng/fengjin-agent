@@ -27,11 +27,13 @@ class MemoryExtractor:
     """
 
     def __init__(self, config: MemoryConfig, client: OpenAI,
-                 model: str, storage: MemoryStorage):
+                 model: str, storage: MemoryStorage,
+                 max_retries: int = MAX_PARSE_RETRIES):
         self.config = config
         self.client = client
         self.model = model
         self.storage = storage
+        self.max_retries = max_retries
         self.log = get_logger("memory_extractor")
         try:
             self._extraction_prompt = Path(config.extraction.prompt_file).read_text(
@@ -88,7 +90,7 @@ class MemoryExtractor:
         ]
 
         last_error: Exception | None = None
-        for attempt in range(MAX_PARSE_RETRIES + 1):
+        for attempt in range(self.max_retries + 1):
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
@@ -102,7 +104,7 @@ class MemoryExtractor:
                     return facts
 
                 last_error = MemoryModelOutputError(error)
-                if attempt < MAX_PARSE_RETRIES:
+                if attempt < self.max_retries:
                     # 纠错历史只存在于本次任务，不污染下一轮心智分析。
                     messages.append({"role": "assistant", "content": raw_text})
                     messages.append({
@@ -114,10 +116,10 @@ class MemoryExtractor:
                 if getattr(exc, "status_code", None) in (401, 403, 404):
                     raise
 
-            if attempt < MAX_PARSE_RETRIES:
+            if attempt < self.max_retries:
                 time.sleep(min(2 ** attempt, 4))
 
-        self.log.warning("记忆提取调用或JSON校验失败，已重试 {} 次后放弃: {}", MAX_PARSE_RETRIES, last_error)
+        self.log.warning("记忆提取调用或JSON校验失败，已重试 {} 次后放弃: {}", self.max_retries, last_error)
         if isinstance(last_error, MemoryModelOutputError):
             raise MemoryModelOutputError("记忆模型持续返回非法 JSON") from last_error
         if last_error is not None:

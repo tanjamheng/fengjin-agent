@@ -139,6 +139,7 @@ class MindManager:
                 self.memory_config,
                 client=MindSettings.create_client(self.config),
                 model_name=model_name,
+                max_retries=self.config.max_retries,
             )
             analyzer = StateAnalyzer(
                 self.config,

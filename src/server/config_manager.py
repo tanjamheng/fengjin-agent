@@ -3,6 +3,7 @@
 import asyncio
 import os
 import re
+import weakref
 from pathlib import Path
 from typing import Optional
 
@@ -145,12 +146,17 @@ class ConfigManager:
             old_client = getattr(app.state, "client", None)
             try:
                 config = ConfigManager._build_config_from_env()
-                app.state.client = AsyncOpenAI(
+                new_client = AsyncOpenAI(
                     api_key=config.api_key,
                     base_url=config.base_url,
                     timeout=120.0,
                     max_retries=3,
                 )
+                app.state.client = new_client
+                app.state.config = config
+                for agent in list(getattr(app.state, "_active_agents", ())):
+                    agent.client = new_client
+                    agent.config = config
                 log.info("主模型客户端已重建")
             except Exception as e:
                 log.opt(exception=True).error("重建主模型客户端失败: {}", e)
@@ -230,6 +236,20 @@ class ConfigManager:
     @staticmethod
     def register_connection(app) -> None:
         app.state._active_ws_connections = getattr(app.state, "_active_ws_connections", 0) + 1
+
+    @staticmethod
+    def register_agent(app, agent) -> None:
+        agents = getattr(app.state, "_active_agents", None)
+        if agents is None:
+            agents = weakref.WeakSet()
+            app.state._active_agents = agents
+        agents.add(agent)
+
+    @staticmethod
+    def unregister_agent(app, agent) -> None:
+        agents = getattr(app.state, "_active_agents", None)
+        if agents is not None:
+            agents.discard(agent)
 
     @staticmethod
     async def unregister_connection(app) -> None:

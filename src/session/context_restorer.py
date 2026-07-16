@@ -44,7 +44,7 @@ class ContextRestorer:
             return None
 
         # 取最近 3 条用户消息作为检索 query
-        user_msgs = [m.content for m in session.messages if m.role == "user"]
+        user_msgs = [m.display_content for m in session.messages if m.role == "user"]
         if not user_msgs:
             return None
 

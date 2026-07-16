@@ -21,6 +21,7 @@ from src.mind.manager import MindManager
 from src.mind.state_analyzer import StateAnalysisResult, StateAnalyzer
 from src.memory.writer import MemoryWriter
 from src.memory.manager import MemoryManager
+from src.memory.config import MemoryConfig
 from src.server.config_manager import ConfigManager
 from src.session import MessageMeta, SessionManager
 from src.utils.logger import get_logger
@@ -67,6 +68,10 @@ class MindContextTests(unittest.TestCase):
 
             self.assertIn("内部Skill指令", dialogue_history[0]["content"])
             self.assertEqual(mind_history[0]["content"], "我今天很开心")
+            self.assertEqual(
+                manager.current_session.messages[0].display_content,
+                "我今天很开心",
+            )
             self.assertEqual(manager.current_session.title, "我今天很开心")
 
     def test_tool_messages_are_removed_and_count_as_one_turn(self):
@@ -177,6 +182,56 @@ class StateAnalyzerTests(unittest.TestCase):
 
 
 class MindManagerBoundaryTests(unittest.TestCase):
+    def test_memory_merge_retries_then_drops_conflicting_fact(self):
+        class _TemporaryModelError(RuntimeError):
+            status_code = 500
+
+        class _Storage:
+            def __init__(self):
+                self.added = []
+                self.upserted = []
+
+            def query(self, **_kwargs):
+                return {"ids": [["old-id"]], "distances": [[0.1]]}
+
+            def get(self, **_kwargs):
+                return {
+                    "documents": ["用户24岁"],
+                    "metadatas": [{"is_core": 0}],
+                }
+
+            def add(self, **kwargs):
+                self.added.append(kwargs)
+
+            def upsert(self, **kwargs):
+                self.upserted.append(kwargs)
+
+        client = _FakeClient([
+            _TemporaryModelError("temporary-1"),
+            _TemporaryModelError("temporary-2"),
+            _TemporaryModelError("temporary-3"),
+        ])
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig()
+        writer.client = client
+        writer.model = "fake"
+        writer.storage = _Storage()
+        writer.max_retries = 2
+        writer.log = get_logger("memory_merge_retry_test")
+        writer._merge_prompt_template = "旧：{old_memory}\n新：{new_fact}"
+        writer._checkpoint = lambda: None
+
+        with patch("src.memory.writer.time.sleep"):
+            writer._process_fact({
+                "content": "用户25岁",
+                "type": "semantic",
+                "importance": "low",
+            })
+
+        self.assertEqual(len(client.chat.completions.calls), 3)
+        self.assertEqual(writer.storage.added, [])
+        self.assertEqual(writer.storage.upserted, [])
+
     def test_state_worker_reads_latest_state_when_each_task_is_consumed(self):
         class _State:
             def __init__(self, value):
@@ -303,6 +358,55 @@ class MindManagerBoundaryTests(unittest.TestCase):
 
 
 class ConfigHotReloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_main_config_update_reaches_all_connected_agents(self):
+        class _Agent:
+            pass
+
+        old_client = object()
+        new_client = object()
+        old_config = SimpleNamespace(model="old-model")
+        new_config = SimpleNamespace(
+            api_key="new-key",
+            base_url="https://new.test",
+            model="new-model",
+        )
+        first = _Agent()
+        second = _Agent()
+        first.client = second.client = old_client
+        first.config = second.config = old_config
+        app = SimpleNamespace(state=SimpleNamespace(
+            client=old_client,
+            config=old_config,
+            mind_manager=None,
+        ))
+        ConfigManager.register_agent(app, first)
+        ConfigManager.register_agent(app, second)
+        previous = {
+            "FENGJIN_API_KEY": "old-key",
+            "FENGJIN_BASE_URL": "https://old.test",
+            "FENGJIN_MODEL": "old-model",
+            "MIND_ENABLED": "false",
+        }
+        current = dict(previous, FENGJIN_API_KEY="new-key", FENGJIN_MODEL="new-model")
+        with (
+            patch.dict(os.environ, current, clear=False),
+            patch.object(ConfigManager, "_build_config_from_env", return_value=new_config),
+            patch("src.server.config_manager.AsyncOpenAI", return_value=new_client),
+        ):
+            await ConfigManager.rebuild_clients(
+                app,
+                {"api_key": "new-key", "base_url": None, "model": "new-model"},
+                {"api_key": None, "base_url": None, "model": None},
+                False,
+                previous_environ=previous,
+            )
+
+        self.assertIs(app.state.client, new_client)
+        self.assertIs(app.state.config, new_config)
+        for agent in (first, second):
+            self.assertIs(agent.client, new_client)
+            self.assertIs(agent.config, new_config)
+
     async def test_changed_mind_config_rebuilds_off_event_loop_thread(self):
         event_loop_thread = threading.get_ident()
 

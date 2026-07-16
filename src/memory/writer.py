@@ -3,6 +3,7 @@
 import os
 import queue
 import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -24,11 +25,12 @@ class MemoryWriter:
     """
 
     def __init__(self, config: MemoryConfig, client: OpenAI,
-                 model: str, storage: MemoryStorage):
+                 model: str, storage: MemoryStorage, max_retries: int = 3):
         self.config = config
         self.client = client
         self.model = model
         self.storage = storage
+        self.max_retries = max_retries
         self.log = get_logger("memory_writer")
         self._core_path = Path(config.core_file)
         if not self._core_path.is_absolute():
@@ -179,7 +181,7 @@ class MemoryWriter:
 
     def _resolve_conflict(self, old_id: str, fact: dict, is_core: bool,
                           should_apply=None) -> None:
-        """冲突消解。LLM 合并失败时降级为直接插入新事实。"""
+        """冲突消解；合并模型最终失败时记录日志并放弃本条更新。"""
         if not _can_apply(should_apply):
             return
         old_result = self.storage.get(ids=[old_id])
@@ -196,10 +198,7 @@ class MemoryWriter:
         try:
             merged = self._llm_merge(old_content, fact["content"])
         except Exception as e:
-            self.log.error("LLM记忆合并失败，降级为直接插入: {}", e)
-            if not _can_apply(should_apply):
-                return
-            self._insert(fact, is_core)
+            self.log.error("LLM记忆合并失败，已放弃本条更新: {}", e)
             return
 
         if not _can_apply(should_apply):
@@ -219,13 +218,24 @@ class MemoryWriter:
             "{new_fact}", new_fact
         )
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            max_tokens=self.config.merge.max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-            timeout=30.0,
-        )
-        return response.choices[0].message.content.strip()
+        last_error = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    max_tokens=self.config.merge.max_tokens,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as exc:
+                last_error = exc
+                if getattr(exc, "status_code", None) in (401, 403, 404):
+                    raise
+                if attempt < self.max_retries:
+                    time.sleep(min(2 ** attempt, 4))
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("记忆合并模型未返回结果")
 
     def _refresh_core_file(self) -> None:
         """从 ChromaDB 生成 core_memory.md"""
