@@ -2,7 +2,46 @@
 # =*= Fengjin AI - Cure the Twilight =*=
 # macOS / Linux 一键启动脚本，等价于 start.bat
 set -euo pipefail
-cd "$(dirname "$0")"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR"
+
+mkdir -p logs || {
+    echo "ERROR: Unable to create the logs directory. Check folder permissions."
+    exit 1
+}
+STARTUP_LOG="$PWD/logs/startup.log"
+: > "$STARTUP_LOG"
+exec > >(tee -a "$STARTUP_LOG") 2>&1
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Fengjin startup begins"
+echo "Project root: $PWD"
+
+fatal() {
+    echo
+    echo "  ERROR: $1"
+    echo "  Startup log: $STARTUP_LOG"
+    exit 1
+}
+
+# Preflight: fail visibly before stopping a healthy old instance.
+[ -f "requirements.txt" ] || fatal "Missing required file: requirements.txt"
+[ -f "frontend/package.json" ] || fatal "Missing required file: frontend/package.json"
+command -v node >/dev/null 2>&1 || fatal "Node.js was not found. Install Node.js 18+"
+node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 18 ? 0 : 1)" \
+    >/dev/null 2>&1 || fatal "Node.js 18+ is required"
+command -v npm >/dev/null 2>&1 || fatal "npm was not found. Repair the Node.js installation"
+echo "Node $(node --version)"
+echo "npm $(npm --version)"
+
+PYTHON=""
+for cmd in python3 python; do
+    if command -v "$cmd" >/dev/null 2>&1 && \
+        "$cmd" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+        PYTHON="$cmd"
+        break
+    fi
+done
+[ -n "$PYTHON" ] || fatal "Python 3.10+ is required but was not found"
+echo "$($PYTHON --version 2>&1)"
 
 echo
 echo "    =*= Fengjin AI - Cure the Twilight =*="
@@ -46,26 +85,12 @@ export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-b
 
 # ── 1. Python venv ──
 echo " [1/4] Python virtual environment..."
-PYTHON=""
-for cmd in python3 python; do
-    if command -v "$cmd" &>/dev/null && "$cmd" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
-        PYTHON="$cmd"
-        break
-    fi
-done
-if [ -z "$PYTHON" ]; then
-    echo "  ERROR: Python 3.10+ required but not found"
-    exit 1
-fi
-
 if [ ! -f "venv/bin/python" ]; then
     echo "  Creating venv with $PYTHON..."
-    "$PYTHON" -m venv venv
-    if [ $? -ne 0 ]; then
-        echo "  ERROR: Failed to create venv"
-        exit 1
-    fi
+    "$PYTHON" -m venv venv || fatal "Failed to create the Python virtual environment"
 fi
+venv/bin/python -c "import sys" >/dev/null 2>&1 || \
+    fatal "The existing Python virtual environment is invalid or belongs to another computer"
 echo "  OK ($PYTHON)"
 
 # ── 2. Python dependencies ──
@@ -97,8 +122,11 @@ else
     if nvidia-smi >/dev/null 2>&1; then
         if ! venv/bin/python -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
             echo "  NVIDIA GPU detected but CPU-only PyTorch found, switching to CUDA PyTorch..."
-            venv/bin/python -m pip install torch==2.6.0+cu124 --index-url https://mirrors.nju.edu.cn/pytorch/whl/cu124 --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple --force-reinstall --progress-bar on || true
-            date > "venv/.requirements-installed"
+            if venv/bin/python -m pip install torch==2.6.0+cu124 --index-url https://mirrors.nju.edu.cn/pytorch/whl/cu124 --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple --force-reinstall --progress-bar on; then
+                date > "venv/.requirements-installed"
+            else
+                echo "  WARNING: CUDA PyTorch install failed; keeping the current environment."
+            fi
         fi
     fi
 fi
@@ -107,21 +135,25 @@ echo "  OK"
 # ── 3. Frontend dependencies ──
 echo " [3/4] Frontend dependencies (first install may take ~2 min)..."
 if [ ! -d "frontend/node_modules" ]; then
+    NEED_NPM=1
+elif [ ! -x "frontend/node_modules/.bin/electron-vite" ]; then
+    NEED_NPM=1
+elif ! npm --prefix frontend ls --depth=0 >/dev/null 2>&1; then
+    NEED_NPM=1
+else
+    NEED_NPM=0
+fi
+if [ "$NEED_NPM" = "1" ]; then
     echo "  Installing..."
-    (cd frontend && npm install) || {
-        echo "  ERROR: npm install failed"
-        exit 1
-    }
+    npm --prefix frontend install || fatal "npm install failed"
 fi
 echo "  OK"
 
 # ── 4. Start Electron ──
 echo " [4/4] Starting frontend..."
 echo "  Electron launching..."
-cd frontend
-npm run dev >/dev/null 2>&1 &
+npm --prefix frontend run dev &
 ELECTRON_PID=$!
-cd ..
 
 cat << 'EOF'
 
@@ -129,7 +161,7 @@ cat << 'EOF'
     Fengjin AI is running!
 
     Backend:  configured port (automatic fallback enabled)
-    Logs:     logs/app.log
+    Logs:     logs/startup.log
 
     Close this terminal to stop all services.
     ====================================
@@ -137,9 +169,14 @@ cat << 'EOF'
 EOF
 
 # Wait for Electron to exit, then clean up
-wait $ELECTRON_PID 2>/dev/null || true
+if wait "$ELECTRON_PID"; then
+    FRONTEND_RC=0
+else
+    FRONTEND_RC=$?
+fi
 
 echo
 echo "    Shutting down..."
 stop_tracked_backend
+[ "$FRONTEND_RC" -eq 0 ] || fatal "Electron frontend exited with code $FRONTEND_RC"
 echo "    Goodbye."
