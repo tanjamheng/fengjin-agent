@@ -248,12 +248,19 @@ class MemoryExtractor:
             results = self.storage.query(
                 text=content,
                 n_results=1,
-                where={"is_core": 1 if fact["importance"] == "high" else 0}
+                where=None,
             )
             if results["distances"] and results["distances"][0]:
                 distance = results["distances"][0][0]
                 if distance < self.config.thresholds.dedup_distance:
-                    continue
+                    metadata = results["metadatas"][0][0]
+                    # 已降级 high 再次被判为 high 时交给 Writer 直接提升；
+                    # 其余跨层/同层重复仍然丢弃。
+                    if not (
+                        fact["importance"] == "high"
+                        and not metadata.get("is_core", 0)
+                    ):
+                        continue
 
             filtered.append(fact)
 

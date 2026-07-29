@@ -3,6 +3,7 @@
 import json
 import os
 import queue
+import re
 import threading
 import time
 import uuid
@@ -69,6 +70,10 @@ class MemoryWriter:
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._running = True
         self._stopping = False
+
+        # 启动时同步一次现有 Core，旧记录无需重嵌入即可应用新容量策略。
+        self._enforce_core_capacity()
+        self._refresh_core_file()
 
         # 回放必须在线程启动前完成；即使 WAL 有坏项，构造失败也不能遗留线程。
         self._replay_pending()
@@ -176,6 +181,7 @@ class MemoryWriter:
                         current["stage"] = "core_file"
                         self._checkpoint_locked()
         if is_core:
+            self._enforce_core_capacity()
             self._refresh_core_file()
 
     def _process_fact(self, fact: dict, should_apply=None) -> None:
@@ -186,6 +192,7 @@ class MemoryWriter:
         if not applied:
             return
         if fact["importance"] == "high":
+            self._enforce_core_capacity()
             self._refresh_core_file()
 
     def _apply_fact_storage(self, fact: dict, should_apply=None,
@@ -195,24 +202,62 @@ class MemoryWriter:
         is_core = fact["importance"] == "high"
         results = self.storage.query(
             text=fact["content"],
-            n_results=1,
-            where={"is_core": 1 if is_core else 0},
+            n_results=self.config.thresholds.conflict_candidates,
+            where=None,
         )
         if not _can_apply(should_apply):
             return False
 
-        if not results["ids"][0]:
+        candidates = _unpack_query_candidates(results)
+        if not candidates:
             return self._insert(
                 fact, is_core, memory_id=memory_id, should_apply=should_apply
             )
 
-        distance = results["distances"][0][0]
-        if distance >= self.config.thresholds.conflict_distance:
+        duplicates = [
+            candidate for candidate in candidates
+            if candidate["distance"] < self.config.thresholds.dedup_distance
+        ]
+        if duplicates:
+            if (
+                not is_core
+                or any(item["metadata"].get("is_core", 0) for item in duplicates)
+            ):
+                return True
+            duplicate = duplicates[0]
+            old_id = duplicate["id"]
+            old_result = self.storage.get(ids=[old_id])
+            old_meta = old_result["metadatas"][0]
+            now = datetime.now().isoformat()
+            old_meta["is_core"] = 1
+            old_meta["importance"] = "high"
+            old_meta["updated_at"] = now
+            old_meta["core_touched_at"] = now
+            if self._is_protected(fact["content"]):
+                old_meta["protected"] = 1
+            return _commit_if_valid(
+                should_apply,
+                lambda: self.storage.update_metadata(old_id, old_meta),
+            )
+
+        conflicts = [
+            candidate for candidate in candidates
+            if candidate["distance"] < self.config.thresholds.conflict_distance
+        ]
+        if not conflicts:
             return self._insert(
                 fact, is_core, memory_id=memory_id, should_apply=should_apply
             )
+        matching_importance = [
+            candidate for candidate in conflicts
+            if candidate["metadata"].get(
+                "importance",
+                "high" if candidate["metadata"].get("is_core", 0) else "low",
+            ) == fact["importance"]
+        ]
+        old_id = (matching_importance or conflicts)[0]["id"]
         return self._resolve_conflict(
-                results["ids"][0][0], fact, is_core, should_apply
+                old_id, fact, is_core, should_apply, memory_id=memory_id
             )
 
     def _insert(self, fact: dict, is_core: bool,
@@ -224,11 +269,14 @@ class MemoryWriter:
                 content=fact["content"],
                 is_core=is_core,
                 memory_type=fact["type"],
+                protected=is_core and self._is_protected(fact["content"]),
+                importance=fact["importance"],
             ),
         )
 
     def _resolve_conflict(self, old_id: str, fact: dict, is_core: bool,
-                          should_apply=None) -> bool:
+                          should_apply=None,
+                          memory_id: str | None = None) -> bool:
         """冲突合并最终失败时仅记日志并放弃本条更新（不触发前端提示）。"""
         if not _can_apply(should_apply):
             return False
@@ -236,7 +284,10 @@ class MemoryWriter:
         old_content = old_result["documents"][0]
         old_meta = old_result["metadatas"][0]
         if old_meta["is_core"] and not is_core:
-            return self._insert(fact, is_core=False, should_apply=should_apply)
+            return self._insert(
+                fact, is_core=False, memory_id=memory_id,
+                should_apply=should_apply,
+            )
 
         try:
             merged = self._llm_merge(old_content, fact["content"])
@@ -246,8 +297,18 @@ class MemoryWriter:
         if not _can_apply(should_apply):
             return False
         if merged == "NO_MERGE":
-            return self._insert(fact, is_core, should_apply=should_apply)
-        old_meta["updated_at"] = datetime.now().isoformat()
+            return self._insert(
+                fact, is_core, memory_id=memory_id,
+                should_apply=should_apply,
+            )
+        now = datetime.now().isoformat()
+        old_meta["updated_at"] = now
+        if is_core:
+            old_meta["is_core"] = 1
+            old_meta["importance"] = "high"
+            old_meta["core_touched_at"] = now
+            if self._is_protected(fact["content"]):
+                old_meta["protected"] = 1
         return _commit_if_valid(
             should_apply,
             lambda: self.storage.upsert(
@@ -289,6 +350,88 @@ class MemoryWriter:
         if last_error is not None:
             raise last_error
         raise RuntimeError("记忆合并模型未返回结果")
+
+    def _is_protected(self, content: str) -> bool:
+        patterns = self.config.core_capacity.protected_patterns
+        return any(re.search(pattern, content) for pattern in patterns)
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """与上下文模块口径一致的轻量估算：ASCII≈0.3 token，中文≈1 token。"""
+        ascii_chars = sum(1 for char in text if ord(char) < 128)
+        return max(1, int(ascii_chars * 0.3 + (len(text) - ascii_chars)))
+
+    def _enforce_core_capacity(self) -> None:
+        """超限时把最久未触达的非保护 Core 降为普通记忆，只更新 Metadata。"""
+        capacity = self.config.core_capacity
+        if not capacity.enabled:
+            return
+
+        results = self.storage.get_by_metadata(
+            where={"is_core": 1}, include=["documents", "metadatas"]
+        )
+        records = []
+        for memory_id, content, raw_meta in zip(
+            results["ids"], results["documents"], results["metadatas"]
+        ):
+            metadata = dict(raw_meta)
+            metadata_changed = False
+            if "importance" not in metadata:
+                metadata["importance"] = "high"
+                metadata_changed = True
+            if "core_touched_at" not in metadata:
+                metadata["core_touched_at"] = (
+                    metadata.get("updated_at")
+                    or metadata.get("created_at", "")
+                )
+                metadata_changed = True
+            protected = bool(metadata.get("protected", 0))
+            if not protected and self._is_protected(content):
+                protected = True
+                metadata["protected"] = 1
+                metadata_changed = True
+            if metadata_changed:
+                self.storage.update_metadata(memory_id, metadata)
+            records.append({
+                "id": memory_id,
+                "content": content,
+                "metadata": metadata,
+                "protected": protected,
+                "tokens": self._estimate_tokens(content),
+            })
+
+        records.sort(
+            key=lambda item: item["metadata"].get("core_touched_at", "")
+        )
+        total_tokens = sum(item["tokens"] for item in records)
+        candidates = [item for item in records if not item["protected"]]
+        demoted = 0
+        while (
+            len(records) > capacity.max_items
+            or total_tokens > capacity.max_tokens
+        ) and candidates:
+            item = candidates.pop(0)
+            metadata = dict(item["metadata"])
+            metadata["is_core"] = 0
+            metadata["demoted_at"] = datetime.now().isoformat()
+            self.storage.update_metadata(item["id"], metadata)
+            records.remove(item)
+            total_tokens -= item["tokens"]
+            demoted += 1
+
+        if demoted:
+            self.log.info(
+                "Core 容量整理完成: 降级 {} 条，保留 {} 条 / 约 {} tokens",
+                demoted, len(records), total_tokens,
+            )
+        if (
+            len(records) > capacity.max_items
+            or total_tokens > capacity.max_tokens
+        ):
+            self.log.warning(
+                "受保护 Core 已超过容量，未强制降级: {} 条 / 约 {} tokens",
+                len(records), total_tokens,
+            )
 
     def _refresh_core_file(self) -> None:
         results = self.storage.get_by_metadata(
@@ -404,6 +547,22 @@ def _unpack_item(item) -> tuple[dict, object]:
     if isinstance(item, tuple) and len(item) == 2:
         return item
     return item, None
+
+
+def _unpack_query_candidates(results: dict) -> list[dict]:
+    """把 Chroma 单查询结果整理为按距离排序的候选列表。"""
+    ids = (results.get("ids") or [[]])[0]
+    distances = (results.get("distances") or [[]])[0]
+    metadatas = (results.get("metadatas") or [[]])[0]
+    return [
+        {
+            "id": memory_id,
+            "distance": distances[index],
+            "metadata": metadatas[index] if index < len(metadatas) else {},
+        }
+        for index, memory_id in enumerate(ids)
+        if index < len(distances)
+    ]
 
 
 def _can_apply(should_apply) -> bool:

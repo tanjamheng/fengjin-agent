@@ -14,7 +14,8 @@ class MemoryStorage:
     collection 结构：
       - documents: 记忆文本
       - ids: 唯一标识
-      - metadatas: {is_core: int, type: str, created_at: str, updated_at: str?}
+      - metadatas: {is_core: int, protected: int, importance: str, type: str,
+                    created_at: str, updated_at: str?, core_touched_at: str?}
 
     通过 chroma_registry 与 RAG DenseIndex 共享同一个 PersistentClient，
     避免重复创建 SQLite 连接和 HNSW 索引元数据。
@@ -97,18 +98,25 @@ class MemoryStorage:
                 raise
 
     def add(self, memory_id: str, content: str, is_core: bool,
-            memory_type: str) -> None:
+            memory_type: str, protected: bool = False,
+            importance: str | None = None) -> None:
         """添加一条记忆"""
         # WAL 重放可能在 Chroma 已提交、确认记录尚未删除的窗口发生。
         # 使用确定 ID 的 upsert 使该窗口幂等，不产生重复记忆。
+        now = datetime.now().isoformat()
+        metadata = {
+            "is_core": int(is_core),
+            "protected": int(protected),
+            "importance": importance or ("high" if is_core else "low"),
+            "type": memory_type,
+            "created_at": now,
+        }
+        if is_core:
+            metadata["core_touched_at"] = now
         self.collection.upsert(
             documents=[content],
             ids=[memory_id],
-            metadatas=[{
-                "is_core": int(is_core),
-                "type": memory_type,
-                "created_at": datetime.now().isoformat()
-            }]
+            metadatas=[metadata]
         )
 
     def query(self, text: str, n_results: int = 1,
@@ -144,6 +152,10 @@ class MemoryStorage:
             ids=[memory_id],
             metadatas=[metadata]
         )
+
+    def update_metadata(self, memory_id: str, metadata: dict) -> None:
+        """只更新 Metadata，保留已有 Document、Embedding 和 HNSW 向量。"""
+        self.collection.update(ids=[memory_id], metadatas=[metadata])
 
     def delete(self, ids: Optional[list] = None,
                where: Optional[dict] = None) -> None:

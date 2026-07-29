@@ -22,10 +22,22 @@ memory:
   thresholds:
     dedup_distance: 0.1        # < 0.1 视为重复，丢弃
     conflict_distance: 0.15    # < 0.15 视为可能冲突，调 LLM 合并（必须 > dedup_distance）
+    conflict_candidates: 3     # 全库取候选池，再优先选择原始 importance 同层的冲突对象
 
   # 检索配置
   retrieval:
     top_k: 3
+
+  # Core 常驻记忆容量。Token 使用与上下文模块一致的轻量估算，
+  # 超限时只把最久未进入或更新的非保护 Core 降级为普通向量记忆，不删除、不重算 Embedding。
+  core_capacity:
+    enabled: true
+    max_items: 50
+    max_tokens: 1500
+    protected_patterns:
+      - "过敏|忌口|禁忌|不能吃|不可食用"
+      - "叫我|称呼我|称呼为|别叫我|不要叫我"
+      - "明确边界|底线|禁止|绝对不要|不希望(?:你|风堇)"
 
   # 核心记忆视图文件路径
   core_file: "data/memory/core_memory.md"

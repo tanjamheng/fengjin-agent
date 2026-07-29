@@ -350,6 +350,49 @@ class StateAnalyzerTests(unittest.TestCase):
 
 
 class MemoryExtractorTests(unittest.TestCase):
+    def test_dedup_searches_all_memory_tiers(self):
+        class _Storage:
+            def __init__(self):
+                self.where = "unset"
+
+            def query(self, **kwargs):
+                self.where = kwargs["where"]
+                return {"distances": [[]]}
+
+        extractor = object.__new__(MemoryExtractor)
+        extractor.config = MemoryConfig()
+        extractor.storage = _Storage()
+        extractor._blacklist = []
+
+        facts = extractor._rule_filter([{
+            "content": "用户喜欢晴天",
+            "type": "semantic",
+            "importance": "high",
+        }])
+
+        self.assertEqual(len(facts), 1)
+        self.assertIsNone(extractor.storage.where)
+
+    def test_high_duplicate_of_demoted_memory_reaches_writer(self):
+        class _Storage:
+            def query(self, **_kwargs):
+                return {
+                    "distances": [[0.01]],
+                    "metadatas": [[{"is_core": 0, "importance": "high"}]],
+                }
+
+        extractor = object.__new__(MemoryExtractor)
+        extractor.config = MemoryConfig()
+        extractor.storage = _Storage()
+        extractor._blacklist = []
+        fact = {
+            "content": "用户不希望被叫老板",
+            "type": "semantic",
+            "importance": "high",
+        }
+
+        self.assertEqual(extractor._rule_filter([fact]), [fact])
+
     def test_json_object_falls_back_to_prompt_only(self):
         unsupported = BadRequestError(
             "response_format is not supported",
@@ -632,6 +675,7 @@ class MindManagerBoundaryTests(unittest.TestCase):
         fact = {"content": "用户生日是今天", "type": "episodic", "importance": "high"}
         with tempfile.TemporaryDirectory() as tmp:
             writer = object.__new__(MemoryWriter)
+            writer.config = MemoryConfig(core_capacity={"enabled": False})
             writer._dump_path = Path(tmp) / "pending_facts.json"
             writer._wal_lock = threading.RLock()
             record = {"task_id": "task-1", "fact": fact, "stage": "storage"}
@@ -695,6 +739,352 @@ class MindManagerBoundaryTests(unittest.TestCase):
         self.assertEqual(len(client.chat.completions.calls), 3)
         self.assertEqual(writer.storage.added, [])
         self.assertEqual(writer.storage.upserted, [])
+
+    def test_core_capacity_demotes_oldest_unprotected_without_reembedding(self):
+        class _Storage:
+            def __init__(self):
+                self.records = {
+                    "protected": {
+                        "content": "用户对花生过敏",
+                        "metadata": {
+                            "is_core": 1, "type": "semantic",
+                            "created_at": "2026-01-01T00:00:00",
+                        },
+                    },
+                    "old": {
+                        "content": "用户最喜欢晴天",
+                        "metadata": {
+                            "is_core": 1, "type": "semantic",
+                            "created_at": "2026-01-02T00:00:00",
+                        },
+                    },
+                    "new": {
+                        "content": "用户希望以后去看海",
+                        "metadata": {
+                            "is_core": 1, "type": "semantic",
+                            "created_at": "2026-01-03T00:00:00",
+                        },
+                    },
+                }
+                self.metadata_updates = []
+
+            def get_by_metadata(self, **_kwargs):
+                ids = list(self.records)
+                return {
+                    "ids": ids,
+                    "documents": [self.records[item]["content"] for item in ids],
+                    "metadatas": [
+                        dict(self.records[item]["metadata"]) for item in ids
+                    ],
+                }
+
+            def update_metadata(self, memory_id, metadata):
+                self.metadata_updates.append((memory_id, dict(metadata)))
+                self.records[memory_id]["metadata"] = dict(metadata)
+
+            def upsert(self, **_kwargs):
+                raise AssertionError("容量降级不得提交 Document 或重算 Embedding")
+
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig(core_capacity={
+            "max_items": 2,
+            "max_tokens": 10_000,
+            "protected_patterns": ["过敏"],
+        })
+        writer.storage = _Storage()
+        writer.log = get_logger("memory_core_capacity_test")
+
+        writer._enforce_core_capacity()
+
+        self.assertEqual(
+            writer.storage.records["protected"]["metadata"]["protected"], 1
+        )
+        self.assertEqual(writer.storage.records["protected"]["metadata"]["is_core"], 1)
+        self.assertEqual(writer.storage.records["old"]["metadata"]["is_core"], 0)
+        self.assertEqual(writer.storage.records["new"]["metadata"]["is_core"], 1)
+        self.assertIn("demoted_at", writer.storage.records["old"]["metadata"])
+
+    def test_core_capacity_token_limit_keeps_protected_overflow(self):
+        class _Storage:
+            def __init__(self):
+                self.records = {
+                    "protected": {
+                        "content": "用户有明确边界：绝对不要叫用户老板",
+                        "metadata": {
+                            "is_core": 1, "protected": 1,
+                            "type": "semantic",
+                            "created_at": "2026-01-01T00:00:00",
+                        },
+                    },
+                    "ordinary": {
+                        "content": "用户喜欢在晴天散步",
+                        "metadata": {
+                            "is_core": 1, "protected": 0,
+                            "type": "semantic",
+                            "created_at": "2026-01-02T00:00:00",
+                        },
+                    },
+                }
+
+            def get_by_metadata(self, **_kwargs):
+                ids = list(self.records)
+                return {
+                    "ids": ids,
+                    "documents": [self.records[item]["content"] for item in ids],
+                    "metadatas": [
+                        dict(self.records[item]["metadata"]) for item in ids
+                    ],
+                }
+
+            def update_metadata(self, memory_id, metadata):
+                self.records[memory_id]["metadata"] = dict(metadata)
+
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig(core_capacity={
+            "max_items": 50,
+            "max_tokens": 1,
+            "protected_patterns": [],
+        })
+        writer.storage = _Storage()
+        writer.log = get_logger("memory_core_token_capacity_test")
+
+        writer._enforce_core_capacity()
+
+        self.assertEqual(
+            writer.storage.records["protected"]["metadata"]["is_core"], 1
+        )
+        self.assertEqual(
+            writer.storage.records["ordinary"]["metadata"]["is_core"], 0
+        )
+
+    def test_high_fact_repromotes_matching_demoted_memory(self):
+        class _Storage:
+            def __init__(self):
+                self.updated = None
+
+            def query(self, **_kwargs):
+                return {
+                    "ids": [["old-id"]],
+                    "distances": [[0.01]],
+                }
+
+            def get(self, **_kwargs):
+                return {
+                    "documents": ["用户不希望风堇叫自己老板"],
+                    "metadatas": [{
+                        "is_core": 0,
+                        "protected": 0,
+                        "importance": "high",
+                        "type": "semantic",
+                        "created_at": "2026-01-01T00:00:00",
+                    }],
+                }
+
+            def update_metadata(self, memory_id, metadata):
+                self.updated = {"memory_id": memory_id, "metadata": metadata}
+
+            def upsert(self, **_kwargs):
+                raise AssertionError("重复事实提升只能更新 Metadata")
+
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig(core_capacity={
+            "protected_patterns": ["不希望(?:你|风堇)"],
+        })
+        writer.storage = _Storage()
+
+        applied = writer._apply_fact_storage({
+            "content": "用户不希望风堇称呼自己为老板",
+            "type": "semantic",
+            "importance": "high",
+        })
+
+        self.assertTrue(applied)
+        metadata = writer.storage.updated["metadata"]
+        self.assertEqual(metadata["is_core"], 1)
+        self.assertEqual(metadata["importance"], "high")
+        self.assertEqual(metadata["protected"], 1)
+
+    def test_existing_core_duplicate_prevents_second_core_promotion(self):
+        class _Storage:
+            def query(self, **_kwargs):
+                return {
+                    "ids": [["demoted-id", "core-id"]],
+                    "distances": [[0.01, 0.02]],
+                    "metadatas": [[
+                        {"is_core": 0, "importance": "high"},
+                        {"is_core": 1, "importance": "high"},
+                    ]],
+                }
+
+            def get(self, **_kwargs):
+                raise AssertionError("已有 Core 重复时不应提升另一条记录")
+
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig()
+        writer.storage = _Storage()
+
+        applied = writer._apply_fact_storage({
+            "content": "用户不希望被叫老板",
+            "type": "semantic",
+            "importance": "high",
+        })
+
+        self.assertTrue(applied)
+
+    def test_conflict_pool_prefers_matching_importance_over_nearer_core(self):
+        class _Storage:
+            def __init__(self):
+                self.updated = None
+
+            def query(self, **kwargs):
+                self.asserted_n_results = kwargs["n_results"]
+                return {
+                    "ids": [["core-id", "ordinary-id"]],
+                    "distances": [[0.11, 0.12]],
+                    "metadatas": [[
+                        {"is_core": 1, "importance": "high"},
+                        {"is_core": 0, "importance": "low"},
+                    ]],
+                }
+
+            def get(self, ids, **_kwargs):
+                self.last_get_id = ids[0]
+                return {
+                    "documents": ["用户最近不喝咖啡"],
+                    "metadatas": [{
+                        "is_core": 0,
+                        "importance": "low",
+                        "type": "semantic",
+                        "created_at": "2026-01-01T00:00:00",
+                    }],
+                }
+
+            def upsert(self, **kwargs):
+                self.updated = kwargs
+
+            def add(self, **_kwargs):
+                raise AssertionError("应合并同 importance 候选，而不是新增")
+
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig()
+        writer.storage = _Storage()
+        writer._llm_merge = lambda _old, new: new
+
+        applied = writer._apply_fact_storage({
+            "content": "用户这周不喝咖啡",
+            "type": "semantic",
+            "importance": "low",
+        })
+
+        self.assertTrue(applied)
+        self.assertEqual(writer.storage.asserted_n_results, 3)
+        self.assertEqual(writer.storage.last_get_id, "ordinary-id")
+        self.assertEqual(writer.storage.updated["memory_id"], "ordinary-id")
+
+    def test_recently_promoted_core_is_not_immediately_demoted(self):
+        class _Storage:
+            def __init__(self):
+                self.records = {
+                    "promoted": {
+                        "content": "用户喜欢晴天",
+                        "metadata": {
+                            "is_core": 1, "importance": "high",
+                            "core_touched_at": "2026-04-01T00:00:00",
+                            "created_at": "2025-01-01T00:00:00",
+                        },
+                    },
+                    "stale": {
+                        "content": "用户喜欢散步",
+                        "metadata": {
+                            "is_core": 1, "importance": "high",
+                            "core_touched_at": "2026-01-01T00:00:00",
+                            "created_at": "2026-01-01T00:00:00",
+                        },
+                    },
+                    "newer": {
+                        "content": "用户喜欢看海",
+                        "metadata": {
+                            "is_core": 1, "importance": "high",
+                            "core_touched_at": "2026-03-01T00:00:00",
+                            "created_at": "2026-03-01T00:00:00",
+                        },
+                    },
+                }
+
+            def get_by_metadata(self, **_kwargs):
+                ids = list(self.records)
+                return {
+                    "ids": ids,
+                    "documents": [self.records[item]["content"] for item in ids],
+                    "metadatas": [
+                        dict(self.records[item]["metadata"]) for item in ids
+                    ],
+                }
+
+            def update_metadata(self, memory_id, metadata):
+                self.records[memory_id]["metadata"] = dict(metadata)
+
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig(core_capacity={
+            "max_items": 2,
+            "max_tokens": 10_000,
+            "protected_patterns": [],
+        })
+        writer.storage = _Storage()
+        writer.log = get_logger("memory_core_touch_test")
+
+        writer._enforce_core_capacity()
+
+        self.assertEqual(
+            writer.storage.records["promoted"]["metadata"]["is_core"], 1
+        )
+        self.assertEqual(
+            writer.storage.records["stale"]["metadata"]["is_core"], 0
+        )
+
+    def test_conflict_insert_branches_keep_wal_memory_id(self):
+        class _Storage:
+            def __init__(self):
+                self.old_is_core = True
+                self.added_ids = []
+
+            def get(self, **_kwargs):
+                return {
+                    "documents": ["旧事实"],
+                    "metadatas": [{
+                        "is_core": int(self.old_is_core),
+                        "importance": "high" if self.old_is_core else "low",
+                        "type": "semantic",
+                        "created_at": "2026-01-01T00:00:00",
+                    }],
+                }
+
+            def add(self, **kwargs):
+                self.added_ids.append(kwargs["memory_id"])
+
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig()
+        writer.storage = _Storage()
+
+        writer._resolve_conflict(
+            "old-core",
+            {"content": "低重要性事实", "type": "semantic", "importance": "low"},
+            is_core=False,
+            memory_id="wal-low-vs-core",
+        )
+        writer.storage.old_is_core = False
+        writer._llm_merge = lambda _old, _new: "NO_MERGE"
+        writer._resolve_conflict(
+            "old-low",
+            {"content": "独立事实", "type": "semantic", "importance": "low"},
+            is_core=False,
+            memory_id="wal-no-merge",
+        )
+
+        self.assertEqual(
+            writer.storage.added_ids,
+            ["wal-low-vs-core", "wal-no-merge"],
+        )
 
     def test_state_worker_reads_latest_state_when_each_task_is_consumed(self):
         class _State:

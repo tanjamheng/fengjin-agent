@@ -71,7 +71,7 @@
 | 羁绊状态机 | 四维羁绊 + 分维度 change clamp（W .04/T .02/F .04/H .03）+ 接近度/时间衰减；接收心智模型 JSON 目标值并注入后续 user message |
 | 角色漂移检测 | bge-m3 余弦相似度+EWMA平滑，低于阈值自动注入锚点到user message；会话切换时reset_state()清空漂移状态 |
 | RAG 知识库 | 6 步管道检索风堇相关知识，LLM 自主决定调用时机 |
-| 记忆系统 | 跨会话记住用户信息，双存储（core_memory.md + ChromaDB），异步提取 |
+| 记忆系统 | 跨会话记住用户信息，双存储（core_memory.md + ChromaDB），异步提取；全库 Top-3 候选冲突消解；Core 默认 50 条/约 1500 Token，保护事实保留，超限时按 `core_touched_at` 将最久未进入或更新 Core 的事实降级为普通记忆 |
 | 安全护栏 | 两级检测（规则引擎 + Llama Guard 3 1B），11 类拦截，Comfort 安抚模式 |
 | 会话管理 | JSON 原子写入，14 个 CLI 命令（含会话、知识库管理、调试） |
 | WebSocket API | FastAPI + /ws 端点，流式推送 + 取消控制（前端联调用） |
@@ -197,7 +197,7 @@ Preload 只暴露窗口控制 API（最小化/最大化/关闭/置顶）。渲�
 | Tool Calling | LLM 自主决定调用工具的能力——本项目上限 5 轮 |
 | StreamController | 流式取消机制——协作式 cancel flag + task.cancel() 兜底 |
 | StreamInterrupted | 流式中断异常——客户端断连时 on_token 回调抛出，Agent.chat() 保留部分回复不回滚 |
-| Core Memory | 核心记忆——从对话中提取的用户长期信息，存储在 core_memory.md + ChromaDB |
+| Core Memory | 核心记忆——从对话中提取并每轮注入的用户长期信息；ChromaDB 为权威源、core_memory.md 为派生视图，默认受 50 条/约 1500 Token 容量限制，保护事实不因容量降级 |
 | MindManager | 应用级心智协调器——统一控制记忆、情绪、羁绊，管理记忆提取与状态分析两个后台调用、状态 FIFO Worker、热更新和失败降级 |
 | BlockedError | 安全拦截异常——安全检测 BLOCK 时由 Agent.chat() 抛出，CLI/WS 各自捕获展示 |
 | FENGJIN_LAUNCHER_MODE | 启动器模式标记——Electron spawn 后端时设为 1，后端看到后 stdout 专用于 JSON 进度行、日志只写文件 |
