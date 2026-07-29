@@ -79,7 +79,7 @@ class SessionManager:
 
     # ── 消息操作（只改内存）─────────────────────────────────
 
-    def append_message(self, role: str, content: str, metadata: Optional[MessageMeta] = None) -> None:
+    def append_message(self, role: str, content: str, metadata: Optional[MessageMeta] = None) -> Message:
         """追加消息到当前会话（只改内存，不落盘）
 
         自动用第一条用户消息前 20 字作为默认标题。
@@ -96,7 +96,7 @@ class SessionManager:
             if auto_title:
                 self.current_session.title = auto_title
 
-        self.current_session.add_message(role, content, metadata)
+        return self.current_session.add_message(role, content, metadata)
 
     def flush(self) -> None:
         """显式落盘：把当前会话写入文件"""
@@ -110,12 +110,18 @@ class SessionManager:
             return self.current_session.session_id
         return None
 
-    def get_current_messages(self, *, raw_user_content: bool = False) -> list[dict]:
-        """获取当前会话消息；心智链路可选择用户原话而非 Skill 增强文本。"""
+    def get_current_messages(
+        self,
+        *,
+        raw_user_content: bool = False,
+        include_timestamp: bool = False,
+    ) -> list[dict]:
+        """获取当前会话消息；时间戳仅在心智链路显式请求时附带。"""
         if not self.current_session:
             return []
-        return [
-            {
+        messages = []
+        for msg in self.current_session.messages:
+            item = {
                 "role": msg.role,
                 "content": (
                     msg.metadata.raw_content
@@ -123,8 +129,10 @@ class SessionManager:
                     else msg.content
                 ),
             }
-            for msg in self.current_session.messages
-        ]
+            if include_timestamp:
+                item["timestamp"] = msg.timestamp.isoformat()
+            messages.append(item)
+        return messages
 
     def get_recent_messages(self, n: int = 10) -> list[Message]:
         """获取当前会话最近 N 条消息"""

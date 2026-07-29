@@ -10,15 +10,26 @@
 6. 事实只能来自最新一轮“用户”明确说出的内容；风堇的回复只是上下文，不是事实来源
 7. 用户的问题、请求、假设和风堇自行补充的故事不能当作用户事实；不得把风堇生成的细节写入记忆
 8. 每条事实必须提供 evidence，且必须逐字复制最新一轮用户原话中的连续片段；无法提供就不要提取
+9. 最新一轮用户消息会附带发生时间。原话中的“今天、昨天、明天、今年、最近、目前”等相对时间，必须在 content 中换算成绝对日期或带日期的阶段描述，不能原样保存；evidence 仍逐字保留用户原话
+10. 不得根据相对日期凭空推断用户没有说过的信息。例如“今天是我生日”只能确定生日的月日，不能推断出生年份
 
 重要性判断：
 - high：过敏、禁忌、核心偏好、身份信息、重要事件 → 必须始终记住
 - low：日常习惯、近期状态、一般性偏好 → 按需检索即可
 
 返回 JSON：
-{"facts": [{"content": "...", "evidence": "最新一轮用户原话中的连续片段", "type": "semantic|episodic", "importance": "high|low"}]}
+{"facts": [{"content": "...", "evidence": "最新一轮用户原话中的连续片段", "type": "semantic|episodic", "importance": "high|low", "event_time": "YYYY-MM-DD或null", "time_scope": "timeless|recurring|temporary|event"}]}
 无值得记住的内容时返回：{"facts": []}
 
 type 说明：
 - semantic：一般性知识/偏好（不依赖具体时间地点，如"灰宝喜欢草莓蛋糕"）
 - episodic：具体事件/经历（发生在特定时间和场景，如"灰宝昨天去了图书馆"）
+
+time_scope 说明：
+- timeless：不依赖具体日期的长期事实，如“灰宝喜欢草莓蛋糕”；event_time 设为 null
+- recurring：按周期重复的事实，如生日、纪念日；content 写成“灰宝的生日是7月29日”，event_time 写本次对应的完整日期
+- temporary：只在一段时间内成立的近期状态，如“灰宝在2026年7月29日心情低落”
+- event：已经发生的一次性事件，如“灰宝在2026年7月28日去了图书馆”
+
+示例：若最新用户消息发生在 2026-07-29，用户说“今天是我生日”，应输出：
+{"facts": [{"content": "灰宝的生日是7月29日", "evidence": "今天是我生日", "type": "semantic", "importance": "high", "event_time": "2026-07-29", "time_scope": "recurring"}]}

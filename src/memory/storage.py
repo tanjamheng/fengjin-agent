@@ -15,7 +15,8 @@ class MemoryStorage:
       - documents: 记忆文本
       - ids: 唯一标识
       - metadatas: {is_core: int, protected: int, importance: str, type: str,
-                    created_at: str, updated_at: str?, core_touched_at: str?}
+                    created_at: str, source_timestamp: str?, event_time: str?,
+                    time_scope: str, updated_at: str?, core_touched_at: str?}
 
     通过 chroma_registry 与 RAG DenseIndex 共享同一个 PersistentClient，
     避免重复创建 SQLite 连接和 HNSW 索引元数据。
@@ -99,7 +100,10 @@ class MemoryStorage:
 
     def add(self, memory_id: str, content: str, is_core: bool,
             memory_type: str, protected: bool = False,
-            importance: str | None = None) -> None:
+            importance: str | None = None,
+            source_timestamp: str | None = None,
+            event_time: str | None = None,
+            time_scope: str = "timeless") -> None:
         """添加一条记忆"""
         # WAL 重放可能在 Chroma 已提交、确认记录尚未删除的窗口发生。
         # 使用确定 ID 的 upsert 使该窗口幂等，不产生重复记忆。
@@ -110,7 +114,12 @@ class MemoryStorage:
             "importance": importance or ("high" if is_core else "low"),
             "type": memory_type,
             "created_at": now,
+            "time_scope": time_scope,
         }
+        if source_timestamp:
+            metadata["source_timestamp"] = source_timestamp
+        if event_time:
+            metadata["event_time"] = event_time
         if is_core:
             metadata["core_touched_at"] = now
         self.collection.upsert(

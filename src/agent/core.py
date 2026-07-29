@@ -207,7 +207,8 @@ class Agent:
             logger.info("Skill 注入完成 ({:.0f}ms)", t_skill)
 
         # 2. 用户消息入历史（无论安全判定如何，核心1 2.5）
-        self.session_mgr.append_message("user", user_input)
+        user_message = self.session_mgr.append_message("user", user_input)
+        user_message_timestamp = user_message.timestamp.isoformat()
         logger.debug("用户原始消息已入历史 ({} chars)", len(user_input))
 
         # 提前创建 controller + 赋值，消除 cancel 信号丢失窗口
@@ -261,6 +262,10 @@ class Agent:
             if self.context_manager:
                 api_input, memory_used = self.context_manager.build_input_with_metadata(
                     api_input, trace_id=self.trace_id
+                )
+                api_input = _prepend_temporal_context(
+                    api_input,
+                    self.context_manager.build_temporal_context(),
                 )
             t_memory = (time.monotonic() - t_memory_start) * 1000
             logger.info("心智注入+上下文组装完成 ({:.0f}ms)", t_memory)
@@ -488,12 +493,19 @@ class Agent:
                 self.session_mgr.flush()
                 if self.mind_manager:
                     self.mind_manager.submit(
-                        self.session_mgr.get_current_messages(raw_user_content=True), self.trace_id,
+                        self.session_mgr.get_current_messages(
+                            raw_user_content=True,
+                            include_timestamp=True,
+                        ),
+                        self.trace_id,
                         self.on_mind_warning, include_state=False,
                     )
                 elif self.memory_manager:
                     self.memory_manager.extract_async(
-                        user_input, combined, trace_id=self.trace_id
+                        user_input,
+                        combined,
+                        trace_id=self.trace_id,
+                        source_timestamp=user_message_timestamp,
                     )
             raise
         except asyncio.CancelledError:
@@ -558,13 +570,20 @@ class Agent:
         if self.mind_manager and full_text:
             logger.debug("触发异步心智处理")
             self.mind_manager.submit(
-                self.session_mgr.get_current_messages(raw_user_content=True), self.trace_id,
+                self.session_mgr.get_current_messages(
+                    raw_user_content=True,
+                    include_timestamp=True,
+                ),
+                self.trace_id,
                 self.on_mind_warning,
                 include_state=not controller.cancel_requested,
             )
         elif self.memory_manager and full_text:
             self.memory_manager.extract_async(
-                user_input, full_text, trace_id=self.trace_id
+                user_input,
+                full_text,
+                trace_id=self.trace_id,
+                source_timestamp=user_message_timestamp,
             )
         elif self.memory_manager:
             logger.debug("跳过记忆提取: 回复为空")
@@ -660,6 +679,13 @@ class Agent:
 
 
 # ── 模块级工具函数 ──────────────────────────────────────────
+
+def _prepend_temporal_context(current_input: str, temporal_context: str) -> str:
+    """把运行时时间放入本轮 user message，不污染 system prompt 或会话历史。"""
+    if not temporal_context:
+        return current_input
+    return f"{temporal_context}\n\n{current_input}"
+
 
 def _build_api_messages(
     session_mgr: SessionManager,

@@ -102,10 +102,19 @@ class MemoryMergeConfig(BaseModel):
     template: str = "{memory}\n\n{input}"
 
 
+class TemporalContextConfig(BaseModel):
+    """运行时时间上下文配置"""
+    enabled: bool = True
+    timezone_label: str = "Asia/Shanghai"
+    utc_offset_minutes: int = 480
+    include_clock: bool = True
+
+
 class ContextConfig(BaseModel):
     """上下文管理配置"""
     sliding_window: SlidingWindowConfig = SlidingWindowConfig()
     memory: MemoryMergeConfig = MemoryMergeConfig()
+    temporal: TemporalContextConfig = TemporalContextConfig()
 
 
 class ContextSettings(BaseModel):

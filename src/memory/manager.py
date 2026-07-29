@@ -21,6 +21,7 @@ class _ConversationTask:
     task_id: str
     conversation_text: str
     trace_id: str
+    source_timestamp: str | None
     on_model_failure: Optional[Callable[[bool, bool], None]]
     should_apply: Optional[Callable[[], bool]]
 
@@ -97,7 +98,7 @@ class MemoryManager:
         return self.retriever.retrieve(user_input, trace_id=trace_id)
 
     def extract_async(self, user_input: str, assistant_message: str,
-                      trace_id: str = "") -> None:
+                      trace_id: str = "", source_timestamp: str | None = None) -> None:
         """异步提取记忆并写入（不阻塞主流程）"""
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
 
@@ -105,7 +106,12 @@ class MemoryManager:
             t_start = time.time()
             try:
                 log.debug("异步记忆提取开始")
-                facts = self.extractor.extract(user_input, assistant_message, trace_id=trace_id)
+                facts = self.extractor.extract(
+                    user_input,
+                    assistant_message,
+                    trace_id=trace_id,
+                    source_timestamp=source_timestamp,
+                )
                 t_extract = (time.time() - t_start) * 1000
                 if facts:
                     if self.writer._running:
@@ -129,7 +135,8 @@ class MemoryManager:
 
     def extract_conversation_async(self, conversation_text: str,
                                    trace_id: str = "", on_model_failure=None,
-                                   should_apply=None) -> None:
+                                   should_apply=None,
+                                   source_timestamp: str | None = None) -> None:
         """提交到独立 FIFO Worker；与状态分析并行，但记忆轮次不乱序。"""
         if self._conversation_stop.is_set():
             self.log.warning("记忆提取任务提交跳过: Worker 已停止")
@@ -138,6 +145,7 @@ class MemoryManager:
             task_id=uuid.uuid4().hex[:8],
             conversation_text=conversation_text,
             trace_id=trace_id,
+            source_timestamp=source_timestamp,
             on_model_failure=on_model_failure,
             should_apply=should_apply,
         )
@@ -174,6 +182,7 @@ class MemoryManager:
                         task.conversation_text,
                         trace_id=task.trace_id,
                         runtime_lease=lease,
+                        source_timestamp=task.source_timestamp,
                     )
                 elapsed = (time.time() - t_start) * 1000
                 if facts and not _can_apply(task.should_apply):

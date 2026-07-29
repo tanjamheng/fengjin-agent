@@ -1,6 +1,7 @@
 """多轮对话上下文管理器"""
 
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Protocol
 
 from ..config import ContextConfig
@@ -24,6 +25,29 @@ class ContextManager:
         self.config = config
         self.memory_retriever = memory_retriever
         self.log = get_logger("context")
+
+    def build_temporal_context(self, now: Optional[datetime] = None) -> str:
+        """生成仅供本轮模型使用的当前时间基准，不写入会话历史。"""
+        temporal = self.config.temporal
+        if not temporal.enabled:
+            return ""
+        target_timezone = timezone(timedelta(minutes=temporal.utc_offset_minutes))
+        current = now or datetime.now(target_timezone)
+        if current.tzinfo is None:
+            current = current.astimezone()
+        current = current.astimezone(target_timezone)
+        weekdays = "一二三四五六日"
+        date_text = (
+            f"{current.year}年{current.month}月{current.day}日，"
+            f"星期{weekdays[current.weekday()]}"
+        )
+        if temporal.include_clock:
+            date_text += f"，{current:%H:%M}"
+        return (
+            "[当前时间]\n"
+            f"当前日期时间：{date_text}；时区：{temporal.timezone_label}。\n"
+            "解释“今天、昨天、明天”等相对时间时，以此时间为准。"
+        )
 
     def build_input(self, user_input: str, trace_id: str = "") -> str:
         """组装当前轮的 user message

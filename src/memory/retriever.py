@@ -1,6 +1,8 @@
 """记忆检索"""
 
+import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 from ..utils.logger import get_logger
@@ -87,26 +89,80 @@ class MemoryRetriever:
     def _search_db(self, user_input: str) -> str:
         """从 ChromaDB 检索相关记忆"""
         # 空 collection 跳过：避免无意义的嵌入计算 + 向量搜索
-        if self.storage.count() == 0:
+        total_memories = self.storage.count()
+        if total_memories == 0:
             return ""
         # 极短输入跳过：单字或空输入不太可能匹配到有意义的记忆
         if len(user_input.strip()) < 2:
             return ""
 
         top_k = self.config.retrieval.top_k
+        candidate_count = min(
+            total_memories,
+            top_k * self.config.retrieval.candidate_multiplier,
+        )
 
         results = self.storage.query(
             text=user_input,
-            n_results=top_k,
+            n_results=candidate_count,
             where={"is_core": 0}
         )
 
         if not results["documents"] or not results["documents"][0]:
             return ""
 
+        distances = (results.get("distances") or [[]])[0]
+        candidates = []
+        for index, (doc, meta) in enumerate(zip(
+            results["documents"][0], results["metadatas"][0]
+        )):
+            base_distance = (
+                distances[index] if index < len(distances) else index * 1e-9
+            )
+            adjusted_distance = base_distance + self._temporary_age_penalty(meta)
+            candidates.append((adjusted_distance, index, doc, meta))
+        candidates.sort(key=lambda item: (item[0], item[1]))
+
         entries = []
-        for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
+        for _, _, doc, meta in candidates[:top_k]:
             type_label = "情景" if meta.get("type") == "episodic" else "语义"
-            entries.append(f"- ({type_label}) {doc}")
+            scope_labels = {
+                "recurring": "周期性",
+                "temporary": "阶段性",
+                "event": "一次性事件",
+            }
+            scope_label = scope_labels.get(meta.get("time_scope"))
+            if scope_label:
+                type_label += f"，{scope_label}"
+            source_time = meta.get("source_timestamp") or meta.get("created_at", "")
+            source_date = str(source_time).split("T", 1)[0] if source_time else ""
+            date_label = f"，记录于 {source_date}" if source_date else ""
+            if source_date and re.search(
+                r"今天|今日|昨天|昨日|明天|明日|前天|后天", doc
+            ):
+                date_label += "，正文相对时间以该日期为准"
+            entries.append(f"- ({type_label}{date_label}) {doc}")
 
         return "\n".join(entries)
+
+    def _temporary_age_penalty(self, metadata: dict) -> float:
+        """旧临时状态逐日降权，但不删除，明确询问往事时仍可召回。"""
+        if metadata.get("time_scope") != "temporary":
+            return 0.0
+        reference = (
+            metadata.get("event_time")
+            or metadata.get("source_timestamp")
+            or metadata.get("created_at")
+        )
+        if not reference:
+            return 0.0
+        try:
+            event_date = datetime.fromisoformat(str(reference)).date()
+        except ValueError:
+            return 0.0
+        age_days = max(0, (datetime.now().astimezone().date() - event_date).days)
+        retrieval = self.config.retrieval
+        return min(
+            retrieval.temporary_max_penalty,
+            age_days * retrieval.temporary_decay_per_day,
+        )

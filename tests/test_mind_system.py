@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -16,17 +17,21 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from openai import BadRequestError
 
-from src.agent.context_manager import estimate_messages_tokens
-from src.agent.core import _build_api_messages
+from src.agent.context_manager import ContextManager, estimate_messages_tokens
+from src.agent.core import _build_api_messages, _prepend_temporal_context
+from src.config import ContextConfig
 from src.mind.config import MindConfig, MindSettings
-from src.mind.context_builder import normalize_turns
+from src.mind.context_builder import format_turns, normalize_turns
 from src.mind.manager import MindManager
 from src.mind.model_runtime import MindModelRuntime
 from src.mind.state_analyzer import StateAnalysisResult, StateAnalyzer
-from src.memory.writer import MemoryWriter
+from src.memory.writer import MemoryWriter, _format_core_memory_line
 from src.memory.manager import MemoryManager
 from src.memory.extractor import MemoryExtractor
 from src.memory.config import MemoryConfig
+from src.memory.retriever import MemoryRetriever
+from src.memory.storage import MemoryStorage
+from src.memory.temporal import canonical_event_date
 from src.server.config_manager import ConfigManager
 from src.ws.connection import _apply_config_update
 from src.session import MessageMeta, SessionManager
@@ -208,6 +213,41 @@ class MindModelRuntimeTests(unittest.TestCase):
 
 
 class MindContextTests(unittest.TestCase):
+    def test_temporal_context_uses_configured_label_and_current_datetime(self):
+        manager = ContextManager(ContextConfig())
+        current = datetime(
+            2026, 7, 29, 1, 30,
+            tzinfo=timezone.utc,
+        )
+
+        context = manager.build_temporal_context(current)
+
+        self.assertIn("2026年7月29日，星期三，09:30", context)
+        self.assertIn("Asia/Shanghai", context)
+        self.assertIn("今天、昨天、明天", context)
+
+    def test_temporal_context_is_current_user_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = SessionManager(data_dir=tmp)
+            manager.append_message("user", "今天是我生日")
+            enhanced_input = _prepend_temporal_context(
+                "今天是我生日",
+                "[当前时间]\n当前日期时间：2026年7月29日，星期三。",
+            )
+
+            api_messages = _build_api_messages(
+                manager,
+                enhanced_input,
+                "固定 system prompt",
+            )
+
+            self.assertNotIn("[当前时间]", api_messages[0]["content"])
+            self.assertIn("[当前时间]", api_messages[-1]["content"])
+            self.assertEqual(
+                manager.get_current_messages()[0]["content"],
+                "今天是我生日",
+            )
+
     def test_skill_prompt_is_current_turn_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             manager = SessionManager(data_dir=tmp)
@@ -222,8 +262,16 @@ class MindContextTests(unittest.TestCase):
             )
 
             self.assertEqual(api_messages[-1]["content"], enhanced_input)
+            self.assertTrue(
+                all("timestamp" not in message for message in api_messages)
+            )
             self.assertEqual(manager.get_current_messages()[0]["content"], raw_input)
             self.assertEqual(manager.get_current_messages(raw_user_content=True)[0]["content"], raw_input)
+            self.assertNotIn("timestamp", manager.get_current_messages()[0])
+            self.assertIn(
+                "timestamp",
+                manager.get_current_messages(include_timestamp=True)[0],
+            )
 
             manager.append_message("assistant", "听见你开心，我也很高兴。")
             manager.append_message("user", "下一轮")
@@ -250,6 +298,28 @@ class MindContextTests(unittest.TestCase):
         self.assertEqual(len(turns), 2)
         self.assertEqual(turns[0]["assistant"], "小伊卡能替我照看庭院。")
         self.assertNotIn("不应进入", json.dumps(turns, ensure_ascii=False))
+
+    def test_user_timestamp_reaches_formatted_mind_context(self):
+        messages = [
+            {
+                "role": "user",
+                "content": "今天是我生日",
+                "timestamp": "2026-07-29T09:30:00+08:00",
+            },
+            {"role": "assistant", "content": "生日快乐，灰宝。"},
+        ]
+
+        turns = normalize_turns(messages, max_turns=3, max_tokens=50_000)
+        formatted = format_turns(turns)
+
+        self.assertEqual(
+            turns[0]["user_timestamp"],
+            "2026-07-29T09:30:00+08:00",
+        )
+        self.assertIn(
+            "用户消息时间：2026-07-29T09:30:00+08:00",
+            formatted,
+        )
 
     def test_token_budget_drops_old_complete_turns(self):
         messages = []
@@ -350,6 +420,35 @@ class StateAnalyzerTests(unittest.TestCase):
 
 
 class MemoryExtractorTests(unittest.TestCase):
+    def test_storage_persists_source_and_event_time_metadata(self):
+        captured = {}
+
+        class _Collection:
+            def upsert(self, **kwargs):
+                captured.update(kwargs)
+
+        storage = object.__new__(MemoryStorage)
+        storage.collection = _Collection()
+        storage.add(
+            memory_id="birthday",
+            content="灰宝的生日是7月29日",
+            is_core=True,
+            memory_type="semantic",
+            importance="high",
+            source_timestamp="2026-07-29T09:30:00+08:00",
+            event_time="2026-07-29",
+            time_scope="recurring",
+        )
+
+        metadata = captured["metadatas"][0]
+        self.assertEqual(
+            metadata["source_timestamp"],
+            "2026-07-29T09:30:00+08:00",
+        )
+        self.assertEqual(metadata["event_time"], "2026-07-29")
+        self.assertEqual(metadata["time_scope"], "recurring")
+        self.assertIn("created_at", metadata)
+
     def test_dedup_searches_all_memory_tiers(self):
         class _Storage:
             def __init__(self):
@@ -389,6 +488,32 @@ class MemoryExtractorTests(unittest.TestCase):
             "content": "用户不希望被叫老板",
             "type": "semantic",
             "importance": "high",
+        }
+
+        self.assertEqual(extractor._rule_filter([fact]), [fact])
+
+    def test_same_temporary_state_on_different_dates_is_not_deduplicated(self):
+        class _Storage:
+            def query(self, **_kwargs):
+                return {
+                    "distances": [[0.01]],
+                    "metadatas": [[{
+                        "is_core": 0,
+                        "time_scope": "temporary",
+                        "event_time": "2026-07-29",
+                    }]],
+                }
+
+        extractor = object.__new__(MemoryExtractor)
+        extractor.config = MemoryConfig()
+        extractor.storage = _Storage()
+        extractor._blacklist = []
+        fact = {
+            "content": "灰宝在2026年7月30日心情低落",
+            "type": "episodic",
+            "importance": "low",
+            "event_time": "2026-07-30",
+            "time_scope": "temporary",
         }
 
         self.assertEqual(extractor._rule_filter([fact]), [fact])
@@ -445,6 +570,163 @@ class MemoryExtractorTests(unittest.TestCase):
         self.assertEqual(facts[0]["content"], "用户喜欢晴天")
         retry_messages = client.chat.completions.calls[1]["messages"]
         self.assertIn("fact.content必须是字符串", retry_messages[-1]["content"])
+
+    def test_relative_birthday_is_retried_until_absolute_date(self):
+        client = _FakeClient([
+            (
+                '{"facts":[{"content":"灰宝的生日是7月30日","evidence":"今天是我生日",'
+                '"type":"semantic","importance":"high","event_time":"2026-07-30",'
+                '"time_scope":"recurring"}]}'
+            ),
+            (
+                '{"facts":[{"content":"灰宝的生日是7月29日","evidence":"今天是我生日",'
+                '"type":"semantic","importance":"high","event_time":"2026-07-29",'
+                '"time_scope":"recurring"}]}'
+            ),
+        ])
+
+        class _Storage:
+            def query(self, **_kwargs):
+                return {"distances": [[]]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = Path(tmp) / "memory.md"
+            prompt.write_text("只输出JSON", encoding="utf-8")
+            config = MemoryConfig(extraction={"prompt_file": str(prompt)})
+            extractor = MemoryExtractor(
+                config, client, "fake", _Storage(), max_retries=1
+            )
+            facts = extractor.extract_conversation(
+                "第1轮（最新一轮，分析主体）\n"
+                "用户消息时间：2026-07-29T09:30:00+08:00\n"
+                "用户：今天是我生日\n"
+                "风堇：生日快乐，灰宝。",
+                source_timestamp="2026-07-29T09:30:00+08:00",
+            )
+
+        self.assertEqual(facts[0]["content"], "灰宝的生日是7月29日")
+        self.assertEqual(facts[0]["event_time"], "2026-07-29")
+        self.assertEqual(facts[0]["time_scope"], "recurring")
+        self.assertEqual(
+            facts[0]["source_timestamp"],
+            "2026-07-29T09:30:00+08:00",
+        )
+        first_request = client.chat.completions.calls[0]["messages"][1]["content"]
+        self.assertIn("2026-07-29T09:30:00+08:00", first_request)
+        retry_messages = client.chat.completions.calls[1]["messages"]
+        self.assertIn("应为2026-07-29", retry_messages[-1]["content"])
+
+    def test_relative_time_cannot_omit_temporal_fields(self):
+        extractor = object.__new__(MemoryExtractor)
+        payload = (
+            '{"facts":[{"content":"灰宝在过生日","evidence":"今天是我生日",'
+            '"type":"semantic","importance":"high"}]}'
+        )
+
+        facts, error = extractor._parse_and_validate(
+            payload,
+            "今天是我生日",
+            source_timestamp="2026-07-29T09:30:00+08:00",
+        )
+
+        self.assertIsNone(facts)
+        self.assertIn("必须明确提供time_scope和event_time", error)
+
+    def test_compound_last_year_today_uses_last_year_date(self):
+        extractor = object.__new__(MemoryExtractor)
+        payload = (
+            '{"facts":[{"content":"灰宝在2025年7月29日去了医院",'
+            '"evidence":"去年今天我去了医院","type":"episodic",'
+            '"importance":"low","event_time":"2025-07-29","time_scope":"event"}]}'
+        )
+
+        facts, error = extractor._parse_and_validate(
+            payload,
+            "去年今天我去了医院",
+            source_timestamp="2026-07-29T09:30:00+08:00",
+        )
+
+        self.assertEqual(error, "")
+        self.assertEqual(facts[0]["event_time"], "2025-07-29")
+
+    def test_multiple_relative_anchors_do_not_trigger_false_rejection(self):
+        extractor = object.__new__(MemoryExtractor)
+        payload = (
+            '{"facts":[{"content":"灰宝计划在2026年7月29日去医院",'
+            '"evidence":"昨天我决定今天去医院","type":"episodic",'
+            '"importance":"low","event_time":"2026-07-29","time_scope":"event"}]}'
+        )
+
+        facts, error = extractor._parse_and_validate(
+            payload,
+            "昨天我决定今天去医院",
+            source_timestamp="2026-07-29T09:30:00+08:00",
+        )
+
+        self.assertEqual(error, "")
+        self.assertEqual(facts[0]["event_time"], "2026-07-29")
+
+    def test_event_date_normalizes_date_and_datetime_to_same_day(self):
+        self.assertEqual(
+            canonical_event_date("2026-07-29T09:00:00+08:00"),
+            "2026-07-29",
+        )
+        self.assertEqual(canonical_event_date("2026-07-29"), "2026-07-29")
+
+    def test_core_line_anchors_legacy_relative_time_to_record_date(self):
+        line = _format_core_memory_line(
+            "今天是灰宝的生日",
+            {
+                "created_at": "2026-07-29T09:31:00",
+                "time_scope": "timeless",
+            },
+        )
+
+        self.assertIn("记录于 2026-07-29", line)
+        self.assertIn("正文相对时间以记录日期为准", line)
+
+    def test_old_temporary_memory_is_downranked_without_deletion(self):
+        class _Storage:
+            def count(self):
+                return 2
+
+            def query(self, **kwargs):
+                self.n_results = kwargs["n_results"]
+                return {
+                    "documents": [[
+                        "灰宝在2000年1月1日心情低落",
+                        "灰宝喜欢草莓蛋糕",
+                    ]],
+                    "metadatas": [[
+                        {
+                            "type": "episodic",
+                            "time_scope": "temporary",
+                            "event_time": "2000-01-01",
+                            "created_at": "2000-01-01T10:00:00",
+                        },
+                        {
+                            "type": "semantic",
+                            "time_scope": "timeless",
+                            "created_at": "2026-07-01T10:00:00",
+                        },
+                    ]],
+                    "distances": [[0.1, 0.2]],
+                }
+
+        storage = _Storage()
+        config = MemoryConfig(retrieval={
+            "top_k": 1,
+            "candidate_multiplier": 3,
+            "temporary_decay_per_day": 0.02,
+            "temporary_max_penalty": 0.5,
+        })
+        retriever = MemoryRetriever(config, storage)
+
+        result = retriever._search_db("最近喜欢什么")
+
+        self.assertEqual(storage.n_results, 2)
+        self.assertIn("灰宝喜欢草莓蛋糕", result)
+        self.assertNotIn("心情低落", result)
 
     def test_assistant_only_memory_is_rejected_by_user_evidence_check(self):
         client = _FakeClient([
@@ -931,6 +1213,81 @@ class MindManagerBoundaryTests(unittest.TestCase):
 
         self.assertTrue(applied)
 
+    def test_writer_inserts_same_temporary_state_from_a_new_date(self):
+        class _Storage:
+            def __init__(self):
+                self.added = None
+
+            def query(self, **_kwargs):
+                return {
+                    "ids": [["old-state"]],
+                    "distances": [[0.01]],
+                    "metadatas": [[{
+                        "is_core": 0,
+                        "importance": "low",
+                        "time_scope": "temporary",
+                        "event_time": "2026-07-29",
+                    }]],
+                }
+
+            def add(self, **kwargs):
+                self.added = kwargs
+
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig()
+        writer.storage = _Storage()
+
+        applied = writer._apply_fact_storage({
+            "content": "灰宝在2026年7月30日心情低落",
+            "type": "episodic",
+            "importance": "low",
+            "source_timestamp": "2026-07-30T09:00:00+08:00",
+            "event_time": "2026-07-30",
+            "time_scope": "temporary",
+        })
+
+        self.assertTrue(applied)
+        self.assertEqual(
+            writer.storage.added["event_time"],
+            "2026-07-30",
+        )
+
+    def test_writer_treats_date_and_datetime_on_same_day_as_same_occurrence(self):
+        class _Storage:
+            def __init__(self):
+                self.added = None
+
+            def query(self, **_kwargs):
+                return {
+                    "ids": [["old-state"]],
+                    "distances": [[0.01]],
+                    "metadatas": [[{
+                        "is_core": 0,
+                        "importance": "low",
+                        "time_scope": "temporary",
+                        "event_time": "2026-07-29",
+                    }]],
+                }
+
+            def add(self, **kwargs):
+                self.added = kwargs
+
+        writer = object.__new__(MemoryWriter)
+        writer.config = MemoryConfig()
+        writer.storage = _Storage()
+
+        applied = writer._apply_fact_storage({
+            "content": "灰宝在2026年7月29日上午心情低落",
+            "type": "episodic",
+            "importance": "low",
+            "source_timestamp": "2026-07-29T10:00:00+08:00",
+            "event_time": "2026-07-29T09:00:00+08:00",
+            "time_scope": "temporary",
+        })
+
+        self.assertTrue(applied)
+        self.assertIsNone(writer.storage.added)
+
     def test_conflict_pool_prefers_matching_importance_over_nearer_core(self):
         class _Storage:
             def __init__(self):
@@ -1180,7 +1537,10 @@ class MindManagerBoundaryTests(unittest.TestCase):
         processed = []
 
         class _Extractor:
-            def extract_conversation(self, text, trace_id="", runtime_lease=None):
+            def extract_conversation(
+                self, text, trace_id="", runtime_lease=None,
+                source_timestamp=None,
+            ):
                 if text == "first":
                     time.sleep(0.02)
                 return [{"content": text, "type": "semantic", "importance": "low"}]

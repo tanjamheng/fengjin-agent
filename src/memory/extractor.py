@@ -4,16 +4,31 @@ import json
 import re
 import threading
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from openai import BadRequestError, OpenAI
 
 from .config import MemoryConfig, MemorySettings
 from .storage import MemoryStorage
+from .temporal import canonical_event_date
 from ..mind.model_runtime import MindModelRuntime
 from ..utils.logger import get_logger
 
 MAX_PARSE_RETRIES = 3
+_RELATIVE_TIME_PATTERN = re.compile(
+    r"今天|今日|昨天|昨日|明天|明日|前天|后天|"
+    r"这周|本周|上周|下周|这个月|本月|上个月|下个月|"
+    r"今年|去年|明年|现在|目前|最近|近期|刚才|刚刚|这几天|前几天"
+)
+_TIME_SCOPES = {"timeless", "recurring", "temporary", "event"}
+_DIRECT_DAY_OFFSETS = (
+    (re.compile(r"前天"), -2),
+    (re.compile(r"昨天|昨日"), -1),
+    (re.compile(r"后天"), 2),
+    (re.compile(r"明天|明日"), 1),
+    (re.compile(r"今天|今日|现在|目前|刚才|刚刚"), 0),
+)
 
 
 class MemoryModelOutputError(RuntimeError):
@@ -60,50 +75,86 @@ class MemoryExtractor:
                 "5. 事实只能来自最新一轮用户明确说出的内容，风堇回复不是事实来源\n"
                 "6. 问题、请求、假设及风堇自行补充的故事不能当作用户事实\n"
                 "7. evidence 必须逐字复制最新一轮用户原话中的连续片段\n"
+                "8. content 中的相对时间必须依据用户消息时间改写为绝对日期，不能保留“今天/昨天/明天”等说法\n"
                 "重要性判断：high=过敏/禁忌/核心偏好/身份/重要事件（必须记住）；low=日常习惯/近期状态/一般偏好（按需检索）\n"
                 "type说明：semantic=一般性知识/偏好，episodic=具体事件/经历。\n"
-                "返回 JSON：{\"facts\": [{\"content\": \"...\", \"evidence\": \"用户原话\", \"type\": \"semantic|episodic\", \"importance\": \"high|low\"}]}"
+                "time_scope说明：timeless=长期事实，recurring=周期事件，temporary=短期状态，event=一次性事件。\n"
+                "返回 JSON：{\"facts\": [{\"content\": \"...\", \"evidence\": \"用户原话\", \"type\": \"semantic|episodic\", \"importance\": \"high|low\", \"event_time\": \"YYYY-MM-DD或null\", \"time_scope\": \"timeless|recurring|temporary|event\"}]}"
             )
         self._blacklist = [
             re.compile(p) for p in config.filter.blacklist_patterns
         ]
 
-    def extract(self, user_input: str, assistant_message: str, trace_id: str = "") -> list[dict]:
+    def extract(
+        self,
+        user_input: str,
+        assistant_message: str,
+        trace_id: str = "",
+        source_timestamp: str | None = None,
+    ) -> list[dict]:
         """提取记忆，返回过滤后的事实列表
 
         Returns:
             [{"content": str, "type": str, "importance": str}, ...]
         """
         log = self.log.bind(trace_id=trace_id) if trace_id else self.log
-        facts = self._llm_extract(user_input, assistant_message)
+        facts = self._llm_extract(
+            user_input, assistant_message, source_timestamp=source_timestamp
+        )
         if not facts:
             return []
         return self._rule_filter(facts)
 
     def extract_conversation(self, conversation_text: str, trace_id: str = "",
-                             runtime_lease=None) -> list[dict]:
+                             runtime_lease=None,
+                             source_timestamp: str | None = None) -> list[dict]:
         """从归一化后的最近多轮对话提取最新一轮产生的新事实。"""
-        facts = self._llm_extract_text(conversation_text, runtime_lease)
+        facts = self._llm_extract_text(
+            conversation_text,
+            runtime_lease,
+            source_timestamp=source_timestamp,
+        )
         return self._rule_filter(facts) if facts else []
 
-    def _llm_extract(self, user_input: str, assistant_message: str) -> list[dict]:
+    def _llm_extract(
+        self,
+        user_input: str,
+        assistant_message: str,
+        source_timestamp: str | None = None,
+    ) -> list[dict]:
         """调用小模型提取事实，json_object 强制 JSON 输出"""
         conversation_text = f"用户：{user_input}\n风堇：{assistant_message}"
-        return self._llm_extract_text(conversation_text)
+        return self._llm_extract_text(
+            conversation_text, source_timestamp=source_timestamp
+        )
 
-    def _llm_extract_text(self, conversation_text: str, runtime_lease=None) -> list[dict]:
+    def _llm_extract_text(
+        self,
+        conversation_text: str,
+        runtime_lease=None,
+        source_timestamp: str | None = None,
+    ) -> list[dict]:
         """调用心智模型提取事实，历史只用于理解最新一轮。"""
         if runtime_lease is None:
             with self.runtime.acquire("memory") as lease:
-                return self._llm_extract_text(conversation_text, lease)
+                return self._llm_extract_text(
+                    conversation_text,
+                    lease,
+                    source_timestamp=source_timestamp,
+                )
 
         lease = runtime_lease
+        source_timestamp = source_timestamp or datetime.now().astimezone().isoformat(
+            timespec="seconds"
+        )
         latest_user_text = _extract_latest_user_text(conversation_text)
         messages = [
             {"role": "system", "content": self._extraction_prompt},
             {"role": "user", "content": (
                 conversation_text
                 + "\n\n只提取标记为‘最新一轮’中新出现或更新的用户事实；历史语境仅用于理解指代。"
+                + f"\n最新一轮用户消息发生时间：{source_timestamp}。"
+                + "\n若原话含相对时间，content 必须按该时间改写成绝对日期；evidence 仍逐字保留原话。"
             )}
         ]
 
@@ -121,7 +172,11 @@ class MemoryExtractor:
                     kwargs["response_format"] = {"type": "json_object"}
                 response = lease.client.chat.completions.create(**kwargs)
                 raw_text = (response.choices[0].message.content or "").strip()
-                facts, error = self._parse_and_validate(raw_text, latest_user_text)
+                facts, error = self._parse_and_validate(
+                    raw_text,
+                    latest_user_text,
+                    source_timestamp=source_timestamp,
+                )
                 if facts is not None:
                     return facts
 
@@ -175,7 +230,10 @@ class MemoryExtractor:
             self._response_modes[version] = mode
 
     def _parse_and_validate(
-        self, text: str, latest_user_text: str
+        self,
+        text: str,
+        latest_user_text: str,
+        source_timestamp: str | None = None,
     ) -> tuple[list[dict] | None, str]:
         """解析 JSON 并校验字段完整性
 
@@ -226,10 +284,46 @@ class MemoryExtractor:
             if importance not in ("high", "low"):
                 importance = "low"
 
+            if _RELATIVE_TIME_PATTERN.search(content):
+                return None, "fact.content中的相对时间必须转换为绝对日期"
+
+            event_time = fact.get("event_time")
+            parsed_event_time: datetime | None = None
+            if event_time is not None:
+                if not isinstance(event_time, str):
+                    return None, "fact.event_time必须是ISO日期字符串或null"
+                event_time = event_time.strip()
+                try:
+                    parsed_event_time = datetime.fromisoformat(event_time)
+                except ValueError:
+                    return None, "fact.event_time必须使用YYYY-MM-DD或ISO日期时间"
+
+            time_scope = fact.get("time_scope", "timeless")
+            if time_scope not in _TIME_SCOPES:
+                return None, "fact.time_scope必须是timeless、recurring、temporary或event"
+            if time_scope != "timeless" and not event_time:
+                return None, "非timeless记忆必须提供event_time"
+
+            if _RELATIVE_TIME_PATTERN.search(evidence):
+                if "time_scope" not in fact or "event_time" not in fact:
+                    return None, "原话含相对时间时必须明确提供time_scope和event_time"
+                if time_scope == "timeless" or parsed_event_time is None:
+                    return None, "原话含相对时间时不能保存为无时间的timeless记忆"
+                time_error = _validate_relative_event_time(
+                    evidence,
+                    source_timestamp,
+                    parsed_event_time,
+                )
+                if time_error:
+                    return None, time_error
+
             valid_facts.append({
                 "content": content,
                 "type": fact_type,
-                "importance": importance
+                "importance": importance,
+                "event_time": event_time or "",
+                "time_scope": time_scope,
+                "source_timestamp": source_timestamp or "",
             })
 
         return valid_facts, ""
@@ -254,6 +348,9 @@ class MemoryExtractor:
                 distance = results["distances"][0][0]
                 if distance < self.config.thresholds.dedup_distance:
                     metadata = results["metadatas"][0][0]
+                    if _is_distinct_temporal_occurrence(fact, metadata):
+                        filtered.append(fact)
+                        continue
                     # 已降级 high 再次被判为 high 时交给 Writer 直接提升；
                     # 其余跨层/同层重复仍然丢弃。
                     if not (
@@ -279,3 +376,78 @@ def _extract_latest_user_text(conversation_text: str) -> str:
 
 def _normalize_evidence(text: str) -> str:
     return re.sub(r"\s+", "", text.strip())
+
+
+def _validate_relative_event_time(
+    evidence: str,
+    source_timestamp: str | None,
+    event_time: datetime,
+) -> str:
+    """对可确定换算的相对日期做代码侧交叉校验。"""
+    if not source_timestamp:
+        return "缺少用户消息时间，无法校验相对日期"
+    try:
+        source_time = datetime.fromisoformat(source_timestamp)
+    except ValueError:
+        return "用户消息时间不是合法ISO日期时间"
+
+    day_anchors = [
+        offset
+        for pattern, offset in _DIRECT_DAY_OFFSETS
+        if pattern.search(evidence)
+    ]
+    year_anchors = [
+        offset
+        for pattern, offset in (
+            (r"今年", 0),
+            (r"去年", -1),
+            (r"明年", 1),
+        )
+        if re.search(pattern, evidence)
+    ]
+
+    # 单一日锚点可无歧义换算；多个日锚点（如“昨天决定今天去”）
+    # 无法仅靠正则判断事实指向哪一个，保留给模型理解，避免硬规则误杀。
+    if len(day_anchors) == 1 and not year_anchors:
+        expected = source_time.date() + timedelta(days=day_anchors[0])
+        if event_time.date() != expected:
+            return f"fact.event_time与原话相对日期不一致，应为{expected.isoformat()}"
+        return ""
+
+    # “去年/明年/今年 + 今天”是唯一安全的复合锚点。
+    if (
+        len(day_anchors) == 1
+        and day_anchors[0] == 0
+        and len(year_anchors) == 1
+    ):
+        try:
+            expected = source_time.date().replace(
+                year=source_time.year + year_anchors[0]
+            )
+        except ValueError:
+            # 2月29日跨到非闰年时没有唯一公历日期，交由模型按语义处理。
+            return ""
+        if event_time.date() != expected:
+            return f"fact.event_time与原话相对日期不一致，应为{expected.isoformat()}"
+        return ""
+
+    if not day_anchors and len(year_anchors) == 1:
+        expected_year = source_time.year + year_anchors[0]
+        if event_time.year != expected_year:
+            return f"fact.event_time年份应为{expected_year}"
+    return ""
+
+
+def _is_distinct_temporal_occurrence(fact: dict, metadata: dict) -> bool:
+    """时间类型或具体事件日期不同的事实不能仅凭向量相近判为重复。"""
+    new_scope = fact.get("time_scope", "timeless")
+    old_scope = metadata.get("time_scope", "timeless")
+    if new_scope != old_scope and (
+        new_scope != "timeless" or old_scope != "timeless"
+    ):
+        return True
+    if new_scope in {"temporary", "event"}:
+        new_time = canonical_event_date(fact.get("event_time"))
+        old_time = canonical_event_date(metadata.get("event_time"))
+        return bool(new_time or old_time) and new_time != old_time
+    return False

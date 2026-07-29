@@ -27,6 +27,11 @@ memory:
   # 检索配置
   retrieval:
     top_k: 3
+    # 临时状态不硬删除：扩大候选池后按年龄增加距离惩罚，
+    # 使旧临时状态逐渐降权，但明确询问往事时仍有机会被召回。
+    candidate_multiplier: 3
+    temporary_decay_per_day: 0.02
+    temporary_max_penalty: 0.5
 
   # Core 常驻记忆容量。Token 使用与上下文模块一致的轻量估算，
   # 超限时只把最久未进入或更新的非保护 Core 降级为普通向量记忆，不删除、不重算 Embedding。

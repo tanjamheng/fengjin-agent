@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from .config import MemoryConfig
 from .storage import MemoryStorage
+from .temporal import canonical_event_date
 from ..mind.model_runtime import MindModelRuntime
 from ..utils.helpers import get_project_root
 from ..utils.logger import get_logger
@@ -216,7 +217,12 @@ class MemoryWriter:
 
         duplicates = [
             candidate for candidate in candidates
-            if candidate["distance"] < self.config.thresholds.dedup_distance
+            if (
+                candidate["distance"] < self.config.thresholds.dedup_distance
+                and not _is_distinct_temporal_occurrence(
+                    fact, candidate["metadata"]
+                )
+            )
         ]
         if duplicates:
             if (
@@ -233,6 +239,7 @@ class MemoryWriter:
             old_meta["importance"] = "high"
             old_meta["updated_at"] = now
             old_meta["core_touched_at"] = now
+            _apply_temporal_metadata(old_meta, fact)
             if self._is_protected(fact["content"]):
                 old_meta["protected"] = 1
             return _commit_if_valid(
@@ -242,7 +249,12 @@ class MemoryWriter:
 
         conflicts = [
             candidate for candidate in candidates
-            if candidate["distance"] < self.config.thresholds.conflict_distance
+            if (
+                candidate["distance"] < self.config.thresholds.conflict_distance
+                and not _is_distinct_temporal_occurrence(
+                    fact, candidate["metadata"]
+                )
+            )
         ]
         if not conflicts:
             return self._insert(
@@ -271,6 +283,9 @@ class MemoryWriter:
                 memory_type=fact["type"],
                 protected=is_core and self._is_protected(fact["content"]),
                 importance=fact["importance"],
+                source_timestamp=fact.get("source_timestamp"),
+                event_time=fact.get("event_time"),
+                time_scope=fact.get("time_scope", "timeless"),
             ),
         )
 
@@ -303,6 +318,7 @@ class MemoryWriter:
             )
         now = datetime.now().isoformat()
         old_meta["updated_at"] = now
+        _apply_temporal_metadata(old_meta, fact)
         if is_core:
             old_meta["is_core"] = 1
             old_meta["importance"] = "high"
@@ -397,7 +413,9 @@ class MemoryWriter:
                 "content": content,
                 "metadata": metadata,
                 "protected": protected,
-                "tokens": self._estimate_tokens(content),
+                "tokens": self._estimate_tokens(
+                    _format_core_memory_line(content, metadata)
+                ),
             })
 
         records.sort(
@@ -441,7 +459,10 @@ class MemoryWriter:
         if results["documents"]:
             paired = list(zip(results["documents"], results["metadatas"]))
             paired.sort(key=lambda item: item[1].get("created_at", ""))
-            text += "\n".join(f"- {doc}" for doc, _ in paired)
+            text += "\n".join(
+                _format_core_memory_line(doc, metadata)
+                for doc, metadata in paired
+            )
         self._core_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._core_path.with_suffix(self._core_path.suffix + ".tmp")
         tmp_path.write_text(text, encoding="utf-8")
@@ -547,6 +568,57 @@ def _unpack_item(item) -> tuple[dict, object]:
     if isinstance(item, tuple) and len(item) == 2:
         return item
     return item, None
+
+
+def _apply_temporal_metadata(metadata: dict, fact: dict) -> None:
+    """把新事实的时间语义同步到更新后的记忆 Metadata。"""
+    if "time_scope" in fact:
+        metadata["time_scope"] = fact["time_scope"]
+        if fact.get("event_time"):
+            metadata["event_time"] = fact["event_time"]
+        else:
+            metadata.pop("event_time", None)
+    if fact.get("source_timestamp"):
+        metadata["source_timestamp"] = fact["source_timestamp"]
+
+
+def _format_core_memory_line(document: str, metadata: dict) -> str:
+    """在 Core 派生视图中显示来源日期，并给旧相对时间记忆补充解释锚点。"""
+    source_time = metadata.get("source_timestamp") or metadata.get("created_at", "")
+    source_date = str(source_time).split("T", 1)[0] if source_time else ""
+    labels = []
+    if source_date:
+        labels.append(f"记录于 {source_date}")
+    event_time = metadata.get("event_time")
+    if event_time:
+        labels.append(f"事件日期 {event_time}")
+    scope_labels = {
+        "recurring": "周期性",
+        "temporary": "阶段性",
+        "event": "一次性事件",
+    }
+    scope_label = scope_labels.get(metadata.get("time_scope"))
+    if scope_label:
+        labels.append(scope_label)
+    if re.search(r"今天|今日|昨天|昨日|明天|明日|前天|后天", document):
+        labels.append("正文相对时间以记录日期为准")
+    prefix = f"[{'；'.join(labels)}] " if labels else ""
+    return f"- {prefix}{document}"
+
+
+def _is_distinct_temporal_occurrence(fact: dict, metadata: dict) -> bool:
+    """限制带时间事实只与同类、同一次事件参与去重或合并。"""
+    new_scope = fact.get("time_scope", "timeless")
+    old_scope = metadata.get("time_scope", "timeless")
+    if new_scope != old_scope and (
+        new_scope != "timeless" or old_scope != "timeless"
+    ):
+        return True
+    if new_scope in {"temporary", "event"}:
+        new_time = canonical_event_date(fact.get("event_time"))
+        old_time = canonical_event_date(metadata.get("event_time"))
+        return bool(new_time or old_time) and new_time != old_time
+    return False
 
 
 def _unpack_query_candidates(results: dict) -> list[dict]:

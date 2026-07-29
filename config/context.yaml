@@ -1,5 +1,13 @@
 # 多轮对话上下文管理配置
 context:
+  # 运行时日期时间只注入本轮 API user message，不写入会话历史。
+  # 用于正确理解“今天/昨天/明天”等相对时间表达。
+  temporal:
+    enabled: true
+    timezone_label: "Asia/Shanghai"
+    utc_offset_minutes: 480
+    include_clock: true
+
   # 滑动窗口
   sliding_window:
     # 最大保留轮数（一轮 = 一对 user/assistant 交互）

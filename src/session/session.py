@@ -17,7 +17,7 @@ class Message(BaseModel):
     """单条消息"""
     role: str               # "user" | "assistant" | "tool"
     content: str
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     metadata: MessageMeta = Field(default_factory=MessageMeta)
 
     @property

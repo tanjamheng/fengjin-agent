@@ -53,6 +53,9 @@ class ThresholdConfig(BaseModel):
 
 class RetrievalConfig(BaseModel):
     top_k: int = 3
+    candidate_multiplier: int = Field(default=3, ge=1)
+    temporary_decay_per_day: float = Field(default=0.02, ge=0)
+    temporary_max_penalty: float = Field(default=0.5, ge=0)
 
 
 class CoreCapacityConfig(BaseModel):

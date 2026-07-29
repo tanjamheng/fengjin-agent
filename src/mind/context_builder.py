@@ -11,6 +11,7 @@ def normalize_turns(messages: Iterable[dict], *, max_turns: int, max_tokens: int
     """按 user 边界组轮，只保留用户消息和最终自然语言 assistant 回复。"""
     turns: list[dict] = []
     current_user: str | None = None
+    current_user_timestamp: str | None = None
     final_assistant: str | None = None
 
     for message in messages:
@@ -20,8 +21,14 @@ def normalize_turns(messages: Iterable[dict], *, max_turns: int, max_tokens: int
             continue
         if role == "user":
             if current_user is not None and final_assistant is not None:
-                turns.append({"user": current_user, "assistant": final_assistant})
+                turns.append({
+                    "user": current_user,
+                    "assistant": final_assistant,
+                    "user_timestamp": current_user_timestamp,
+                })
             current_user = content
+            timestamp = message.get("timestamp")
+            current_user_timestamp = str(timestamp) if timestamp is not None else None
             final_assistant = None
         elif role == "assistant" and current_user is not None:
             if message.get("tool_calls"):
@@ -34,7 +41,11 @@ def normalize_turns(messages: Iterable[dict], *, max_turns: int, max_tokens: int
         # system/tool/function 及所有工具中间消息均忽略
 
     if current_user is not None and final_assistant is not None:
-        turns.append({"user": current_user, "assistant": final_assistant})
+        turns.append({
+            "user": current_user,
+            "assistant": final_assistant,
+            "user_timestamp": current_user_timestamp,
+        })
 
     turns = turns[-max_turns:]
     while len(turns) > 1 and _turn_tokens(turns) > max_tokens:
@@ -49,8 +60,11 @@ def format_turns(turns: list[dict]) -> str:
     blocks = []
     for index, turn in enumerate(turns, start=1):
         marker = "（最新一轮，分析主体）" if index == len(turns) else "（历史语境）"
+        timestamp = turn.get("user_timestamp")
+        time_line = f"\n用户消息时间：{timestamp}" if timestamp else ""
         blocks.append(
-            f"第{index}轮{marker}\n用户：{turn['user']}\n风堇：{turn['assistant']}"
+            f"第{index}轮{marker}{time_line}\n"
+            f"用户：{turn['user']}\n风堇：{turn['assistant']}"
         )
     return "\n\n".join(blocks)
 
@@ -76,4 +90,6 @@ def _truncate_latest_turn(turn: dict, max_tokens: int) -> dict:
             assistant = assistant[len(assistant) // 8:]
         elif len(user) > 64:
             user = user[len(user) // 8:]
-    return {"user": user, "assistant": assistant}
+    result = dict(turn)
+    result.update({"user": user, "assistant": assistant})
+    return result

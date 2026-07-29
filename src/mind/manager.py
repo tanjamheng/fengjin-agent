@@ -138,6 +138,7 @@ class MindManager:
             try:
                 memory.extract_conversation_async(
                     format_turns(turns), trace_id=trace_id,
+                    source_timestamp=turns[-1].get("user_timestamp"),
                     on_model_failure=lambda permanent=False, current_runtime=True: self._handle_model_failure(
                         generation, callback, permanent, current_runtime
                     ),
