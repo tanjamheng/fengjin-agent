@@ -112,14 +112,24 @@ class DenseIndex(IndexStrategy):
                 normalize_embeddings=True, show_progress_bar=False,
             )
 
-    def add(self, chunks: List) -> None:
+    @staticmethod
+    def generate_ids(chunks: List) -> List[str]:
+        """为一批知识块生成可同时交给 Dense/Sparse 的公共 ID。"""
+        return [
+            f"chunk_{chunk.chunk_id}_{uuid.uuid4().hex[:8]}"
+            for chunk in chunks
+        ]
+
+    def add(self, chunks: List, ids: List[str] | None = None) -> None:
         """添加文本块"""
         if not chunks:
             return
 
         texts = [chunk.content for chunk in chunks]
+        ids = self.generate_ids(chunks) if ids is None else ids
+        if len(ids) != len(chunks):
+            raise ValueError("DenseIndex.add 的 ids 数量必须与 chunks 一致")
         embeddings = self._embed(texts)
-        ids = [f"chunk_{chunk.chunk_id}_{uuid.uuid4().hex[:8]}" for chunk in chunks]
         metadatas = [chunk.metadata for chunk in chunks]
 
         if self.store_type == "chroma":
@@ -131,6 +141,31 @@ class DenseIndex(IndexStrategy):
             )
         elif self.store_type == "faiss":
             self._add_to_faiss(embeddings, texts, metadatas)
+
+    def get_records(self) -> List[dict]:
+        """读取现有知识块，不读取 Embedding，也不修改持久化数据。"""
+        if self.store_type != "chroma":
+            raise RuntimeError("只有 Chroma DenseIndex 支持持久化记录恢复")
+        if self._collection is None:
+            raise RuntimeError("DenseIndex 尚未初始化")
+
+        results = self._collection.get(include=["documents", "metadatas"])
+        ids = list(results.get("ids") or [])
+        documents = list(results.get("documents") or [])
+        metadatas = list(results.get("metadatas") or [])
+        if not (len(ids) == len(documents) == len(metadatas)):
+            raise RuntimeError(
+                "Chroma 知识块数据不完整：ID、Document、Metadata 数量不一致"
+            )
+        return [
+            {
+                "id": str(record_id),
+                "content": document,
+                "metadata": metadata or {},
+            }
+            for record_id, document, metadata
+            in zip(ids, documents, metadatas)
+        ]
 
     def _add_to_faiss(self, embeddings, texts, metadatas):
         """添加到 FAISS"""

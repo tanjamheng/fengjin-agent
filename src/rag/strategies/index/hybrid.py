@@ -7,6 +7,7 @@ from typing import List
 from .base import IndexStrategy
 from .dense import DenseIndex
 from .sparse import SparseIndex
+from ....utils.logger import get_logger
 
 
 class HybridIndex(IndexStrategy):
@@ -24,6 +25,8 @@ class HybridIndex(IndexStrategy):
     ):
         self.dense_weight = dense_weight
         self.sparse_weight = sparse_weight
+        self.log = get_logger("hybrid_index")
+        self._sparse_ready = False
 
         # 创建子索引
         self.dense_index = DenseIndex(
@@ -39,17 +42,50 @@ class HybridIndex(IndexStrategy):
         """初始化两个子索引"""
         self.dense_index.initialize()
         self.sparse_index.initialize()
+        self._restore_sparse_from_dense()
 
     def add(self, chunks: List) -> None:
         """添加到两个索引"""
+        if not chunks:
+            return
+        if self.dense_index.store_type == "chroma":
+            common_ids = self.dense_index.generate_ids(chunks)
+            sparse_was_ready = self._sparse_ready
+            self.dense_index.add(chunks, ids=common_ids)
+            # Dense 已提交而 Sparse 尚未同步的短窗口内只允许 Dense 检索。
+            self._sparse_ready = False
+            if sparse_was_ready:
+                try:
+                    self.sparse_index.add(chunks, ids=common_ids)
+                    if self.sparse_index.count() == self.dense_index.count():
+                        self._sparse_ready = True
+                        return
+                    self.log.error(
+                        "BM25 增量更新后数量不一致，将从 Chroma 整体恢复: "
+                        "dense={} sparse={}",
+                        self.dense_index.count(),
+                        self.sparse_index.count(),
+                    )
+                except Exception as exc:
+                    self.log.error(
+                        "BM25 增量更新失败，将从 Chroma 整体恢复: {}", exc
+                    )
+            self._restore_sparse_from_dense()
+            return
+
+        # 非 Chroma 路径保持原有进程内行为。
         self.dense_index.add(chunks)
         self.sparse_index.add(chunks)
+        self._sparse_ready = True
 
     def search(self, query: str, top_k: int = 5) -> List[dict]:
         """混合搜索 + RRF 融合"""
         # 从两个索引分别搜索
         dense_results = self.dense_index.search(query, top_k=top_k * 2)
-        sparse_results = self.sparse_index.search(query, top_k=top_k * 2)
+        sparse_results = (
+            self.sparse_index.search(query, top_k=top_k * 2)
+            if self._sparse_ready else []
+        )
 
         # RRF 融合
         return self._rrf_fusion(dense_results, sparse_results, top_k)
@@ -87,6 +123,31 @@ class HybridIndex(IndexStrategy):
 
         return sorted_docs
 
+    def _restore_sparse_from_dense(self) -> None:
+        """从 Chroma 权威知识块恢复 BM25；失败时明确降级为 Dense-only。"""
+        if self.dense_index.store_type != "chroma":
+            self._sparse_ready = True
+            return
+        try:
+            records = self.dense_index.get_records()
+            self.sparse_index.rebuild(records)
+            dense_count = self.dense_index.count()
+            sparse_count = self.sparse_index.count()
+            if dense_count != sparse_count:
+                raise RuntimeError(
+                    f"Dense/Sparse 数量不一致: {dense_count}/{sparse_count}"
+                )
+            self._sparse_ready = True
+            self.log.info(
+                "BM25 已从 Chroma 恢复: dense={} sparse={}",
+                dense_count,
+                sparse_count,
+            )
+        except Exception as exc:
+            self._sparse_ready = False
+            self.sparse_index.cleanup()
+            self.log.error("BM25 恢复失败，当前降级为 Dense-only: {}", exc)
+
     def count(self) -> int:
         """返回文档数量"""
         return self.dense_index.count()
@@ -95,3 +156,4 @@ class HybridIndex(IndexStrategy):
         """清理两个索引"""
         self.dense_index.cleanup()
         self.sparse_index.cleanup()
+        self._sparse_ready = False
