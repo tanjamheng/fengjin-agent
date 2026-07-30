@@ -82,6 +82,9 @@ echo
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null || true
 export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+export ELECTRON_CACHE="$PWD/frontend/.cache/electron"
+unset ELECTRON_SKIP_BINARY_DOWNLOAD 2>/dev/null || true
+mkdir -p "$ELECTRON_CACHE"
 
 # ── 1. Python venv ──
 echo " [1/4] Python virtual environment..."
@@ -145,7 +148,24 @@ else
 fi
 if [ "$NEED_NPM" = "1" ]; then
     echo "  Installing..."
-    npm --prefix frontend install || fatal "npm install failed"
+    npm --prefix frontend install --include=dev --ignore-scripts=false --foreground-scripts || \
+        fatal "npm install failed"
+fi
+
+# npm ls validates package metadata, but Electron's downloaded binary may still
+# be absent after an interrupted/skipped postinstall or antivirus quarantine.
+npm --prefix frontend ls --depth=0 >/dev/null 2>&1 || \
+    fatal "Frontend dependencies are still incomplete after npm install"
+verify_electron() {
+    [ -x "frontend/node_modules/.bin/electron" ] &&
+        frontend/node_modules/.bin/electron --version >/dev/null 2>&1
+}
+if ! verify_electron; then
+    echo "  Electron binary is missing or unusable, repairing..."
+    npm --prefix frontend rebuild electron --ignore-scripts=false --foreground-scripts || \
+        fatal "Electron repair failed; check network, npm settings, antivirus, and the startup log"
+    verify_electron || \
+        fatal "Electron is still unavailable after repair; check antivirus quarantine and the startup log"
 fi
 echo "  OK"
 

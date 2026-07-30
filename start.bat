@@ -106,7 +106,9 @@ set HTTPS_PROXY=
 REM Use China mirror for Electron binary download
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
-set ELECTRON_CACHE=frontend\.cache\electron
+set "ELECTRON_CACHE=%CD%\frontend\.cache\electron"
+REM Never inherit CI/user settings that intentionally skip Electron's binary.
+set "ELECTRON_SKIP_BINARY_DOWNLOAD="
 if not exist "%ELECTRON_CACHE%" mkdir "%ELECTRON_CACHE%"
 
 REM ============================================================
@@ -196,9 +198,32 @@ if "%NEED_NPM%"=="0" (
 if "%NEED_NPM%"=="1" (
     echo    Installing...
     call :log "Installing frontend dependencies"
-    call npm --prefix frontend install --registry=https://registry.npmmirror.com
+    call :install_frontend_dependencies
     if errorlevel 1 (
         set "FAIL_REASON=npm install failed"
+        goto :fatal
+    )
+)
+
+REM npm ls only validates package metadata. Electron can still be half-installed
+REM when its postinstall binary download was skipped, interrupted, or quarantined.
+call npm --prefix frontend ls --depth=0 >> "%STARTUP_LOG%" 2>&1
+if errorlevel 1 (
+    set "FAIL_REASON=Frontend dependencies are still incomplete after npm install"
+    goto :fatal
+)
+call :verify_electron
+if errorlevel 1 (
+    echo    Electron binary is missing or unusable, repairing...
+    call :log "Electron verification failed; rebuilding Electron"
+    call :rebuild_electron
+    if errorlevel 1 (
+        set "FAIL_REASON=Electron repair failed; check network, npm settings, antivirus, and the startup log"
+        goto :fatal
+    )
+    call :verify_electron
+    if errorlevel 1 (
+        set "FAIL_REASON=Electron is still unavailable after repair; check antivirus quarantine and the startup log"
         goto :fatal
     )
 )
@@ -261,6 +286,25 @@ exit /b
 :log
 >> "%STARTUP_LOG%" echo [%date% %time%] %~1
 exit /b
+
+:install_frontend_dependencies
+powershell.exe -NoProfile -NonInteractive -Command ^
+  "$logPath = $env:STARTUP_LOG;" ^
+  "& npm.cmd --prefix frontend install --include=dev --ignore-scripts=false --registry=https://registry.npmmirror.com --foreground-scripts 2>&1 | Tee-Object -FilePath $logPath -Append;" ^
+  "exit $LASTEXITCODE"
+exit /b %errorlevel%
+
+:verify_electron
+if not exist "frontend\node_modules\.bin\electron.cmd" exit /b 1
+call "frontend\node_modules\.bin\electron.cmd" --version >> "%STARTUP_LOG%" 2>&1
+exit /b %errorlevel%
+
+:rebuild_electron
+powershell.exe -NoProfile -NonInteractive -Command ^
+  "$logPath = $env:STARTUP_LOG;" ^
+  "& npm.cmd --prefix frontend rebuild electron --ignore-scripts=false --foreground-scripts 2>&1 | Tee-Object -FilePath $logPath -Append;" ^
+  "exit $LASTEXITCODE"
+exit /b %errorlevel%
 
 :fatal
 echo.
